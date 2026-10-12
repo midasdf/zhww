@@ -111,7 +111,7 @@ The receiving logic is pure software and can be developed and tested on a PC tod
 None of this needs the board. The hardware only decides *which* sensor and *which* pin.
 
 
-## 7. Parts that can be used for a light receiver
+## 6. Parts that can be used for a light receiver
 
 Nothing here needs an ADC, because **both ADC-capable pins on the header are taken by the LCD HAT**
 (section 2.2). All three options below present a digital interface.
@@ -147,7 +147,46 @@ all cheap:
 The sender can be a **static web page** (a canvas that flashes the screen at 2–4 brightness levels).
 No app installation, which is what makes this practical for other people.
 
-## 6. Open questions
+
+## 7. How to physically connect anything at all
+
+The problem: the 1.3inch LCD HAT plugs onto the 40-pin header and covers the whole board
+(65 x 30 mm). **Every free GPIO is on that header, and the HAT hides all of them.** Nothing can be
+plugged underneath, so a sensor or camera has nowhere to go as the build stands today.
+
+Options, in order of how little they change the project:
+
+| Option | How it works | Soldering | Trade-off |
+|---|---|---|---|
+| **A. 40-pin T-splitter board (recommended first step)** | A small board that has a female socket on the bottom (for the board's male header) and **two** 40-pin sockets on top. The LCD HAT goes on one, the sensor or camera wiring on the other, with jumper wires. | none | Adds ~10 mm of height, so the enclosure needs adjusting; the splitter must be female-bottom (most Pi "T-type" splitters are) |
+| **B. Replace the HAT with a jumper-wired display** | Use a display module connected with a 6-8 wire jumper cable instead of a HAT, leaving the rest of the header reachable. | none | Loses the proven HAT; the enclosure must be redesigned around the module |
+| **C. Carrier shield (the clean v0.2 answer)** | A small PCB that plugs into the 40-pin header and carries the sensor, the camera connector, the microSD and a display connector in one piece. | none (factory-assembled) | Leaves "assemble from commodity parts only"; the design would be published like the rest |
+| D. Solder to the debug pads / header pins | - | required | Rejected: it breaks the no-soldering rule and the debug pads have no ADC anyway |
+
+### Which pins are actually free
+
+The HAT occupies 14 of the 28 available GPIOs:
+
+| Use | GPIO |
+|---|---|
+| LCD (SPI0) | SCLK 11, MOSI 10, CS 8, DC 25, RST 27, BL 24 |
+| Joystick | UP 6, DOWN 19, LEFT 5, RIGHT 26, PRESS 13 |
+| Buttons | KEY1 21, KEY2 20, KEY3 16 |
+| **Free** | **0, 1, 2, 3, 4, 7, 9, 12, 14, 15, 17, 18, 22, 23** (14 pins) |
+
+Both ADC-capable pins (26, 27) are taken, which is why a **digital-output** sensor is required
+(section 2.2). For a camera, SPI1 would be the natural choice; its exact pin mapping has to be
+confirmed against the RP2350 function table and the free list above at the point the hardware
+arrives.
+
+### What this means for the enclosure
+
+Any of options A-C raises the stack: the splitter adds roughly the height of one header (~10 mm),
+and a camera or sensor needs a window in the case. The parametric enclosure in
+[hardware/enclosure](../hardware/enclosure/README.md) already has `MEASURED` placeholders for the
+board-side cut-outs and would gain a parameter for the extra height and the sensor window.
+
+## 8. Open questions
 
 - Which sensor first: light (simpler, line-of-sight) or sound (faster, usable without aiming)?
 - Audio: audible tones (simple, but anyone can hear/transmit) or ultrasonic (quieter, still in-band)?
