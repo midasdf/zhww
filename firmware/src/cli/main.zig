@@ -197,10 +197,11 @@ fn option(args: []const []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
-/// 値を持たないフラグ（`--demo` など）が指定されているか。
+/// Whether a value-less flag (such as `--demo`) was given.
 ///
-/// `option()` は「次の引数を値として読む」ため、値を伴わないフラグには使えない
-/// （`--demo` だけを渡すと、たまたま次にある引数を値として消費してしまう）。
+/// `option()` reads the following argument as the flag's value, so it cannot be used for
+/// value-less flags: passing `--demo` on its own would consume whatever argument happens to
+/// follow it. This helper only checks for presence.
 fn hasFlag(args: []const []const u8, name: []const u8) bool {
     for (args) |arg| {
         if (std.mem.eql(u8, arg, name)) return true;

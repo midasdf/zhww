@@ -1,13 +1,13 @@
-//! zhww ファームウェアの公開 API。
+//! Public API of the zhww firmware.
 //!
-//! 層の分離（docs/02-architecture.md）:
-//!   core/  チェーン非依存。鍵・乱数・署名・表示の最終責任者
-//!   apps/  チェーン固有。鍵素材を保持しない
+//! Layer separation (docs/02-architecture.md):
+//!   core/  chain-agnostic: the final authority over keys, randomness, signing and display.
+//!   apps/  chain-specific: never holds key material.
 //!
-//! 不変条件:
-//!   I-1 core はチェーンを知らない
-//!   I-2 apps は鍵素材を保持しない
-//!   I-3 署名対象ハッシュは apps と core が独立に計算する（二重計算の原則）
+//! Invariants:
+//!   I-1 core knows nothing about any chain
+//!   I-2 apps never hold key material
+//!   I-3 the sighash is computed independently by apps and by core (dual-computation principle)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 pub const errors = @import("core/errors.zig");
