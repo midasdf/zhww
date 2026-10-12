@@ -30,6 +30,7 @@ pub const bytewords = @import("transport/bytewords.zig");
 pub const cbor = @import("transport/cbor.zig");
 pub const light = @import("transport/light.zig");
 pub const light_rx = @import("transport/light_rx.zig");
+pub const opt4048 = @import("transport/opt4048.zig");
 pub const ur = @import("transport/ur.zig");
 pub const ur_receive = @import("transport/ur_receive.zig");
 pub const ui_font = @import("ui/font.zig");
@@ -70,6 +71,7 @@ test {
     _ = cbor;
     _ = light;
     _ = light_rx;
+    _ = opt4048;
     _ = ur;
     _ = ur_receive;
     _ = ui_font;
