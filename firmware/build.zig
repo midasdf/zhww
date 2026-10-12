@@ -56,16 +56,26 @@ pub fn build(b: *std.Build) void {
         .{ "pico_rp2040", &std.Target.arm.cpu.cortex_m0plus },
         .{ "pico_rp2350", &std.Target.arm.cpu.cortex_m33 },
     }) |config| {
-        const pico_module = b.createModule(.{
-            .root_source_file = b.path("pico_smoke.zig"),
-            .target = b.resolveTargetQuery(.{
-                .cpu_arch = .thumb,
-                .os_tag = .freestanding,
-                .cpu_model = .{ .explicit = config[1] },
-            }),
+        const pico_target = b.resolveTargetQuery(.{
+            .cpu_arch = .thumb,
+            .os_tag = .freestanding,
+            .cpu_model = .{ .explicit = config[1] },
+        });
+
+        // libsecp256k1 はホスト用をリンクしない（ターゲット向けのビルドは移植作業の一部）。
+        // ここでは「Zig のコアがこのターゲットでコンパイルできるか」だけを見る。
+        const pico_core = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = pico_target,
             .optimize = .ReleaseSmall,
         });
-        pico_module.addImport("zhww", lib);
+        const pico_module = b.createModule(.{
+            .root_source_file = b.path("pico_smoke.zig"),
+            .target = pico_target,
+            .optimize = .ReleaseSmall,
+        });
+        pico_module.addImport("zhww", pico_core);
+
         const pico_object = b.addObject(.{ .name = config[0], .root_module = pico_module });
         pico_step.dependOn(&pico_object.step);
     }
