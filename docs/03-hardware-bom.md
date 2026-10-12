@@ -394,6 +394,32 @@ Useful extras this board brings: it has breakout pads for I2C, the address pin a
 (so it can also be wired with jumpers if a Qwiic cable is ever impractical), and it carries a level
 shifter so it works from both 3.3 V and 5 V rails.
 
+
+### 2.11 The light sensor faces the bottom of the case (owner decision, 2026-10-13)
+
+The sensor is mounted so it looks **down through the underside of the case**, not out of an end face.
+
+Why this is better, not just different:
+
+| | Sensor on the bottom | Sensor on an end face |
+|---|---|---|
+| To send | **Lay the device on the phone's screen.** It self-aligns, it is hands-free, and the phone itself **shields the sensor from room light** - which is the single biggest cause of dropped frames | You have to aim the edge at the screen by hand and hold it steady |
+| Ambient light | Blocked by the phone | Room light leaks in from every side |
+| The device's own screen | Faces up and **stays readable while the device sits on the phone** - useful, because the input screen shows progress | Must be tilted away to aim, so it is unreadable |
+| Getting it wrong | Misalignment is obvious and stable | Misalignment is invisible and drifts |
+
+Consequences for the case:
+
+- The main board is raised on **taller standoffs** so the 25.4 x 17.78 mm sensor board fits **underneath** it;
+  the aperture and the light guide pass **down through the floor**.
+- The **16 mm side bay from v0.3 is removed**, so the footprint returns to the board's 65 x 30 mm and the
+  case grows in thickness instead of length - better for holding against a phone.
+- The Qwiic cable runs from the display, around the board edge, to the sensor underneath; 50 mm is enough.
+
+The firmware is unaffected: the sensor is on I2C, so only its physical position changes. The light guide
+still matters (it keeps the phone's own light from spilling in sideways), but the phone now does most of
+the shielding.
+
 ## 3. Assembly procedure (solder-free; target 45 minutes; for the Pi Zero 2 WH)
 
 1. **Fit the LCD HAT** — plug it into the 40-pin header (1 minute)
