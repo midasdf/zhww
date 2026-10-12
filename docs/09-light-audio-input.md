@@ -197,3 +197,34 @@ board-side cut-outs and would gain a parameter for the extra height and the sens
 - Audio: audible tones (simple, but anyone can hear/transmit) or ultrasonic (quieter, still in-band)?
 - Do we accept the stacking-header arrangement, or move straight to a custom carrier board for v0.2?
 - Should the device also *transmit* over these channels (an LED or a buzzer), or is the screen enough?
+
+## 9. Decision: camera + QR (light stays a documented alternative)
+
+The choice was made on **how well each channel fits the protocols this project already speaks**.
+
+| | Camera + QR | Light (OOK) |
+|---|---|---|
+| Payload protocol | **BC-UR over QR — already implemented on both ends.** The device encodes UR parts today and the decoder is finished and verified (124/124 against segno and python-qrcode) | The payload could also be UR text, but the **link layer would be invented here**: preamble, framing, Manchester encoding, CRC |
+| Standard? | Yes: QR (ISO/IEC 18004) + BC-UR (BCR-2020-005) | No published standard for wallet exchange over light |
+| Sender (phone/PC) | **Already exists** — any wallet that displays a UR QR (Sparrow, BlueWallet, …) | A **custom web page** would have to be written and given to users |
+| Hard part of the work | Done: the decoder exists, including perspective, rotation, blur, noise and JPEG tolerance | Not started: demodulation, ambient-light rejection, sender |
+| What is still missing | Only the transport: a camera driver and image capture | The whole link plus its sender |
+| Input speed | **One frame is enough**: a cheap 320×240 camera can carry a whole ~200-byte PSBT in a single version-13 QR, and the decoder has been tested down to 1 px/module | Tens of seconds for the same payload |
+| Security shape | Optical, line of sight, same confirmation flow as today | Line of sight (good), but a bespoke protocol whose failure modes are unknown |
+
+**Decision: implement camera + QR input.** It reuses a published standard, keeps the payload identical to
+the output path (so the device speaks one language in both directions), needs no sender-side software from
+the user, and the difficult half — decoding — is already built and independently verified.
+
+The light/sound path is **not rejected**, just deferred: the parts list (§6), the protocol sketch (§3) and
+the connection notes (§7) stay here so it can be picked up if a camera turns out to be unacceptable
+(for example if a camera module cannot be sourced without soldering, or if a user wants a device with no
+image sensor at all).
+
+### What that means concretely
+
+1. **Host-side (no hardware needed)**: the decoder returns text per frame, so something must **assemble
+   multi-part UR** from a sequence of scanned frames: collect parts, tolerate any order and duplicates,
+   reject conflicting duplicates, check the CBOR checksum, and only then hand back the payload (PSBT).
+   This is pure software and testable against this project's own encoder in a round trip.
+2. **On hardware (later)**: a camera driver, a grayscale frame buffer, and the same assembler.

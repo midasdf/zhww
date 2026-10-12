@@ -159,9 +159,27 @@ been bought or measured yet.
 
 ### 2.5 Camera
 
-- Used for QR reading and for generating entropy from images.
-- **The Pi Zero series has a 22-pin 0.5mm CSI connector**, so the common 15-pin ribbon cannot be used. When buying, choose one that comes with "a cable for Pi Zero".
-- A camera module can contain onboard flash and similar parts, so buy from a trustworthy seller and visually inspect the board when it arrives.
+The camera is the **input** path (reading a UR QR displayed by the host). On the RP2350 there is **no CSI**,
+so the camera must be an **SPI module wired to the 40-pin header** — which the chosen small display makes
+possible again (it covers only a third of the board; see [09-light-audio-input.md](09-light-audio-input.md) §9
+for why the camera was preferred over a light sensor).
+
+| Candidate | Interface | Resolution | Notes |
+|---|---|---|---|
+| **ArduCAM Mini 2MP Plus (OV2640)** — first choice | SPI (plus a few control pins) | 2 MP sensor, used at QVGA (320×240) | A finished module with a pin header, documented for use with the Pico/RP2040, ~$25. QVGA RGB565 is 153 KB, which fits the 520 KB SRAM; the frame is converted to grayscale before decoding. Listed by a Japan-facing shop ([RobotShop JP](https://jp.robotshop.com/products/arducam-mini-camera-module-w-2mp-plus-ov2640-arduino)) |
+| **Himax HM01B0 (monochrome)** — alternative | SPI | 320×320, **native grayscale** | Electrically the nicest fit: no colour conversion, low power, small frames. The bare sensor is a flex-connector part; a breakout is sold by [SparkFun](https://www.sparkfun.com/himax-cmos-imaging-camera-hm01b0-monochrome.html). Availability and whether the breakout has a solder-free header are unconfirmed |
+| Raspberry Pi camera module (CSI) | CSI | — | **Not possible on the RP2350**: the board has no CSI connector. This applies to the v0.1 Pi Zero build only |
+
+**Why the resolution is not a problem**: the decoder in `src/ui/qr_decode.zig` was verified down to
+**1 pixel per module**, and a whole ~200-byte PSBT in a version-13 QR is 69 modules across. A QVGA camera
+therefore reads a full PSBT in **one frame** (~4.6 px per module), which is much faster than the output
+direction, where the device's 240×135 screen has to send 17 animated parts.
+
+**Pin budget**: SPI1 (SCK/MISO/MOSI), one chip-select, plus power and ground — about five pins. The display
+and its two buttons use roughly nine, so the 28 GPIOs are not a constraint.
+
+**Unconfirmed**: exact pin assignments, whether each module ships with a header soldered (the no-soldering
+rule), and Japanese stock. Nothing here has been bought or measured.
 
 ### 2.6 GPIO header
 
