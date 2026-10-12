@@ -25,6 +25,7 @@ pub const btc_sighash = @import("apps/btc/sighash.zig");
 pub const btc_psbt = @import("apps/btc/psbt.zig");
 pub const btc_sign = @import("apps/btc/sign.zig");
 pub const btc_multisig = @import("apps/btc/multisig.zig");
+pub const btc_taproot = @import("apps/btc/taproot.zig");
 pub const bytewords = @import("transport/bytewords.zig");
 pub const cbor = @import("transport/cbor.zig");
 pub const ur = @import("transport/ur.zig");
@@ -51,6 +52,7 @@ test {
     _ = btc_psbt;
     _ = btc_sign;
     _ = btc_multisig;
+    _ = btc_taproot;
     _ = bytewords;
     _ = cbor;
     _ = ur;

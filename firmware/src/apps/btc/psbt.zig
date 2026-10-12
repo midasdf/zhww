@@ -42,6 +42,8 @@ const IN_WITNESS_SCRIPT: u8 = 0x05;
 const IN_BIP32_DERIVATION: u8 = 0x06;
 const IN_FINAL_SCRIPTSIG: u8 = 0x07;
 const IN_FINAL_SCRIPTWITNESS: u8 = 0x08;
+/// PSBT_IN_TAP_KEY_SIG（Taproot の鍵パス署名。64 バイト）
+pub const IN_TAP_KEY_SIG: u8 = 0x13;
 
 // 出力の型
 const OUT_REDEEM_SCRIPT: u8 = 0x00;
@@ -185,17 +187,23 @@ pub const Psbt = struct {
         };
     }
 
-    /// 署名済み（または部分署名済み）PSBT を書き出す。
+    /// 入力マップに追加するフィールド（key は型バイトを含む完全なキー）。
+    pub const Field = struct {
+        key: []const u8,
+        value: []const u8,
+    };
+
+    /// 任意のフィールドを追加して PSBT を書き出す。
     ///
-    /// 元のバイト列をそのまま使い、**未知のフィールドも保持する**。
-    /// `sigs_by_input` は入力ごとの追加署名（公開鍵と DER 署名 + sighash タイプ）。
-    /// 同じ公開鍵の partial sig が元のマップに既にある場合は置き換える。
-    pub fn serialize(
+    /// 元のバイト列をそのまま使うので**未知のフィールドも保持される**。
+    /// `extra` は入力ごとの追加フィールド（例: partial sig、Taproot の署名）。
+    /// 同じキーが元のマップに既にある場合は置き換える（重複キーを作らない）。
+    pub fn serializeWith(
         allocator: std.mem.Allocator,
         psbt: Psbt,
-        sigs_by_input: []const []const PartialSig,
+        extra: []const []const Field,
     ) Error![]u8 {
-        if (sigs_by_input.len != psbt.inputs.len) return error.InvalidPsbt;
+        if (extra.len != psbt.inputs.len) return error.InvalidPsbt;
         if (psbt.input_raw.len != psbt.inputs.len) return error.InvalidPsbt;
         if (psbt.output_raw.len != psbt.outputs.len) return error.InvalidPsbt;
 
@@ -207,14 +215,13 @@ pub const Psbt = struct {
         try out.append(allocator, 0); // グローバルマップ終端
 
         for (psbt.input_raw, 0..) |raw, index| {
-            try appendFilteredMap(allocator, &out, raw, sigs_by_input[index]);
-            for (sigs_by_input[index]) |sig| {
-                if (sig.pubkey.len != 33 and sig.pubkey.len != 65) return error.InvalidPsbt;
-                try out.append(allocator, @intCast(1 + sig.pubkey.len));
-                try out.append(allocator, IN_PARTIAL_SIG);
-                try out.appendSlice(allocator, sig.pubkey);
-                try transaction.writeVarInt(&out, allocator, sig.signature.len);
-                try out.appendSlice(allocator, sig.signature);
+            try appendFilteredMap(allocator, &out, raw, extra[index]);
+            for (extra[index]) |field| {
+                if (field.key.len == 0) return error.InvalidPsbt;
+                try transaction.writeVarInt(&out, allocator, field.key.len);
+                try out.appendSlice(allocator, field.key);
+                try transaction.writeVarInt(&out, allocator, field.value.len);
+                try out.appendSlice(allocator, field.value);
             }
             try out.append(allocator, 0); // 入力マップ終端
         }
@@ -226,15 +233,42 @@ pub const Psbt = struct {
 
         return out.toOwnedSlice(allocator);
     }
+
+    /// 署名済み（または部分署名済み）PSBT を書き出す。
+    ///
+    /// 元のバイト列をそのまま使い、**未知のフィールドも保持する**。
+    /// `sigs_by_input` は入力ごとの追加署名（公開鍵と DER 署名 + sighash タイプ）。
+    /// 同じ公開鍵の partial sig が元のマップに既にある場合は置き換える。
+    pub fn serialize(
+        allocator: std.mem.Allocator,
+        psbt: Psbt,
+        sigs_by_input: []const []const PartialSig,
+    ) Error![]u8 {
+        if (sigs_by_input.len != psbt.inputs.len) return error.InvalidPsbt;
+
+        const fields = try allocator.alloc([]const Field, psbt.inputs.len);
+        for (sigs_by_input, 0..) |sigs, i| {
+            const list = try allocator.alloc(Field, sigs.len);
+            for (sigs, 0..) |sig, j| {
+                if (sig.pubkey.len != 33 and sig.pubkey.len != 65) return error.InvalidPsbt;
+                const key = try allocator.alloc(u8, 1 + sig.pubkey.len);
+                key[0] = IN_PARTIAL_SIG;
+                @memcpy(key[1..], sig.pubkey);
+                list[j] = .{ .key = key, .value = sig.signature };
+            }
+            fields[i] = list;
+        }
+        return serializeWith(allocator, psbt, fields);
+    }
 };
 
-/// 生のマップをコピーする。ただし `new_sigs` に含まれる公開鍵の partial sig は
-/// 取り除く（重複キーを作らないため）。
+/// 生のマップをコピーする。ただし `extra` と同じキーを持つフィールドは取り除く
+/// （重複キーを作らないため）。
 fn appendFilteredMap(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(u8),
     raw: []const u8,
-    new_sigs: []const PartialSig,
+    extra: []const Psbt.Field,
 ) Error!void {
     var cursor = Cursor{ .data = raw };
     while (cursor.remaining() > 0) {
@@ -245,10 +279,8 @@ fn appendFilteredMap(
         _ = try cursor.readBytes(@intCast(value_len));
 
         var skip = false;
-        if (key.len >= 1 and key[0] == IN_PARTIAL_SIG) {
-            for (new_sigs) |sig| {
-                if (std.mem.eql(u8, key[1..], sig.pubkey)) skip = true;
-            }
+        for (extra) |field| {
+            if (std.mem.eql(u8, field.key, key)) skip = true;
         }
         if (!skip) try out.appendSlice(allocator, raw[field_start..cursor.pos]);
     }

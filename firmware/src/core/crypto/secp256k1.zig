@@ -330,6 +330,127 @@ pub fn signRecoverable(msg: [32]u8, priv: [32]u8) Error!RecoverableResult {
     return .{ .compact = compact, .recovery_id = @intCast(recid) };
 }
 
+/// BIP341 の鍵パス署名に使う tweak 済み秘密鍵。
+///
+/// 内部鍵の公開鍵が奇数 Y の場合、BIP340 の lift_x（偶数 Y の点）に合わせて
+/// 秘密鍵を `n - k` に置き換えてから TapTweak を加算する。
+pub fn taprootTweakPrivateKey(priv: [32]u8) Error![32]u8 {
+    if (!isValidPrivateKey(priv)) return error.InvalidKey;
+    const pub_key = try pubKeyCompressed(priv);
+
+    var key = priv;
+    if (pub_key[0] == 3) {
+        const value = std.mem.readInt(u256, &priv, .big);
+        const negated = @as(u256, curve_order) - value;
+        std.mem.writeInt(u256, &key, negated, .big);
+    }
+
+    // tweak は内部鍵の x 座標から計算する（Y の偶奇によらず同じ値）
+    var tweak: [32]u8 = undefined;
+    hashes.taggedHash(&tweak, "TapTweak", pub_key[1..33]);
+    return privateTweakAdd(key, tweak);
+}
+
+// --- BIP340（Schnorr / Taproot）---
+
+/// x-only 公開鍵（BIP340 / Taproot で使う 32 バイトの公開鍵）。
+pub const XOnlyPubkey = extern struct { data: [64]u8 };
+/// 鍵ペア（libsecp256k1 の内部表現）。
+pub const Keypair = extern struct { data: [96]u8 };
+
+extern fn secp256k1_keypair_create(
+    ctx: *const Context,
+    keypair: *Keypair,
+    seckey: *const [32]u8,
+) c_int;
+extern fn secp256k1_keypair_xonly_pub(
+    ctx: *const Context,
+    pubkey: *XOnlyPubkey,
+    pk_parity: ?*c_int,
+    keypair: *const Keypair,
+) c_int;
+extern fn secp256k1_xonly_pubkey_from_pubkey(
+    ctx: *const Context,
+    xonly_pubkey: *XOnlyPubkey,
+    pk_parity: ?*c_int,
+    pubkey: *const Pubkey,
+) c_int;
+extern fn secp256k1_xonly_pubkey_serialize(
+    ctx: *const Context,
+    output32: [*]u8,
+    pubkey: *const XOnlyPubkey,
+) c_int;
+extern fn secp256k1_schnorrsig_sign32(
+    ctx: *const Context,
+    sig64: [*]u8,
+    msg32: *const [32]u8,
+    keypair: *const Keypair,
+    aux_rand32: ?*const [32]u8,
+) c_int;
+extern fn secp256k1_schnorrsig_verify(
+    ctx: *const Context,
+    sig64: [*]const u8,
+    msg32: *const [32]u8,
+    msglen: usize,
+    pubkey: *const XOnlyPubkey,
+) c_int;
+
+/// BIP340 の Schnorr 署名（64 バイト）。
+///
+/// **鍵は呼び出し側で tweak 済みにすること**。Taproot の鍵パス署名では
+/// `taproot_tweak_private_key` を通した鍵を使う（BIP341）。
+///
+/// aux_rand は 0 固定にしている。nonce は「aux_rand・鍵・メッセージ」から決まるため、
+/// 同じ入力からは常に同じ署名になり（テストが再現可能）、nonce の再利用も起きない。
+/// 実機では TRNG の値を渡す形に拡張できる（引数を足すだけ）。
+pub fn schnorrSign(msg: [32]u8, priv: [32]u8) Error![64]u8 {
+    if (!isValidPrivateKey(priv)) return error.InvalidKey;
+    const ctx = try context();
+
+    var keypair: Keypair = undefined;
+    if (secp256k1_keypair_create(ctx, &keypair, &priv) == 0) return error.InvalidKey;
+
+    var signature: [64]u8 = undefined;
+    const aux_rand: [32]u8 = @splat(0);
+    if (secp256k1_schnorrsig_sign32(ctx, &signature, &msg, &keypair, &aux_rand) == 0) {
+        return error.SignatureInvalid;
+    }
+    return signature;
+}
+
+/// 秘密鍵に対応する x-only 公開鍵（32 バイト）。
+pub fn schnorrPublicKey(priv: [32]u8) Error![32]u8 {
+    if (!isValidPrivateKey(priv)) return error.InvalidKey;
+    const ctx = try context();
+
+    var keypair: Keypair = undefined;
+    if (secp256k1_keypair_create(ctx, &keypair, &priv) == 0) return error.InvalidKey;
+
+    var pubkey: XOnlyPubkey = undefined;
+    if (secp256k1_keypair_xonly_pub(ctx, &pubkey, null, &keypair) == 0) return error.InvalidKey;
+
+    var out: [32]u8 = undefined;
+    if (secp256k1_xonly_pubkey_serialize(ctx, &out, &pubkey) == 0) return error.InvalidKey;
+    return out;
+}
+
+/// BIP340 の署名を検証する（**署名したら必ずこれを通す**）。
+pub fn schnorrVerify(signature: [64]u8, msg: [32]u8, xonly_key: [32]u8) Error!bool {
+    const ctx = try context();
+
+    // x-only 公開鍵は `0x02 || x` の圧縮公開鍵として復元する（lift_x）
+    const compressed = [_]u8{0x02} ++ xonly_key;
+    var pubkey: Pubkey = undefined;
+    if (secp256k1_ec_pubkey_parse(ctx, &pubkey, &compressed, 33) == 0) {
+        return error.InvalidKey;
+    }
+    var xonly_pubkey: XOnlyPubkey = undefined;
+    if (secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_pubkey, null, &pubkey) == 0) {
+        return error.InvalidKey;
+    }
+    return secp256k1_schnorrsig_verify(ctx, &signature, &msg, 32, &xonly_pubkey) == 1;
+}
+
 // ---------------------------------------------------------------- テスト
 
 const testing = std.testing;

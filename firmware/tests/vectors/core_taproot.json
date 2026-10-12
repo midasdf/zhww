@@ -1,0 +1,13 @@
+{
+  "source": "Bitcoin Core (regtest)",
+  "core_version": "Bitcoin Core RPC client version v31.1.0",
+  "description": "Taproot（BIP86）の鍵パス署名。Core で P2TR アドレスに送金し、createpsbt で作ったトランザクションに本実装で署名して、Core が受理することを確認する。",
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+  "derivation": "m/86'/0'/0'/0/0 (regtest のアドレス bcrt1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqvg32hk)",
+  "unsigned_psbt_base64": "cHNidP8BAFICAAAAARQvJimmpvhuymEf4Ly+il1WrGP7eSl4pIIJ75pXee9RAQAAAAD9////AfC59QUAAAAAFgAUJ0VAqdv7aHE4xeXbLr53p523s8gAAAAAAAEBKwDh9QUAAAAAIlEgpghp8NvPHcZZyc7Lr4BQE16p6M3EhwU/HcaICUncaEwAAA==",
+  "input_outpoint": "51ef79579aef0982a4782979fb63ac565d8abebce01f61ca6ef8a6a629262f14:1",
+  "input_amount_sats": 100000000,
+  "fee_sats": 10000,
+  "destination": "bcrt1qyaz5p2wmld58zwx9uhdja0nh57wm0v7g6rqp69",
+  "expected_final_tx": "02000000000101142f2629a6a6f86eca611fe0bcbe8a5d56ac63fb792978a48209ef9a5779ef510100000000fdffffff01f0b9f50500000000160014274540a9dbfb687138c5e5db2ebe77a79db7b3c80140743e03a0c70136a1340fa12bdb429fefbe49b3c1781572214256888e008fab145b0e09c32909b391e88b3a89b8e01cdca59d81071681a4d276aa06763e29318600000000"
+}

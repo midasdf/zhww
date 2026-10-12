@@ -9,7 +9,7 @@ cd firmware && zig build test
 実装のユニットテスト（`src/` 内の `test` ブロック）と、公式テストベクタによる統合テスト
 （本ディレクトリ）を `firmware/tests.zig` がまとめて実行する。
 
-**現在: 195 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
+**現在: 199 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
 4 モードすべてで成功することを確認済み。GitHub Actions でも Linux 上で毎回検証している）
 
 ## 最も強い検証: Bitcoin Core が署名を受理する
@@ -55,7 +55,8 @@ firmware/tests/
 │   ├── bip143.json           BIP143 Native P2WPKH（未署名 tx / sighash / DER 署名 / 署名済み tx）
 │   ├── bip174.json           BIP174 PSBT（不正 20 件 / 妥当 27 件・Base64）
 │   ├── core_psbt.json        Bitcoin Core が作った PSBT と、Core の最終化結果（単一署名）
-│   └── core_multisig.json    2-of-3 マルチシグ（Core が作った UTXO と、Core の最終化結果）
+│   ├── core_multisig.json    2-of-3 マルチシグ（Core が作った UTXO と、Core の最終化結果）
+│   └── core_taproot.json     Taproot 鍵パス署名（Core が作った P2TR の UTXO と、Core の最終化結果）
 ├── bip39_vectors_test.zig
 ├── bip32_vectors_test.zig
 ├── address_vectors_test.zig
@@ -63,7 +64,8 @@ firmware/tests/
 ├── bip174_test.zig
 ├── sign_test.zig             署名と最終化の統合テスト（外部ベクタが無い経路）
 ├── core_interop_test.zig     Bitcoin Core との相互運用（Core が署名を受理する）
-└── multisig_test.zig         2-of-3 マルチシグ（Core が署名を受理する）
+├── multisig_test.zig         2-of-3 マルチシグ（Core が署名を受理する）
+└── taproot_test.zig          Taproot 鍵パス署名（Core が署名を受理する）
 
 EVM のテストは実装ファイル内（`src/apps/evm/*.zig` の `test` ブロック）にあり、
 RLP 公式ベクタ・EIP-155 の公式例・EIP-55・EIP-191 を検証する。
@@ -82,6 +84,7 @@ RLP 公式ベクタ・EIP-155 の公式例・EIP-55・EIP-191 を検証する。
 | `bip174.json` | https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki |
 | `core_psbt.json` | Bitcoin Core v31.1.0（regtest で実際に作成。`createpsbt` + `utxoupdatepsbt` の出力） |
 | `core_multisig.json` | Bitcoin Core v31.1.0（regtest。`createmultisig` のアドレスへ送金し、`createpsbt` で作ったトランザクション） |
+| `core_taproot.json` | Bitcoin Core v31.1.0（regtest。BIP86 の P2TR アドレスへ送金し、`createpsbt` で作ったトランザクション） |
 
 > **注意**: `bip39.json` の seed はパスフレーズ **"TREZOR"** で導出された値である
 > （空のパスフレーズでは一致しない）。
