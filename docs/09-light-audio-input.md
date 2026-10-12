@@ -258,3 +258,36 @@ default is 40 bytes. The device's own output direction is unaffected — it answ
    decoding, framing and CRC — with synthetic-signal tests.
 3. **Join-up**: the decoded string goes into `ur_receive.zig` (already written and tested), giving a
    PSBT from a flickering screen.
+
+### The one number both sides must agree on
+
+The receiver needs to be told the ratio between the ADC sample rate and the symbol rate, as
+`nominal_samples_per_symbol`, and its measured seed tolerance is about **±10%** (the DPLL then tracks
+−11% to +14% of that). The sender offers 60/30/20/15/10 symbols per second. So the standard pairing is
+fixed on both sides:
+
+| | Value |
+|---|---|
+| Sender symbol rate (default in `tools/light-sender.html`) | **30 symbols/s** |
+| ADC sample rate | **3 kHz** |
+| `nominal_samples_per_symbol` | **100** = 3000 / 30 (the receiver's own default) |
+
+Other combinations work as long as the firmware is built with the matching number, for example 30
+symbols/s at 4 kHz = 133, 20 symbols/s at 4 kHz = 200, 60 symbols/s at 3 kHz = 50. What must not happen
+is the firmware seeding for one rate while the sender uses another that is more than about 10% away -
+that is the single integration mistake most likely to make the first hardware run fail.
+
+### Measured limits (from the receiver's tests)
+
+Simulated at 4000 samples/s, 200 symbols/s, 110-count swing; each limit is asserted to pass and the
+next step up is asserted to fail, so these are measurements rather than claims:
+
+| Effect | Survives | Breaks |
+|---|---|---|
+| Gaussian noise | sigma <= 21.8 counts (40% of the half-swing) | sigma 44 |
+| **100 Hz + 120 Hz ambient flicker** | amplitude <= 26.7 counts (24% of the swing) | 45 counts |
+| Symbol rate offset | −11% to +14% | −33% / +43% |
+| Seed error | ±10% (tracked period then lands within a fraction of a percent) | — |
+
+Flicker near the symbol rate is not filtered out; it is only survived by swing margin. Pointing the
+sensor at the phone and keeping room light off it is worth more than any of these numbers.
