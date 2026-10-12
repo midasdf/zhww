@@ -202,9 +202,39 @@ so the camera must be an **SPI module wired to the 40-pin header** — which the
 possible again (it covers only a third of the board; see [09-light-audio-input.md](09-light-audio-input.md) §9
 for why the camera was preferred over a light sensor).
 
+#### 2.6.1 Best candidate: a module that decodes the QR internally (found 2026-10-13)
+
+A shop survey found modules that do the **capture *and* the decoding on board** and hand the MCU a short
+string, which removes the entire image-processing objection to a camera.
+
+| | |
+|---|---|
+| Product / shop | **M5Stack QR Code Scanner Unit (U173)** — [Switch Science product 9508](https://www.switch-science.com/products/9508) |
+| Price / stock | **¥3,498, in stock** (Switch Science, checked 2026-10-13) |
+| Interface | **I²C (address 0x21) or UART**, selected by an on-board toggle switch; Grove / HY2.0-4P (2.0 mm) connector |
+| **What the MCU receives** | **The decoded QR text as a string** — no image crosses the wire. Vendor API: `get_qrcode_data()` returns the scanned data as a string, `get_qrcode_data_status()` reports ready/not-ready, `set_trigger_mode(0 = auto, 1 = manual)` ([UIFlow API docs](https://uiflow-micropython.readthedocs.io/en/2.4.1/units/qrcode.html)) |
+| Sensor | 640 × 480 CMOS capture engine plus an STM32F030F4P6 bus MCU (the sensor part number is not given) |
+| QR capability | **Vendor-documented**: PDF417, QR Code and Data Matrix, plus 8 one-dimensional codes; ≥5 mil, print contrast ≥20 %, scan angle ±55° |
+| Solder-free | **Yes** — comes with a 20 cm HY2.0-4P cable; add the [Grove→Dupont conversion cable (M5Stack A096, ¥847)](https://www.switch-science.com/products/8305) to reach the Pico 2 H's factory-fitted header pins. No soldering |
+| Size | 65.8 × 18.4 × 15.8 mm, 14 g — a hand-held scanner body with its own trigger button and buzzer |
+| **Unverified** | Supply voltage range (Grove units normally run from 5 V, available as VBUS on the 40-pin header); its working distance; and whether it reads a **phone screen** as reliably as printed codes (the datasheet quotes printed-code specs only). Nothing has been bought or measured |
+
+**Alternatives from the same survey** (prices as of 2026-10-13): the
+[M5Stack QR Code Scanner Module 13.2 (M145, ¥3,784, in stock)](https://www.switch-science.com/products/10693)
+also decodes internally over UART but is a Core2-shaped module with a 9–24 V DC jack; the
+[M5Stack UnitV2 M12 (¥18,051)](https://www.switch-science.com/products/7536) decodes QR and emits JSON over
+UART but is **out of stock**; [HuskyLens (¥10,824)](https://www.switch-science.com/products/6248) and
+[HuskyLens 2 (¥19,547)](https://www.switch-science.com/products/10885) document face / object / line / colour /
+AprilTag (and OCR, pose) recognition but **not QR**; the
+[Grove Vision AI Module V2 (¥3,205, camera not included)](https://www.switch-science.com/products/9476) returns
+model output (class + bounding box), not decoded text, and no QR model is documented for it; and the SPI cameras
+([Arducam 5 MP Mini SPI ¥7,920](https://www.switch-science.com/products/11225),
+[Arducam Mega 5 MP ¥6,490](https://www.switch-science.com/products/8943)) hand over **raw images**, leaving the
+decoding to the RP2350 — the expensive path this candidate avoids.
+
 | Candidate | Interface | Resolution | Notes |
 |---|---|---|---|
-| **Arducam 5MP Mini SPI camera module** — verified to exist at a domestic shop: [Switch Science product 11225](https://www.switch-science.com/products/11225). The manufacturer lists it for "Arduino UNO, Raspberry Pi Pico and other MCU", so it is SPI and Pico-documented, which is what this board needs. **Price, stock and whether the header comes soldered are unconfirmed** | SPI | 5 MP sensor, used at QVGA | See the note above about verification status |
+| **Arducam 5MP Mini SPI camera module** — verified to exist at a domestic shop: [Switch Science product 11225](https://www.switch-science.com/products/11225). The manufacturer lists it for "Arduino UNO, Raspberry Pi Pico and other MCU", so it is SPI and Pico-documented, which is what this board needs. **Price and stock confirmed 2026-10-13: ¥7,920, in stock**; whether the header comes soldered is still unconfirmed | SPI | 5 MP sensor (OV5642), used at QVGA | It ships with jumper wires but returns **raw images** — no on-board decoding (see §2.6.1) |
 | ArduCAM Mini 2MP Plus (OV2640) — earlier candidate, **no domestic listing confirmed** | SPI (plus a few control pins) | 2 MP sensor, used at QVGA (320×240) | A finished module with a pin header, documented for use with the Pico/RP2040, ~$25. QVGA RGB565 is 153 KB, which fits the 520 KB SRAM; the frame is converted to grayscale before decoding. Listed by a Japan-facing shop ([RobotShop JP](https://jp.robotshop.com/products/arducam-mini-camera-module-w-2mp-plus-ov2640-arduino)) |
 | **Himax HM01B0 (monochrome)** — alternative | SPI | 320×320, **native grayscale** | Electrically the nicest fit: no colour conversion, low power, small frames. The bare sensor is a flex-connector part; a breakout is sold by [SparkFun](https://www.sparkfun.com/himax-cmos-imaging-camera-hm01b0-monochrome.html). Availability and whether the breakout has a solder-free header are unconfirmed |
 | Raspberry Pi camera module (CSI) | CSI | — | **Not possible on the RP2350**: the board has no CSI connector. This applies to the v0.1 Pi Zero build only |
