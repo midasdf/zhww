@@ -224,17 +224,23 @@ fn parseBpb(sector: *const [sector_size]u8, partition_sector: u32, device_sector
     const root_cluster = std.mem.readInt(u32, sector[44..48], .little);
     if (root_cluster < 2 or root_cluster > cluster_count + 1) return error.InvalidEncoding;
 
-    if (@as(u64, partition_sector) + @as(u64, total_sectors) > device_sectors) return error.Truncated;
+    const volume_end = @as(u64, partition_sector) + @as(u64, total_sectors);
+    if (volume_end > device_sectors) return error.Truncated;
+    // BlockDevice addresses sectors with u32. Reject a volume whose final sector cannot be
+    // represented instead of wrapping layout calculations into an earlier part of the card.
+    if (volume_end > @as(u64, std.math.maxInt(u32)) + 1) return error.InvalidEncoding;
 
-    // When mirroring is disabled, use only the active FAT copy.
+    // When mirroring is enabled, bits 0-3 are reserved and FAT #0 is the read source. Treating
+    // those bits as an active FAT would make flushFat write one copy past the FAT area.
     const ext_flags = std.mem.readInt(u16, sector[40..42], .little);
     const mirrored = (ext_flags & 0x0080) == 0;
-    const active_fat: u8 = @intCast(ext_flags & 0x000F);
-    if (active_fat >= fat_count) return error.InvalidEncoding;
+    const selected_fat: u8 = @intCast(ext_flags & 0x000F);
+    if (!mirrored and selected_fat >= fat_count) return error.InvalidEncoding;
+    const active_fat: u8 = if (mirrored) 0 else selected_fat;
 
     const fs_info_sector = std.mem.readInt(u16, sector[48..50], .little);
     const backup_boot_sector = std.mem.readInt(u16, sector[50..52], .little);
-    const fat_sector: u32 = partition_sector + @as(u32, reserved_sectors);
+    const fat_sector: u32 = @intCast(@as(u64, partition_sector) + reserved_sectors);
 
     return .{
         .partition_sector = partition_sector,
@@ -248,7 +254,7 @@ fn parseBpb(sector: *const [sector_size]u8, partition_sector: u32, device_sector
         .fs_info_sector = fs_info_sector,
         .backup_boot_sector = backup_boot_sector,
         .fat_sector = fat_sector,
-        .data_sector = fat_sector + @as(u32, fat_count) * fat_32,
+        .data_sector = @intCast(@as(u64, fat_sector) + @as(u64, fat_count) * fat_32),
         .cluster_count = cluster_count,
         .active_fat = active_fat,
         .mirrored = mirrored,
@@ -1558,6 +1564,12 @@ fn parseMbr(mbr: *const [sector_size]u8, device: BlockDevice, device_sectors: u6
         }
         try device.readSector(lba, &boot);
         if (parseBpb(&boot, lba, device_sectors)) |bpb| {
+            // The BPB describes the selected partition, not the whole device. Without this
+            // check a crafted card can make writes escape into the following partition.
+            if (bpb.total_sectors > sectors) {
+                last_error = error.InvalidEncoding;
+                continue;
+            }
             return bpb;
         } else |err| {
             last_error = err;
@@ -1575,6 +1587,7 @@ fn parseMbr(mbr: *const [sector_size]u8, device: BlockDevice, device_sectors: u6
         if (@as(u64, lba) + sectors > device_sectors) continue;
         try device.readSector(lba, &boot);
         if (parseBpb(&boot, lba, device_sectors)) |bpb| {
+            if (bpb.total_sectors > sectors) continue;
             return bpb;
         } else |_| {}
     }
@@ -2301,6 +2314,29 @@ test "mount: finds FAT32 in the first 4 MBR entries" {
     var buffer: [64]u8 = @splat(0);
     const data = try volume.readFile("/README.TXT", &buffer);
     try std.testing.expectEqualStrings("hello mbr", data);
+}
+
+test "mount: rejects a BPB that escapes its MBR partition" {
+    const allocator = std.testing.allocator;
+    var image = try TestImage.init(allocator, .{ .partition_sector = 2048 });
+    defer image.deinit(allocator);
+
+    // The device contains the full synthetic volume, but the partition table grants only half
+    // of it. The BPB must not be allowed to authorize writes into a following partition.
+    std.mem.writeInt(u32, image.sector(0)[446 + 12 ..][0..4], image.total_sectors / 2, .little);
+    try std.testing.expectError(error.InvalidEncoding, Fat32.mount(image.device(), allocator));
+}
+
+test "mount: mirrored FAT ignores reserved active-FAT bits" {
+    const allocator = std.testing.allocator;
+    var image = try TestImage.init(allocator, .{});
+    defer image.deinit(allocator);
+    std.mem.writeInt(u16, image.sector(0)[40..42], 1, .little); // mirroring on; low bits reserved
+
+    var volume = try Fat32.mount(image.device(), allocator);
+    defer volume.deinit();
+    try std.testing.expect(volume.bpb.mirrored);
+    try std.testing.expectEqual(@as(u8, 0), volume.bpb.active_fat);
 }
 
 test "mount: a sector size other than 512 is InvalidEncoding" {

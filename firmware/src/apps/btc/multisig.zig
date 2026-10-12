@@ -102,6 +102,7 @@ pub fn parseWitnessScript(script: []const u8) Error!ParsedScript {
         if (pos + 34 > script.len - 1) return error.InvalidEncoding;
         if (result.count >= 15) return error.InvalidEncoding;
         @memcpy(&result.pubkeys[result.count], script[pos + 1 .. pos + 34]);
+        if (!secp256k1.isValidPublicKey(&result.pubkeys[result.count])) return error.InvalidEncoding;
         result.count += 1;
         pos += 34;
     }
@@ -172,6 +173,9 @@ pub fn signP2wsh(
             try signatures.append(allocator, blob);
             break;
         }
+        // CHECKMULTISIG consumes exactly `required` signatures. Supplying signatures for every
+        // available key in a 2-of-3 script leaves an extra stack item and fails clean-stack rules.
+        if (signatures.items.len == parsed.required) break;
     }
 
     if (signatures.items.len < parsed.required) return error.NoMatchingKey;
@@ -288,7 +292,7 @@ test "buildWitness shape (leading empty element)" {
     const allocator = arena.allocator();
 
     const signature = [_]u8{ 0xDE, 0xAD };
-    const script = [_]u8{ 0x52 };
+    const script = [_]u8{0x52};
     const witness = try buildWitness(allocator, &[_][]const u8{&signature}, &script);
     try testing.expectEqual(@as(usize, 3), witness.len);
     try testing.expectEqual(@as(usize, 0), witness[0].len);

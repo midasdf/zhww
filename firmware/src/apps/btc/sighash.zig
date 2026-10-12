@@ -21,8 +21,8 @@ pub const SIGHASH_SINGLE: u32 = 0x03;
 pub const SIGHASH_ANYONECANPAY: u32 = 0x80;
 
 fn isSupported(sighash_type: u32) bool {
-    const base = sighash_type & 0x1F;
-    return base == SIGHASH_ALL;
+    return sighash_type == SIGHASH_ALL or
+        sighash_type == (SIGHASH_ALL | SIGHASH_ANYONECANPAY);
 }
 
 fn hasAnyoneCanPay(sighash_type: u32) bool {
@@ -203,6 +203,7 @@ test "supported sighash types" {
     try testing.expect(isSupported(SIGHASH_ALL | SIGHASH_ANYONECANPAY));
     try testing.expect(!isSupported(SIGHASH_NONE));
     try testing.expect(!isSupported(SIGHASH_SINGLE));
+    try testing.expect(!isSupported(SIGHASH_ALL | 0x40));
     try testing.expect(hasAnyoneCanPay(SIGHASH_ALL | SIGHASH_ANYONECANPAY));
     try testing.expect(!hasAnyoneCanPay(SIGHASH_ALL));
 }

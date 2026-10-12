@@ -98,6 +98,18 @@ test "produces a 2-of-3 multisig signature Bitcoin Core accepts" {
     );
     try testing.expectEqual(required, signatures.len);
 
+    // Supplying all three private keys to a 2-of-3 signer must still emit exactly two
+    // signatures; a third witness item would make the final transaction non-standard.
+    const all_signatures = try zhww.btc_multisig.signP2wsh(
+        allocator,
+        tx,
+        0,
+        witness_script,
+        input_amount,
+        &signers,
+    );
+    try testing.expectEqual(required, all_signatures.len);
+
     // --- assemble the final transaction and compare it against Core's output ---
     const witness = try zhww.btc_multisig.buildWitness(allocator, signatures, witness_script);
     try testing.expectEqual(@as(usize, required + 2), witness.len);
@@ -162,7 +174,7 @@ test "multisig: rejects when there are not enough signatures" {
         .witness = &.{},
     };
     const outputs = try allocator.alloc(zhww.btc_transaction.TxOut, 1);
-    outputs[0] = .{ .value = 1000, .script_pubkey = &[_]u8{ 0x6a } };
+    outputs[0] = .{ .value = 1000, .script_pubkey = &[_]u8{0x6a} };
     const tx = zhww.btc_transaction.Transaction{
         .version = 2,
         .inputs = inputs,

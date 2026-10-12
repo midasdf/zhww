@@ -134,6 +134,19 @@ fn isValidTweak(tweak: [32]u8) bool {
     return value < curve_order;
 }
 
+/// Whether a serialized compressed or uncompressed public key is a curve point accepted by
+/// libsecp256k1. Length and prefix checks alone are not sufficient for untrusted PSBT/xpub data.
+pub fn isValidPublicKey(serialized: []const u8) bool {
+    if (serialized.len != 33 and serialized.len != 65) return false;
+    var pubkey: Pubkey = undefined;
+    return secp256k1_ec_pubkey_parse(
+        context() catch return false,
+        &pubkey,
+        serialized.ptr,
+        serialized.len,
+    ) == 1;
+}
+
 // --- context -------------------------------------------------------------
 
 var global_context: ?*Context = null;
@@ -192,11 +205,13 @@ pub fn privateTweakAdd(priv: [32]u8, tweak: [32]u8) Error![32]u8 {
     if (!isValidPrivateKey(priv)) return error.InvalidKey;
     if (!isValidTweak(tweak)) return error.InvalidTweak;
     var secret = priv;
+    defer std.crypto.secureZero(u8, &secret);
     if (secp256k1_ec_seckey_tweak_add(try context(), &secret, &tweak) == 0) {
         return error.InvalidTweak;
     }
     if (!isValidPrivateKey(secret)) return error.InvalidTweak;
-    return secret;
+    const result = secret;
+    return result;
 }
 
 /// point(tweak) + pub (BIP32 CKDpub).
@@ -341,6 +356,7 @@ pub fn taprootTweakPrivateKey(priv: [32]u8) Error![32]u8 {
     const pub_key = try pubKeyCompressed(priv);
 
     var key = priv;
+    defer std.crypto.secureZero(u8, &key);
     if (pub_key[0] == 3) {
         const value = std.mem.readInt(u256, &priv, .big);
         const negated = @as(u256, curve_order) - value;
@@ -350,7 +366,8 @@ pub fn taprootTweakPrivateKey(priv: [32]u8) Error![32]u8 {
     // the tweak is computed from the internal key's x coordinate (the same value regardless of Y parity)
     var tweak: [32]u8 = undefined;
     hashes.taggedHash(&tweak, "TapTweak", pub_key[1..33]);
-    return privateTweakAdd(key, tweak);
+    const result = try privateTweakAdd(key, tweak);
+    return result;
 }
 
 // --- BIP340 (Schnorr / Taproot) ------------------------------------------
@@ -410,6 +427,7 @@ pub fn schnorrSign(msg: [32]u8, priv: [32]u8) Error![64]u8 {
     const ctx = try context();
 
     var keypair: Keypair = undefined;
+    defer std.crypto.secureZero(u8, &keypair.data);
     if (secp256k1_keypair_create(ctx, &keypair, &priv) == 0) return error.InvalidKey;
 
     var signature: [64]u8 = undefined;
@@ -426,6 +444,7 @@ pub fn schnorrPublicKey(priv: [32]u8) Error![32]u8 {
     const ctx = try context();
 
     var keypair: Keypair = undefined;
+    defer std.crypto.secureZero(u8, &keypair.data);
     if (secp256k1_keypair_create(ctx, &keypair, &priv) == 0) return error.InvalidKey;
 
     var pubkey: XOnlyPubkey = undefined;

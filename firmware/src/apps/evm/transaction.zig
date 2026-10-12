@@ -371,6 +371,7 @@ pub fn signLegacy(out: []u8, tx: LegacyTx, priv: [32]u8) Error![]u8 {
 
 /// Signs an EIP-1559 (type 2) transaction and writes the signed raw tx to `out`.
 pub fn signEip1559(out: []u8, tx: Eip1559Tx, priv: [32]u8) Error![]u8 {
+    if (tx.max_priority_fee_per_gas > tx.max_fee_per_gas) return error.InvalidEncoding;
     const signature = try signHash(try eip1559SigningHash(tx), priv);
     return encodeEip1559Signed(out, tx, signature.y_parity, signature.r, signature.s);
 }
@@ -423,9 +424,16 @@ pub fn decode(allocator: std.mem.Allocator, raw: []const u8) Error!Decoded {
     };
 }
 
-/// Collects the items directly under the list in order (nested lists are skipped as one item).
-fn topLevelItems(allocator: std.mem.Allocator, payload: []const u8) Error![]const []const u8 {
-    var items = std.ArrayList([]const u8).empty;
+const TopLevelItem = union(enum) {
+    bytes: []const u8,
+    list: []const u8,
+};
+
+/// Collect the items directly under a list while retaining nested lists as one typed item.
+/// Silently dropping access-list items shifts every later field and can make a decoder display
+/// a transaction different from the one represented by the RLP.
+fn topLevelItems(allocator: std.mem.Allocator, payload: []const u8) Error![]const TopLevelItem {
+    var items = std.ArrayList(TopLevelItem).empty;
     errdefer items.deinit(allocator);
 
     var iterator = rlp.Iterator.open(payload);
@@ -433,9 +441,12 @@ fn topLevelItems(allocator: std.mem.Allocator, payload: []const u8) Error![]cons
     while (try iterator.next()) |item| {
         switch (item) {
             .bytes => |bytes| {
-                if (depth == 0) try items.append(allocator, bytes);
+                if (depth == 0) try items.append(allocator, .{ .bytes = bytes });
             },
-            .list => depth += 1,
+            .list => |list_payload| {
+                if (depth == 0) try items.append(allocator, .{ .list = list_payload });
+                depth += 1;
+            },
             .list_end => {
                 if (depth == 0) return error.InvalidEncoding;
                 depth -= 1;
@@ -445,6 +456,41 @@ fn topLevelItems(allocator: std.mem.Allocator, payload: []const u8) Error![]cons
     if (depth != 0) return error.InvalidEncoding;
     try iterator.finish();
     return items.toOwnedSlice(allocator);
+}
+
+fn bytesOf(item: TopLevelItem) Error![]const u8 {
+    return switch (item) {
+        .bytes => |bytes| bytes,
+        .list => error.InvalidEncoding,
+    };
+}
+
+fn listOf(item: TopLevelItem) Error![]const u8 {
+    return switch (item) {
+        .list => |payload| payload,
+        .bytes => error.InvalidEncoding,
+    };
+}
+
+fn validateSignature(r_payload: []const u8, s_payload: []const u8) Error!void {
+    const r = try rlp.decodeUintPayload(r_payload);
+    const s = try rlp.decodeUintPayload(s_payload);
+    if (r == 0 or r >= secp256k1.curve_order or s == 0 or s > secp256k1.curve_order / 2) {
+        return error.InvalidEncoding;
+    }
+}
+
+fn validateAccessList(allocator: std.mem.Allocator, item: TopLevelItem) Error!void {
+    const entries = try topLevelItems(allocator, try listOf(item));
+    for (entries) |entry| {
+        const fields = try topLevelItems(allocator, try listOf(entry));
+        if (fields.len != 2) return error.InvalidEncoding;
+        if ((try bytesOf(fields[0])).len != 20) return error.InvalidEncoding;
+        const keys = try topLevelItems(allocator, try listOf(fields[1]));
+        for (keys) |key| {
+            if ((try bytesOf(key)).len != 32) return error.InvalidEncoding;
+        }
+    }
 }
 
 /// A 20-byte address. Empty means contract creation (null).
@@ -457,21 +503,24 @@ fn payloadToAddress(payload: []const u8) Error!?[20]u8 {
 fn decodeLegacy(allocator: std.mem.Allocator, raw: []const u8) Error!Decoded {
     const payload = try rlp.decodeList(raw);
     const items = try topLevelItems(allocator, payload);
-    if (items.len < 6) return error.InvalidEncoding;
+    if (items.len != 6 and items.len != 9) return error.InvalidEncoding;
 
     var decoded = Decoded{ .kind = .legacy };
-    decoded.nonce = try rlp.decodeUintPayload(items[0]);
-    decoded.gas_price = try rlp.decodeUintPayload(items[1]);
-    decoded.gas_limit = try rlp.decodeUintPayload(items[2]);
-    decoded.to = try payloadToAddress(items[3]);
-    decoded.value = try rlp.decodeUintPayload(items[4]);
-    decoded.data = items[5];
+    decoded.nonce = try rlp.decodeUintPayload(try bytesOf(items[0]));
+    decoded.gas_price = try rlp.decodeUintPayload(try bytesOf(items[1]));
+    decoded.gas_limit = try rlp.decodeUintPayload(try bytesOf(items[2]));
+    decoded.to = try payloadToAddress(try bytesOf(items[3]));
+    decoded.value = try rlp.decodeUintPayload(try bytesOf(items[4]));
+    decoded.data = try bytesOf(items[5]);
 
-    // A signed transaction continues with v, r, s
-    if (items.len >= 9) {
+    // A signed EIP-155 transaction continues with v, r, s. Pre-EIP-155 27/28 signatures
+    // are deliberately rejected because this project does not sign or endorse replayable txs.
+    if (items.len == 9) {
+        const v = try rlp.decodeUintPayload(try bytesOf(items[6]));
+        if (v < 35) return error.InvalidEncoding;
+        try validateSignature(try bytesOf(items[7]), try bytesOf(items[8]));
         decoded.signed = true;
-        const v = try rlp.decodeUintPayload(items[6]);
-        if (v >= 35) decoded.chain_id = (v - 35) / 2; // EIP-155
+        decoded.chain_id = (v - 35) / 2;
     }
     return decoded;
 }
@@ -487,30 +536,40 @@ fn decodeTyped(
     var decoded = Decoded{ .kind = kind };
     switch (kind) {
         .eip1559 => {
-            if (items.len < 9) return error.InvalidEncoding;
-            decoded.chain_id = try rlp.decodeUintPayload(items[0]);
-            decoded.nonce = try rlp.decodeUintPayload(items[1]);
-            decoded.max_priority_fee_per_gas = try rlp.decodeUintPayload(items[2]);
-            decoded.max_fee_per_gas = try rlp.decodeUintPayload(items[3]);
-            decoded.gas_limit = try rlp.decodeUintPayload(items[4]);
-            decoded.to = try payloadToAddress(items[5]);
-            decoded.value = try rlp.decodeUintPayload(items[6]);
-            decoded.data = items[7];
-            // The access list is a nested list, so it does not count as an item.
-            // 8 items + signature (yParity, r, s) makes 11.
-            decoded.signed = items.len >= 11;
+            if (items.len != 9 and items.len != 12) return error.InvalidEncoding;
+            decoded.chain_id = try rlp.decodeUintPayload(try bytesOf(items[0]));
+            decoded.nonce = try rlp.decodeUintPayload(try bytesOf(items[1]));
+            decoded.max_priority_fee_per_gas = try rlp.decodeUintPayload(try bytesOf(items[2]));
+            decoded.max_fee_per_gas = try rlp.decodeUintPayload(try bytesOf(items[3]));
+            if (decoded.max_priority_fee_per_gas.? > decoded.max_fee_per_gas.?) return error.InvalidEncoding;
+            decoded.gas_limit = try rlp.decodeUintPayload(try bytesOf(items[4]));
+            decoded.to = try payloadToAddress(try bytesOf(items[5]));
+            decoded.value = try rlp.decodeUintPayload(try bytesOf(items[6]));
+            decoded.data = try bytesOf(items[7]);
+            try validateAccessList(allocator, items[8]);
+            if (items.len == 12) {
+                const parity = try rlp.decodeUintPayload(try bytesOf(items[9]));
+                if (parity > 1) return error.InvalidEncoding;
+                try validateSignature(try bytesOf(items[10]), try bytesOf(items[11]));
+                decoded.signed = true;
+            }
         },
         .eip2930 => {
-            if (items.len < 8) return error.InvalidEncoding;
-            decoded.chain_id = try rlp.decodeUintPayload(items[0]);
-            decoded.nonce = try rlp.decodeUintPayload(items[1]);
-            decoded.gas_price = try rlp.decodeUintPayload(items[2]);
-            decoded.gas_limit = try rlp.decodeUintPayload(items[3]);
-            decoded.to = try payloadToAddress(items[4]);
-            decoded.value = try rlp.decodeUintPayload(items[5]);
-            decoded.data = items[6];
-            // 7 items + signature (yParity, r, s) makes 10.
-            decoded.signed = items.len >= 10;
+            if (items.len != 8 and items.len != 11) return error.InvalidEncoding;
+            decoded.chain_id = try rlp.decodeUintPayload(try bytesOf(items[0]));
+            decoded.nonce = try rlp.decodeUintPayload(try bytesOf(items[1]));
+            decoded.gas_price = try rlp.decodeUintPayload(try bytesOf(items[2]));
+            decoded.gas_limit = try rlp.decodeUintPayload(try bytesOf(items[3]));
+            decoded.to = try payloadToAddress(try bytesOf(items[4]));
+            decoded.value = try rlp.decodeUintPayload(try bytesOf(items[5]));
+            decoded.data = try bytesOf(items[6]);
+            try validateAccessList(allocator, items[7]);
+            if (items.len == 11) {
+                const parity = try rlp.decodeUintPayload(try bytesOf(items[8]));
+                if (parity > 1) return error.InvalidEncoding;
+                try validateSignature(try bytesOf(items[9]), try bytesOf(items[10]));
+                decoded.signed = true;
+            }
         },
         .legacy => unreachable,
     }
@@ -620,7 +679,7 @@ test "EIP-1559 access list and contract creation match an independent implementa
         .to = null,
         .value = 0,
         .data = "`\x80`@R",
-        .access_list = &[_]AccessListItem{ .{ .address = hexBytes(20, "3535353535353535353535353535353535353535"), .storage_keys = &[_][32]u8{ hexBytes(32, "0000000000000000000000000000000000000000000000000000000000000001"), hexBytes(32, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff") } } },
+        .access_list = &[_]AccessListItem{.{ .address = hexBytes(20, "3535353535353535353535353535353535353535"), .storage_keys = &[_][32]u8{ hexBytes(32, "0000000000000000000000000000000000000000000000000000000000000001"), hexBytes(32, "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff") } }},
     };
     var payload_buf: [256]u8 = undefined;
     var out: [256]u8 = undefined;
@@ -815,6 +874,52 @@ test "decodes a signed legacy transaction (the EIP-155 official example)" {
     const to = decoded.to.?;
     try testing.expectEqual(@as(u8, 0x35), to[0]);
     try testing.expectEqual(@as(u8, 0x35), to[19]);
+}
+
+test "decodes an unsigned EIP-1559 transaction without dropping its access list" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const tx = Eip1559Tx{
+        .chain_id = 1,
+        .nonce = 7,
+        .max_priority_fee_per_gas = 1,
+        .max_fee_per_gas = 2,
+        .gas_limit = 21_000,
+        .to = hexBytes(20, "3535353535353535353535353535353535353535"),
+        .value = 3,
+        .data = "abc",
+        .access_list = &[_]AccessListItem{.{
+            .address = hexBytes(20, "1111111111111111111111111111111111111111"),
+            .storage_keys = &[_][32]u8{hexBytes(32, "2222222222222222222222222222222222222222222222222222222222222222")},
+        }},
+    };
+    var raw: [512]u8 = undefined;
+    const decoded = try decode(allocator, try eip1559SigningPayload(&raw, tx));
+    try testing.expectEqual(Kind.eip1559, decoded.kind);
+    try testing.expect(!decoded.signed);
+    try testing.expectEqual(@as(u256, 1), decoded.chain_id.?);
+    try testing.expectEqual(@as(u256, 3), decoded.value.?);
+    try testing.expectEqualStrings("abc", decoded.data);
+}
+
+test "EIP-1559 signing rejects a priority fee above the max fee" {
+    const tx = Eip1559Tx{
+        .chain_id = 1,
+        .nonce = 0,
+        .max_priority_fee_per_gas = 3,
+        .max_fee_per_gas = 2,
+        .gas_limit = 21_000,
+        .to = null,
+        .value = 0,
+        .data = "",
+    };
+    var out: [256]u8 = undefined;
+    try testing.expectError(
+        error.InvalidEncoding,
+        signEip1559(&out, tx, hexBytes(32, "4646464646464646464646464646464646464646464646464646464646464646")),
+    );
 }
 
 test "decodes a signed EIP-1559 transaction (eth-account output)" {

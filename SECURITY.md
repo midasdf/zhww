@@ -65,7 +65,7 @@ The following are handled with priority.
 | Class | Example |
 |---|---|
 | Key leakage | The seed, private keys or passphrase remain in memory or storage, or are sent outside the device |
-| Signing something other than what is displayed | What the screen shows and what is actually signed disagree (a violation of invariant I-3 in [docs/02-architecture.md](docs/02-architecture.md)) |
+| Signing something other than what is displayed | What the screen shows and what is actually signed disagree. The target I-3 boundary is not yet implemented; see [the 2026-10-13 review](docs/10-security-audit-2026-10-13.md). |
 | Forged signatures / missing verification | A generated signature does not pass verification, or someone else's signature is accepted |
 | Spoofed fees or destinations | Paying to an output that is not displayed, or inflating the fee |
 | Missing PSBT validation | Accepting an invalid PSBT (duplicate keys, wrong key lengths, mismatched map counts, etc.) |

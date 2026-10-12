@@ -174,7 +174,7 @@ So that the UI can be pinned down without a device, **screen composition is made
 | [src/ui/font.zig](../firmware/src/ui/font.zig) | 8×8 bitmap font (public domain, source credited) | Glyph shape verification |
 | [src/ui/framebuffer.zig](../firmware/src/ui/framebuffer.zig) | RGB565 drawing (points, rectangles, text, dot rows). Out-of-range coordinates are clipped | Verified pixel by pixel |
 | [src/ui/screen.zig](../firmware/src/ui/screen.zig) | 240×240 screen layout (title, label/value, warnings, QR, footer) | Drawing verified per region |
-| [src/ui/qr.zig](../firmware/src/ui/qr.zig) | QR encoder (ISO/IEC 18004. Display only; no decoder) | **Every module of the matrix matches** the independent implementation (qrcodegen) |
+| [src/ui/qr.zig](../firmware/src/ui/qr.zig) / [src/ui/qr_decode.zig](../firmware/src/ui/qr_decode.zig) | QR encoder and host-side decoder (ISO/IEC 18004) | Encoder matrices and decoder outputs are cross-checked against independent implementations |
 | [src/cli/png.zig](../firmware/src/cli/png.zig) | PNG output (uncompressed zlib. No external libraries) | Structure and CRC / Adler-32 verified |
 
 **How to view the screens on a PC** (no device required):
@@ -217,7 +217,7 @@ It has been confirmed that a confirmation screen showing "destination, amount an
 ## 6. What does not need changing
 
 - `core/` and `apps/` (BIP39/BIP32, addresses, PSBT, signing, EVM, ERC-7730, UR) stay **as they are**
-- The 322 tests, including the official test vectors, continue to run on the host to prevent regressions
+- The 391 tests, including the official test vectors, continue to run on the host to prevent regressions
 - The development CLI stays as it is too (used for host-side verification and vector generation)
 
 ## 7. Open decision: how to handle QR
@@ -276,7 +276,7 @@ The specification agreed with the PC / phone-side tools is fixed here.
 
 ### Screen flow (reproducible on a PC)
 
-Even without a device, **every screen** can be checked as a PNG. The mapping between states and screens lives in
+Even without a device, screen components and the current illustrative walkthrough can be checked as PNGs. The walkthrough is not an approval state machine and does not enforce display-before-signing. The mapping between states and screens lives in
 [src/app/device.zig](../firmware/src/app/device.zig), and **the device's main loop and the PC preview use the same functions**.
 
 ```bash
@@ -316,7 +316,7 @@ All are shown on screen with a red note that **nothing was signed**.
 
 ## 8. Verification plan
 
-1. **Host**: keep the existing 322 tests (regression detection)
+1. **Host**: keep the existing 391 tests (regression detection)
 2. **Target**: a self-test screen that runs part of the same vectors on the device (shows at boot whether "the BIP39/BIP32/PSBT vectors passed")
 3. **Signing speed**: measure the time per signature on the device (input for the usability decision)
 4. **Device**: send on signet and verify with Core / a block explorer

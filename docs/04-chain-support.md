@@ -1,29 +1,32 @@
 # 04. Per-chain implementation specification (BTC / EVM)
 
 - **Target version**: v0.1
-- **Last updated**: 2026-10-12
+- **Last updated**: 2026-10-13
 
 ---
 
 ## 1. Support matrix
 
-**Status**: ✅ implemented / 🔄 in progress / ⬜ not started / ❌ out of scope
+**Status**: ✅ integrated in the normal host workflow / 🧩 standalone component only / 🔄 in progress / ⬜ not started / ❌ out of scope
+
+The matrix describes code availability, not hardware-wallet readiness. There is no physical approval
+state machine. See the [2026-10-13 internal review](10-security-audit-2026-10-13.md).
 
 | Feature | BTC | EVM | Priority |
 |---|---|---|---|
 | Single-sig P2WPKH (BIP84) | ✅ Implemented | — | Required |
 | Single-sig P2PKH / P2SH-P2WPKH | ✅ Implemented | — | Medium |
 | Single-sig P2PK | ✅ Implemented (signing and finalization) | — | — |
-| Multisig P2WSH (no P2SH) | ✅ Implemented (2-of-3; BIP67 sorting also supported) | — | High |
-| Taproot key-path (BIP86) | ✅ Implemented (address generation and key-path signing; script path is out of scope) | — | Medium |
+| Multisig P2WSH (no P2SH) | 🧩 Standalone 2-of-3 signer/test; not in `signPsbtBytes` | — | High |
+| Taproot key-path (BIP86) | 🧩 Address/signing module and test; not in `signPsbtBytes` | — | Medium |
 | Taproot script-path | ❌ Out of scope | — | — |
 | PSBT (BIP174) parse / validate / serialize | ✅ Implemented | — | Required |
-| Legacy / EIP-1559 transactions | — | ✅ Implemented | Required |
-| ERC-20 transfer / approve | — | ✅ Implemented (with warnings for dangerous patterns) | Required |
-| EIP-191 personal_sign | — | ✅ Implemented | Required |
-| EIP-712 typed data v4 | — | ✅ Implemented | Required |
-| ERC-7730 clear signing | — | ✅ Implemented (descriptor application and warnings) | High |
-| QR transport (BC-UR) | ✅ Implemented (Bytewords / CBOR / single- and multi-part) | ✅ Same as BTC | Required |
+| Legacy / EIP-1559 transactions | — | 🧩 Parse/sign modules and CLI; no approval integration | Required |
+| ERC-20 transfer / approve | — | 🧩 ABI/rendering components and warnings | Required |
+| EIP-191 personal_sign | — | 🧩 Hashing only | Required |
+| EIP-712 typed data v4 | — | 🧩 Hash/sign library; no approval integration | Required |
+| ERC-7730 clear signing | — | 🧩 Descriptor renderer; not connected to signing | High |
+| QR transport (BC-UR) | 🧩 Host encode/decode and sequential reassembly | 🧩 Same as BTC | Required |
 | ed25519-family chains | ❌ v0.2 or later | ❌ | — |
 
 ---
@@ -47,7 +50,7 @@
 
 **Acceptance validation**
 
-1. Parse `PSBT_GLOBAL_UNSIGNED_TX` or the PSBTv2 fields
+1. Parse `PSBT_GLOBAL_UNSIGNED_TX` from PSBTv0. PSBTv2 is not implemented
 2. Confirm that every input has either `witness_utxo` or `non_witness_utxo`
    - **Refuse to sign a PSBT that contains an input with neither.** If the input amount is unknown, the fee cannot be displayed and a fee attack cannot be detected
 3. Confirm that each input's `PSBT_IN_BIP32_DERIVATION` (or master fingerprint) matches a key derived from this device's seed
@@ -81,8 +84,8 @@
 ### 2.3 QR / files
 
 - **BC-UR**: `ur:crypto-psbt` (single), `ur:bytes`. Large payloads are sent and received as animated QR (split into frames)
-- **SeedQR**: standard (12 words: 25×25 / 24 words: 29×29), Compact SeedQR (12 words: 21×21 / 24 words: 25×25)
-- **SD card**: read and write `.psbt` files. As a rule, unmount after boot
+- **SeedQR target**: standard (12 words: 25×25 / 24 words: 29×29), Compact SeedQR (12 words: 21×21 / 24 words: 25×25). SeedQR ingestion is not implemented
+- **SD card**: FAT32 read/write and the host image handoff are implemented. Unmount-after-boot is a future device requirement
 
 ### 2.4 Test vectors
 

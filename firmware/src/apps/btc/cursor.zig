@@ -71,11 +71,16 @@ pub const Cursor = struct {
         return value;
     }
 
-    /// A byte string prefixed with its CompactSize length.
-    pub fn readVarBytes(self: *Cursor) Error![]const u8 {
-        const length = try self.readVarInt();
+    /// Read a u64-sized field after checking it against the remaining input before narrowing
+    /// to `usize` (important on 32-bit embedded targets).
+    pub fn readSizedBytes(self: *Cursor, length: u64) Error![]const u8 {
         if (length > self.remaining()) return error.Truncated;
         return self.readBytes(@intCast(length));
+    }
+
+    /// A byte string prefixed with its CompactSize length.
+    pub fn readVarBytes(self: *Cursor) Error![]const u8 {
+        return self.readSizedBytes(try self.readVarInt());
     }
 };
 

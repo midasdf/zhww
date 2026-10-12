@@ -1,7 +1,7 @@
 # 05. Threat model
 
 - **Target version**: v0.1
-- **Last updated**: 2026-10-12
+- **Last updated**: 2026-10-13
 
 This document aims to state explicitly what can be protected and what cannot. **Never write that something unprotected is protected** is the highest-priority rule.
 
@@ -49,7 +49,7 @@ This document aims to state explicitly what can be protected and what cannot. **
 | Voltage / clock glitching | Fault injection during signing can expose keys |
 | Substitution by a man in the middle | The entire device can be swapped |
 
-**Countermeasures**
+**Required countermeasures for release**
 - The seed exists only in RAM. Make **powering off after use** a strict operational rule
 - Make multisig (2-of-3 or better) the recommended configuration so that seizing one device does not lose the assets
 - Passphrase separation is recommended
@@ -66,12 +66,16 @@ This document aims to state explicitly what can be protected and what cannot. **
 | chainId spoofing | Make the user sign a transaction for a different chain |
 | Visual review defeated by sheer length | Exhaust the user with a large number of outputs or enormous calldata so that they give up on checking |
 
-**Countermeasures**
+**Required countermeasures for release**
 - **The double-computation principle** ([02-architecture.md](02-architecture.md) §2 I-3): `apps` and `core` compute the hash to be signed independently, and signing is refused if they disagree
 - Addresses are shown **in full**. Truncation and ellipses are forbidden
 - EVM always displays the chainId
 - Dangerous patterns (unlimited approve, `setApprovalForAll`, `permit`, unknown contract, contract creation) get a red warning + additional approval
 - Limits are placed on the number of outputs and the calldata length; anything beyond them is refused (prevents DoS and defeat of visual review)
+
+**Current gap:** I-3, the physical approval gate, mandatory page traversal, and the integrated
+EVM clear-signing flow are not implemented. The existing CLI signing commands sign immediately.
+See the [2026-10-13 internal review](10-security-audit-2026-10-13.md).
 
 **Residual risk**: nothing can prevent a user who ignores the warning and approves anyway (T-5).
 
@@ -120,12 +124,15 @@ This document aims to state explicitly what can be protected and what cannot. **
 
 ### 4-6. Implementation bugs (T-2, T-5)
 
-**Countermeasures**
+**Implemented verification and required countermeasures**
 - Elliptic-curve arithmetic uses only the audited libsecp256k1 (pure-Python ECDSA is forbidden)
 - Nonces use RFC6979 deterministic generation
 - RLP, Bech32/Bech32m and PSBT are verified for exact agreement with the official test vectors
 - **Byte-for-byte cross-checks** against external implementations (Bitcoin Core / viem / ethers.js) run in CI
 - To prevent descriptors and implementation from drifting apart, ERC-7730 display is pinned by snapshot tests
+
+Passing these tests does not close the architectural gaps above. The review found exploitable
+display/signing inconsistency and parser boundary issues despite the existing test suite.
 
 ### 4-7. Cross-chain-specific risks
 

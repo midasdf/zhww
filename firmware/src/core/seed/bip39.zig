@@ -144,10 +144,12 @@ pub fn mnemonicToSeed(out: *[64]u8, mnemonic: []const u8, passphrase: []const u8
     if (!isAscii(mnemonic) or !isAscii(passphrase)) return error.UnsupportedNormalization;
 
     var normalized: [24 * 9]u8 = undefined;
+    defer std.crypto.secureZero(u8, &normalized);
     const mnemonic_normalized = try normalizeWhitespace(&normalized, mnemonic);
     if (passphrase.len > 128) return error.BufferTooSmall;
 
     var salt: [8 + 128]u8 = undefined;
+    defer std.crypto.secureZero(u8, &salt);
     @memcpy(salt[0..8], "mnemonic");
     @memcpy(salt[8..][0..passphrase.len], passphrase);
     const salt_slice = salt[0 .. 8 + passphrase.len];

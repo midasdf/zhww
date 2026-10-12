@@ -128,18 +128,21 @@ fn checksumBytes(checksum: u32) [checksum_len]u8 {
 
 /// String length of `data_len` bytes encoded as a body (checksum excluded).
 fn bodyLength(data_len: usize, style: Style) usize {
-    const len: usize = switch (style) {
-        .minimal => data_len * minimal_len,
-        .standard, .uri => if (data_len == 0) 0 else data_len * word_len + (data_len - 1),
+    return switch (style) {
+        .minimal => std.math.mul(usize, data_len, minimal_len) catch std.math.maxInt(usize),
+        .standard, .uri => if (data_len == 0) 0 else blk: {
+            const words_len = std.math.mul(usize, data_len, word_len) catch break :blk std.math.maxInt(usize);
+            break :blk std.math.add(usize, words_len, data_len - 1) catch std.math.maxInt(usize);
+        },
     };
-    return len;
 }
 
 /// String length of `data_len` bytes encoded with a checksum.
 ///
 /// Used to size the output buffer.
 pub fn encodedLength(data_len: usize, style: Style) usize {
-    return bodyLength(data_len + checksum_len, style);
+    const total = std.math.add(usize, data_len, checksum_len) catch return std.math.maxInt(usize);
+    return bodyLength(total, style);
 }
 
 /// Writes one word (or minimal representation). `pos` is the write position.
@@ -186,7 +189,7 @@ pub fn encodeWithChecksum(out: []u8, data: []const u8, style: Style) Error![]u8 
 /// Used when the CBOR header and body are held separately (`encodeSingleByteString` in `ur.zig`).
 pub fn encodeWithChecksumParts(out: []u8, parts: []const []const u8, style: Style) Error![]u8 {
     var total: usize = 0;
-    for (parts) |part| total += part.len;
+    for (parts) |part| total = std.math.add(usize, total, part.len) catch return error.BufferTooSmall;
     if (out.len < encodedLength(total, style)) return error.BufferTooSmall;
 
     var pos: usize = 0;

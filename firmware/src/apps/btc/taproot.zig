@@ -154,13 +154,27 @@ pub fn signKeyPath(
         prevouts,
         SIGHASH_DEFAULT,
     );
-    const tweaked = try secp256k1.taprootTweakPrivateKey(priv);
-    return secp256k1.schnorrSign(message, tweaked);
+    const internal_key = try secp256k1.schnorrPublicKey(priv);
+    const expected_output_key = try secp256k1.taprootOutputKey(internal_key);
+    const actual_output_key = outputKeyFromScript(prevouts[input_index].script_pubkey) orelse
+        return error.InvalidEncoding;
+    if (!std.mem.eql(u8, &expected_output_key, &actual_output_key)) return error.NoMatchingKey;
+
+    var tweaked = try secp256k1.taprootTweakPrivateKey(priv);
+    defer std.crypto.secureZero(u8, &tweaked);
+    const signature = try secp256k1.schnorrSign(message, tweaked);
+    if (!try secp256k1.schnorrVerify(signature, message, expected_output_key)) {
+        return error.SignatureInvalid;
+    }
+    return signature;
 }
 
 /// Witness for a key path signature (a single 64-byte signature).
-pub fn witnessFrom(signature: [64]u8) [1][]const u8 {
-    return .{&signature};
+///
+/// The caller owns `signature` and must keep it alive while the returned witness is used.
+/// Taking a pointer avoids returning a slice into a by-value parameter's dead stack storage.
+pub fn witnessFrom(signature: *const [64]u8) [1][]const u8 {
+    return .{signature};
 }
 
 // ---------------------------------------------------------------- tests
@@ -222,13 +236,18 @@ test "key path signature passes BIP340 verification and is deterministic" {
     const again = try signKeyPath(allocator, tx, 0, prevouts, priv);
     try testing.expectEqualSlices(u8, &signature, &again);
 
+    // A key that does not own the UTXO is refused before returning a useless signature.
+    var wrong_priv = priv;
+    wrong_priv[31] +%= 1;
+    try testing.expectError(error.NoMatchingKey, signKeyPath(allocator, tx, 0, prevouts, wrong_priv));
+
     // A tampered signature does not verify
     var broken = signature;
     broken[0] ^= 0x01;
     try testing.expect(!try secp256k1.schnorrVerify(broken, message, output_key));
 
     // The witness is a single signature (not 65 bytes with a sighash type)
-    const witness = witnessFrom(signature);
+    const witness = witnessFrom(&signature);
     try testing.expectEqual(@as(usize, 1), witness.len);
     try testing.expectEqual(@as(usize, 64), witness[0].len);
 }

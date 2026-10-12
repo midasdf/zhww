@@ -296,6 +296,25 @@ test "signs and finalizes 3 kinds of input (P2WPKH / P2PKH / P2SH-P2WPKH)" {
         reparsed.inputs[0].partial_sigs[0].signature,
         workflow.result.partial_sigs[0].signature,
     );
+
+    // The requested sighash is part of the signing request and must not be ignored.
+    var modified = psbt;
+    const modified_inputs = try allocator.dupe(zhww.btc_psbt.Input, psbt.inputs);
+    modified.inputs = modified_inputs;
+    modified.inputs[0].sighash_type = zhww.btc_sighash.SIGHASH_NONE;
+    try testing.expectError(error.UnsupportedSighash, zhww.btc_sign.sign(allocator, modified, keys));
+
+    // A finalized input must not receive another partial signature.
+    modified.inputs[0].sighash_type = null;
+    modified.inputs[0].final_script_witness = &.{};
+    try testing.expectError(error.InvalidPsbt, zhww.btc_sign.sign(allocator, modified, keys));
+
+    // For the legacy input, an attacker-supplied witness_utxo must not override the previous
+    // transaction used by the signer/display to determine the amount and script.
+    modified.inputs[0].final_script_witness = null;
+    modified.inputs[1].witness_utxo = .{ .value = 1, .script_pubkey = &spk84 };
+    try testing.expectError(error.InvalidPsbt, zhww.btc_sign.sign(allocator, modified, keys));
+    try testing.expectError(error.InvalidPsbt, zhww.btc_sign.utxoForDisplay(allocator, modified, 1));
 }
 
 fn appendWitnessUtxo(

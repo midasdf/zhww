@@ -1,11 +1,17 @@
 # 02. Architecture
 
 - **Target version**: v0.1
-- **Last updated**: 2026-10-12
+- **Last updated**: 2026-10-13
+
+> **Implementation status:** this document describes the target architecture. The current
+> host-side code does not yet enforce I-2 or I-3, has no physical approval state machine, and
+> does not provide session-wide secret erasure. See the
+> [2026-10-13 internal review](10-security-audit-2026-10-13.md). Statements below are requirements,
+> not claims about the current implementation, unless explicitly marked as implemented.
 
 ---
 
-## 1. Overall structure
+## 1. Target structure
 
 ```
                  ┌────────────────────────────────────────────────────────────────┐
@@ -46,7 +52,7 @@
 
 > Note: the `OS` row describes the v0.1 Linux build. The main v0.2 target, the RP2350-PiZero, is a microcontroller board that does not run Linux ([08-rp2350-pizero.md](08-rp2350-pizero.md)); there the firmware runs directly on the MCU, with no OS layer. The firmware has not yet run on any hardware.
 
-## 2. Layer responsibilities and prohibited actions
+## 2. Target layer responsibilities and prohibited actions
 
 | Layer | Responsibility | Prohibited |
 |---|---|---|
@@ -55,8 +61,8 @@
 | `core/` | Key derivation, signing, final confirmation of what is displayed, erasure of secrets | Chain-specific interpretation (handles only the hash received from `apps/`) |
 
 **Invariant I-1**: `core` does not know "which chain" it is dealing with.
-**Invariant I-2**: `apps` holds no key material. Signing is limited to calling the `core` API with "this path, these 32 bytes".
-**Invariant I-3**: The hash to be signed is computed **independently** by `apps` and `core`, and signing does not proceed unless the two match (the dual-computation principle). This prevents a bug on the `apps` side from turning into a "mismatch between what is displayed and what is actually signed".
+**Invariant I-2 (not implemented)**: `apps` holds no key material. Signing is limited to calling the `core` API with "this path, these 32 bytes". The current BTC and EVM application code receives private key material directly.
+**Invariant I-3 (not implemented)**: The hash to be signed is computed **independently** by `apps` and `core`, and signing does not proceed unless the two match (the dual-computation principle). The current code has one chain-specific computation and no independent comparison.
 
 ## 3. Key management
 
@@ -87,11 +93,17 @@ EVM gives priority to interoperability and defaults to `60'`. Some chains have t
 
 ### 3.3 Protection policy
 
-- The seed is expanded only in RAM and is **zeroed on exit**.
+Target policy:
+
+- The seed is expanded only in RAM and is securely zeroed when the approved session ends.
 - Nothing is persisted except settings (display unit, chainId, etc.). No secrets are written to persistent storage.
 - The SD card is unmounted after boot completes, or remounted read-only.
 
-## 4. Signing flow
+The current host tools securely erase several temporary buffers, but extended private keys and
+allocator/session state are not comprehensively wiped. There is no device boot flow that enforces
+the SD-card policy.
+
+## 4. Target signing flow (not yet implemented end to end)
 
 ```
 Host                  transport      apps                   core               screen
@@ -113,7 +125,7 @@ Host                  transport      apps                   core               s
   │                       │                                     memory wipe       │
 ```
 
-### 4.1 Mandatory requirements for the approval UI
+### 4.1 Mandatory requirements for the future approval UI
 
 1. The destination address must be **displayed in full** (paging is allowed; truncation with an ellipsis in the middle is forbidden)
 2. Amounts are displayed in human units (BTC / ETH / token amount), not in the smallest unit. For tokens, decimals are taken from the descriptor
@@ -144,16 +156,20 @@ The implementation language is **Zig** ([firmware/README.md](../firmware/README.
 | RIPEMD-160 | **Implemented in-house**, because some environments can depend on neither the Zig standard library nor OpenSSL (verified against the official vectors) |
 | Keccak-256 | Zig standard library (`std.crypto.hash.sha3.Keccak256`). Do not confuse it with SHA3-256 |
 | RLP | Implemented in-house. Exact agreement with the official test vectors is mandatory |
-| QR | Port the BC-UR reference implementation: done (Bytewords / CBOR / single- and multi-part). On-device QR input/output is not implemented yet — the UI is a host-side preview |
+| QR | Bytewords, CBOR, sequential BC-UR, QR encode/decode, and host tools are implemented. Camera/display HAL integration and the on-device scan/approval loop are not implemented |
 
-**Memory policy**: the core uses no dynamic memory (fixed-size buffers and slices). This structurally rules out
-allocation failure, leaks and fragmentation, and makes embedded behaviour predictable.
+**Target memory policy**: key primitives use fixed-size buffers where practical. Parsing and signing
+workflows currently use caller-provided allocators, including fixed-buffer allocators in the Pico
+compile smoke path. Allocation success alone does not establish secret erasure.
 
-## 7. Error handling
+## 7. Target error handling
 
-- Parse failures, checksum mismatches and descriptor chainId mismatches **all reject signing**, and the reason is displayed on screen.
-- If the two independent computations of the hash to be signed do not match, the session is destroyed immediately and a restart is prompted (possible tampering or a bug).
-- On an unexpected exception, the seed is wiped and the device returns to the equivalent of a power-off state.
+- Parse failures, checksum mismatches and descriptor chainId mismatches must reject signing, and the reason must be displayed on screen.
+- If two genuinely independent computations of the hash to be signed do not match, the session must be destroyed immediately and a restart prompted.
+- On an unexpected failure, the seed must be wiped and the device must return to the equivalent of a power-off state.
+
+The current libraries generally return parse/signing errors, but no device state machine implements
+the display, restart, or session-destruction behavior above.
 
 ## 8. Testing policy
 

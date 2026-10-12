@@ -146,7 +146,7 @@ pub const TypedData = struct {
     pub fn encodeType(self: TypedData, type_name: []const u8) Error![]u8 {
         var dependencies = std.ArrayList([]const u8).empty;
         defer dependencies.deinit(self.allocator);
-        try self.collectDependencies(type_name, &dependencies);
+        try self.collectDependencies(type_name, type_name, &dependencies);
 
         var out = std.ArrayList(u8).empty;
         errdefer out.deinit(self.allocator);
@@ -167,6 +167,7 @@ pub const TypedData = struct {
 
     fn collectDependencies(
         self: TypedData,
+        root_type: []const u8,
         type_name: []const u8,
         out: *std.ArrayList([]const u8),
     ) Error!void {
@@ -174,7 +175,9 @@ pub const TypedData = struct {
         for (fields) |field| {
             const base = baseType(field.type_name);
             if (!self.isStructType(base)) continue;
-            if (std.mem.eql(u8, base, type_name)) continue;
+            // Recursive and mutually recursive definitions refer back to the primary type,
+            // but encodeType must contain the primary definition exactly once.
+            if (std.mem.eql(u8, base, root_type)) continue;
 
             var seen = false;
             for (out.items) |existing| {
@@ -183,7 +186,7 @@ pub const TypedData = struct {
             if (seen) continue;
 
             try out.append(self.allocator, base);
-            try self.collectDependencies(base, out);
+            try self.collectDependencies(root_type, base, out);
         }
     }
 
@@ -272,7 +275,7 @@ pub const TypedData = struct {
                 const expected = std.fmt.parseInt(usize, suffix, 10) catch {
                     return error.InvalidEncoding;
                 };
-                if (value.array.items.len != expected) return error.InvalidEncoding;
+                if (expected == 0 or value.array.items.len != expected) return error.InvalidEncoding;
             }
 
             var buffer = std.ArrayList(u8).empty;
@@ -317,23 +320,41 @@ pub const TypedData = struct {
         } else if (std.mem.eql(u8, type_name, "bool")) {
             if (value != .bool) return error.InvalidEncoding;
             word[31] = if (value.bool) 1 else 0;
-        } else if (std.mem.startsWith(u8, type_name, "uint")) {
-            std.mem.writeInt(u256, &word, try self.toU256(value), .big);
-        } else if (std.mem.startsWith(u8, type_name, "int")) {
+        } else if (integerBits(type_name, "uint")) |bits| {
+            const number = try self.toU256(value);
+            if (bits < 256 and number >= (@as(u256, 1) << @intCast(bits))) {
+                return error.InvalidEncoding;
+            }
+            std.mem.writeInt(u256, &word, number, .big);
+        } else if (integerBits(type_name, "int")) |bits| {
             const text = try self.numberText(value);
+            const limit = @as(u256, 1) << @intCast(bits - 1);
             if (text.len > 0 and text[0] == '-') {
-                // Negative numbers use two's complement
+                // Negative numbers use two's complement. -2^(M-1) is the inclusive bound.
+                if (text.len == 1) return error.InvalidEncoding;
                 const magnitude = std.fmt.parseInt(u256, text[1..], 10) catch {
                     return error.InvalidEncoding;
                 };
+                if (magnitude > limit) return error.InvalidEncoding;
                 std.mem.writeInt(u256, &word, 0 -% magnitude, .big);
             } else {
-                std.mem.writeInt(u256, &word, try self.toU256(value), .big);
+                const number = try self.toU256(value);
+                if (number >= limit) return error.InvalidEncoding;
+                std.mem.writeInt(u256, &word, number, .big);
             }
         } else {
             return error.InvalidEncoding;
         }
         try out.appendSlice(self.allocator, &word);
+    }
+
+    fn integerBits(type_name: []const u8, prefix: []const u8) ?u16 {
+        if (!std.mem.startsWith(u8, type_name, prefix)) return null;
+        const suffix = type_name[prefix.len..];
+        if (suffix.len == 0) return 256;
+        const bits = std.fmt.parseInt(u16, suffix, 10) catch return null;
+        if (bits < 8 or bits > 256 or bits % 8 != 0) return null;
+        return bits;
     }
 
     fn numberText(self: TypedData, value: std.json.Value) Error![]const u8 {
@@ -706,4 +727,44 @@ test "EIP-712 rejects invalid input" {
     var data4 = try TypedData.parse(allocator, wrong_bytes);
     try testing.expectError(error.InvalidEncoding, data4.signingHash(&out));
     data4.deinit();
+
+    // Integer widths are part of the type, not just documentation.
+    const uint8_overflow =
+        \\{"types":{"EIP712Domain":[{"name":"name","type":"string"}],
+        \\ "A":[{"name":"x","type":"uint8"}]},"primaryType":"A",
+        \\ "domain":{"name":"x"},"message":{"x":256}}
+    ;
+    var data5 = try TypedData.parse(allocator, uint8_overflow);
+    try testing.expectError(error.InvalidEncoding, data5.signingHash(&out));
+    data5.deinit();
+
+    const int8_underflow =
+        \\{"types":{"EIP712Domain":[{"name":"name","type":"string"}],
+        \\ "A":[{"name":"x","type":"int8"}]},"primaryType":"A",
+        \\ "domain":{"name":"x"},"message":{"x":-129}}
+    ;
+    var data6 = try TypedData.parse(allocator, int8_underflow);
+    try testing.expectError(error.InvalidEncoding, data6.signingHash(&out));
+    data6.deinit();
+
+    const invalid_integer_type =
+        \\{"types":{"EIP712Domain":[{"name":"name","type":"string"}],
+        \\ "A":[{"name":"x","type":"uint7"}]},"primaryType":"A",
+        \\ "domain":{"name":"x"},"message":{"x":1}}
+    ;
+    var data7 = try TypedData.parse(allocator, invalid_integer_type);
+    try testing.expectError(error.InvalidEncoding, data7.signingHash(&out));
+    data7.deinit();
+}
+
+test "EIP-712 mutually recursive types include the primary definition once" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var data = try TypedData.parse(arena.allocator(),
+        \\{"types":{"EIP712Domain":[{"name":"name","type":"string"}],
+        \\ "A":[{"name":"b","type":"B"}],"B":[{"name":"a","type":"A"}]},
+        \\ "primaryType":"A","domain":{"name":"x"},"message":{"b":{"a":{"b":{}}}}}
+    );
+    defer data.deinit();
+    try testing.expectEqualStrings("A(B b)B(A a)", try data.encodeType("A"));
 }

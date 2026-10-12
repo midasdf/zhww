@@ -89,7 +89,7 @@ pub const Version = enum {
     pub fn fromBytes(value: u32) ?Version {
         const info = @typeInfo(Version).@"enum";
         inline for (info.field_names, info.field_values) |_, field_value| {
-            const candidate: Version = @enumFromInt(field_value);
+            const candidate: Version = @fromBackingInt(@intCast(field_value));
             if (candidate.bytes() == value) return candidate;
         }
         return null;
@@ -223,9 +223,11 @@ pub const ExtendedKey = struct {
     pub fn fromSeed(seed: []const u8, version: Version) Error!ExtendedKey {
         if (seed.len < 16 or seed.len > 64) return error.InvalidKey;
         var digest: [64]u8 = undefined;
+        defer std.crypto.secureZero(u8, &digest);
         HmacSha512.create(&digest, seed, "Bitcoin seed");
 
         var master: [32]u8 = undefined;
+        defer std.crypto.secureZero(u8, &master);
         @memcpy(&master, digest[0..32]);
         if (!secp256k1.isValidPrivateKey(master)) return error.InvalidKey;
 
@@ -244,12 +246,15 @@ pub const ExtendedKey = struct {
 
     /// CKDpriv: derive a child key from a private key.
     pub fn ckdPriv(self: ExtendedKey, index: u32) Error!ExtendedKey {
-        const parent = switch (self.key) {
+        if (self.depth == std.math.maxInt(u8)) return error.InvalidPath;
+        var parent = switch (self.key) {
             .priv => |p| p,
             .pub_key => return error.InvalidKey,
         };
+        defer std.crypto.secureZero(u8, &parent);
 
         var data: [37]u8 = undefined;
+        defer std.crypto.secureZero(u8, &data);
         if (index >= hardened) {
             data[0] = 0;
             @memcpy(data[1..33], &parent);
@@ -260,16 +265,18 @@ pub const ExtendedKey = struct {
         std.mem.writeInt(u32, data[33..37], index, .big);
 
         var digest: [64]u8 = undefined;
+        defer std.crypto.secureZero(u8, &digest);
         HmacSha512.create(&digest, &data, &self.chain_code);
 
         var tweak: [32]u8 = undefined;
+        defer std.crypto.secureZero(u8, &tweak);
         @memcpy(&tweak, digest[0..32]);
         var child_chain: [32]u8 = undefined;
         @memcpy(&child_chain, digest[32..64]);
 
         return .{
             .version = self.version,
-            .depth = self.depth +% 1,
+            .depth = self.depth + 1,
             .parent_fingerprint = try self.fingerprint(),
             .index = index,
             .chain_code = child_chain,
@@ -279,7 +286,7 @@ pub const ExtendedKey = struct {
 
     /// CKDpub: derive a child public key from a public key (hardened is not possible).
     pub fn ckdPub(self: ExtendedKey, index: u32) Error!ExtendedKey {
-        if (index >= hardened) return error.InvalidPath;
+        if (index >= hardened or self.depth == std.math.maxInt(u8)) return error.InvalidPath;
 
         const parent = try self.publicKey();
         var data: [37]u8 = undefined;
@@ -296,7 +303,7 @@ pub const ExtendedKey = struct {
 
         return .{
             .version = self.version,
-            .depth = self.depth +% 1,
+            .depth = self.depth + 1,
             .parent_fingerprint = try self.fingerprint(),
             .index = index,
             .chain_code = child_chain,
@@ -313,7 +320,10 @@ pub const ExtendedKey = struct {
                 return node;
             } else |err| {
                 if (err != error.InvalidTweak) return err;
-                if (attempt == std.math.maxInt(u32)) return error.InvalidTweak;
+                // Do not silently turn a requested normal child into a hardened child when
+                // the last normal index happens to be invalid.
+                if (attempt == std.math.maxInt(u32) or
+                    (index < hardened and attempt == hardened - 1)) return error.InvalidTweak;
                 attempt += 1;
             }
         }
@@ -366,21 +376,33 @@ pub const ExtendedKey = struct {
 
         const key_data = decoded[45..78];
         const key: Key = if (key_data[0] == 0) blk: {
+            if (!version.isPrivate()) return error.InvalidEncoding;
             var priv_key: [32]u8 = undefined;
             @memcpy(&priv_key, key_data[1..33]);
             if (!secp256k1.isValidPrivateKey(priv_key)) return error.InvalidKey;
             break :blk .{ .priv = priv_key };
         } else blk: {
+            if (version.isPrivate() or !secp256k1.isValidPublicKey(key_data)) {
+                return error.InvalidEncoding;
+            }
             var pub_key: [33]u8 = undefined;
             @memcpy(&pub_key, key_data);
             break :blk .{ .pub_key = pub_key };
         };
 
+        const depth = decoded[4];
+        const parent_fingerprint = decoded[5..9].*;
+        const index = std.mem.readInt(u32, decoded[9..13], .big);
+        const zero_fingerprint: [4]u8 = @splat(0);
+        if (depth == 0 and (!std.mem.eql(u8, &parent_fingerprint, &zero_fingerprint) or index != 0)) {
+            return error.InvalidEncoding;
+        }
+
         return .{
             .version = version,
-            .depth = decoded[4],
-            .parent_fingerprint = decoded[5..9].*,
-            .index = std.mem.readInt(u32, decoded[9..13], .big),
+            .depth = depth,
+            .parent_fingerprint = parent_fingerprint,
+            .index = index,
             .chain_code = chain_code,
             .key = key,
         };
@@ -486,6 +508,28 @@ test "extended key parsing (round trip)" {
 
     // reject unknown version bytes
     try testing.expectError(error.InvalidEncoding, ExtendedKey.parse("not-base58!"));
+}
+
+test "derivation rejects depth overflow" {
+    const seed: [32]u8 = @splat(0x01);
+    var master = try ExtendedKey.fromSeed(&seed, .xprv);
+    master.depth = std.math.maxInt(u8);
+    try testing.expectError(error.InvalidPath, master.ckdPriv(0));
+    try testing.expectError(error.InvalidPath, (try master.neuter()).ckdPub(0));
+}
+
+test "extended key parsing rejects a version/key-kind mismatch" {
+    const seed: [32]u8 = @splat(0x01);
+    const master = try ExtendedKey.fromSeed(&seed, .xprv);
+    var encoded: [128]u8 = undefined;
+    const text = try master.serialize(&encoded);
+
+    var payload: [78]u8 = undefined;
+    const decoded = try base58.checkDecode(&payload, text);
+    std.mem.writeInt(u32, decoded[0..4], Version.xpub.bytes(), .big);
+    var mismatched: [128]u8 = undefined;
+    const bad = try base58.checkEncode(&mismatched, decoded);
+    try testing.expectError(error.InvalidEncoding, ExtendedKey.parse(bad));
 }
 
 test "version replacement" {

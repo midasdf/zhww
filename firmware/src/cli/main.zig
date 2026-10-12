@@ -454,19 +454,6 @@ fn commandMnemonic(
     var mnemonic: [256]u8 = undefined;
     const text = try zhww.entropy.mnemonicFromDice(&mnemonic, dice, extra, word_count);
 
-    // Also report the roll count and the required count (diagnostics go to stderr)
-    const needed = if (word_count == 12)
-        zhww.entropy.rolls_for_12_words
-    else
-        zhww.entropy.rolls_for_24_words;
-    if (dice.len < needed) {
-        stderrPrint("warning: {d} words need {d} rolls (only {d} given)\n", .{
-            word_count,
-            needed,
-            dice.len,
-        });
-    }
-
     try stdout.interface.print("{s}\n", .{text});
 }
 
@@ -510,6 +497,12 @@ fn commandEvmSign(
     const value = try jsonU256(root, "value");
     const to = try jsonAddress(root, "to");
     const data = try jsonHex(allocator, root, "data");
+    if (root.get("accessList")) |access_list| {
+        if (access_list != .array or access_list.array.items.len != 0) {
+            stderrPrint("non-empty accessList is not supported by evm-sign\n", .{});
+            return error.InvalidArgument;
+        }
+    }
 
     // Key (EVM uses m/44'/60'/0'/0/0)
     const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, passphrase);
@@ -520,7 +513,8 @@ fn commandEvmSign(
         0,
         0,
     });
-    const priv = node.key.priv;
+    var priv = node.key.priv;
+    defer std.crypto.secureZero(u8, &priv);
 
     var buffer: [8192]u8 = undefined;
     var signed: []u8 = undefined;
@@ -573,7 +567,10 @@ fn jsonU256(root: std.json.ObjectMap, name: []const u8) !u256 {
     const text = switch (value) {
         .number_string => |s| s,
         .string => |s| s,
-        .integer => |n| return @intCast(n),
+        .integer => |n| {
+            if (n < 0) return error.InvalidArgument;
+            return @intCast(n);
+        },
         else => return error.InvalidArgument,
     };
     if (std.mem.startsWith(u8, text, "0x")) {
@@ -649,18 +646,13 @@ fn commandWalkthrough(
     const big = try allocator.alloc(u16, width * scale * height * scale);
 
     // --- Screen 1: waiting for the card ---
-    try renderNotice(allocator, io, out_dir, "1-waiting.png",
-        zhww.app_device.noticeFor(.waiting_card), pixels, big, width, height, scale);
+    try renderNotice(allocator, io, out_dir, "1-waiting.png", zhww.app_device.noticeFor(.waiting_card), pixels, big, width, height, scale);
 
     // --- Screens 2-5: errors (always show on screen that nothing is signed) ---
-    try renderNotice(allocator, io, out_dir, "2-not-fat32.png",
-        zhww.app_device.noticeFor(.not_fat32), pixels, big, width, height, scale);
-    try renderNotice(allocator, io, out_dir, "3-no-input.png",
-        zhww.app_device.noticeFor(.no_input), pixels, big, width, height, scale);
-    try renderNotice(allocator, io, out_dir, "4-too-large.png",
-        zhww.app_device.noticeFor(.file_too_large), pixels, big, width, height, scale);
-    try renderNotice(allocator, io, out_dir, "5-invalid-psbt.png",
-        zhww.app_device.noticeFor(.invalid_psbt), pixels, big, width, height, scale);
+    try renderNotice(allocator, io, out_dir, "2-not-fat32.png", zhww.app_device.noticeFor(.not_fat32), pixels, big, width, height, scale);
+    try renderNotice(allocator, io, out_dir, "3-no-input.png", zhww.app_device.noticeFor(.no_input), pixels, big, width, height, scale);
+    try renderNotice(allocator, io, out_dir, "4-too-large.png", zhww.app_device.noticeFor(.file_too_large), pixels, big, width, height, scale);
+    try renderNotice(allocator, io, out_dir, "5-invalid-psbt.png", zhww.app_device.noticeFor(.invalid_psbt), pixels, big, width, height, scale);
 
     // --- Screen 2: inspect the contents of the card ---
     {
@@ -1146,7 +1138,7 @@ fn commandEvmShow(
     if (decoded.gas_price) |gas_price| {
         try stdout.interface.print("gas price: {d} wei/gas\n", .{gas_price});
         if (decoded.gas_limit) |gas_limit| {
-            try stdout.interface.print("max fee: {d} wei\n", .{gas_price * gas_limit});
+            try stdout.interface.print("max fee: {d} wei\n", .{@as(u512, gas_price) * @as(u512, gas_limit)});
         }
     }
     if (decoded.max_fee_per_gas) |max_fee| {
@@ -1155,7 +1147,7 @@ fn commandEvmShow(
             try stdout.interface.print("max priority fee: {d} wei/gas\n", .{tip});
         }
         if (decoded.gas_limit) |gas_limit| {
-            try stdout.interface.print("max fee: {d} wei\n", .{max_fee * gas_limit});
+            try stdout.interface.print("max fee: {d} wei\n", .{@as(u512, max_fee) * @as(u512, gas_limit)});
         }
     }
 
@@ -1257,28 +1249,37 @@ fn commandScreen(
         title = "CONFIRM";
         var to_address: []const u8 = "(unknown script)";
         var amount: u64 = 0;
-        var found = false;
+        var payment_count: usize = 0;
         for (psbt.unsigned_tx.outputs, 0..) |output, i| {
             var is_change = false;
             for (change) |index| {
                 if (index == i) is_change = true;
             }
             if (is_change) continue;
-            var buffer: [90]u8 = undefined;
-            if (try zhww.btc_address.fromScriptPubKey(&buffer, output.script_pubkey, network)) |address| {
-                to_address = try allocator.dupe(u8, address);
+            payment_count += 1;
+            if (payment_count == 1) {
+                var buffer: [90]u8 = undefined;
+                if (try zhww.btc_address.fromScriptPubKey(&buffer, output.script_pubkey, network)) |address| {
+                    to_address = try allocator.dupe(u8, address);
+                }
+                amount = output.value;
             }
-            amount = output.value;
-            found = true;
-            break;
         }
-        if (!found) {
+        if (payment_count == 0) {
             stderrPrint("no recipient output found\n", .{});
             return error.InvalidArgument;
         }
+        if (payment_count > 1) {
+            stderrPrint("confirmation screen refuses to hide {d} payment outputs; use `show` to inspect all outputs\n", .{payment_count});
+            return error.InvalidArgument;
+        }
+        if (std.mem.eql(u8, to_address, "(unknown script)")) {
+            warnings_buf[warning_count] = "Unknown destination script";
+            warning_count += 1;
+        }
 
         lines_buf[0] = .{ .label = "To", .value = to_address };
-        lines_buf[1] = .{ .label = "Amount", .value = try std.fmt.allocPrint(allocator, "{d} sats", .{amount}) , .kind = .strong };
+        lines_buf[1] = .{ .label = "Amount", .value = try std.fmt.allocPrint(allocator, "{d} sats", .{amount}), .kind = .strong };
 
         // Fee
         var total_input: u64 = 0;
@@ -1286,13 +1287,22 @@ fn commandScreen(
         for (0..psbt.inputs.len) |i| {
             const info = try inputInfo(allocator, psbt, i);
             if (info) |utxo| {
-                total_input += utxo.value;
+                total_input = std.math.add(u64, total_input, utxo.value) catch {
+                    stderrPrint("input amount total is out of range\n", .{});
+                    return error.InvalidArgument;
+                };
             } else {
                 unknown_value = true;
             }
         }
         var total_output: u64 = 0;
-        for (psbt.unsigned_tx.outputs) |output| total_output += output.value;
+        for (psbt.unsigned_tx.outputs) |output| {
+            if (output.value > zhww.btc_sign.max_money) return error.InvalidArgument;
+            total_output = std.math.add(u64, total_output, output.value) catch {
+                stderrPrint("output amount total is out of range\n", .{});
+                return error.InvalidArgument;
+            };
+        }
 
         if (unknown_value) {
             lines_buf[2] = .{ .label = "Fee", .value = "unknown" };
@@ -1306,7 +1316,7 @@ fn commandScreen(
                 .value = try std.fmt.allocPrint(allocator, "{d} sats", .{fee}),
             };
             line_count = 3;
-            if (fee * 100 > total_input) {
+            if (@as(u128, fee) * 100 > total_input) {
                 warnings_buf[warning_count] = "Fee is more than 1% of the input";
                 warning_count += 1;
             }
@@ -1505,7 +1515,10 @@ fn commandShow(
     for (tx.inputs, 0..) |_, i| {
         const info = try inputInfo(allocator, psbt, i);
         if (info) |utxo| {
-            total_input += utxo.value;
+            total_input = std.math.add(u64, total_input, utxo.value) catch {
+                stderrPrint("warning: input amount total is out of range\n", .{});
+                return error.InvalidArgument;
+            };
             try stdout.interface.print("  {d}: {d} sats", .{ i, utxo.value });
             var buffer: [90]u8 = undefined;
             if (try zhww.btc_address.fromScriptPubKey(&buffer, utxo.script_pubkey, network)) |address| {
@@ -1528,7 +1541,14 @@ fn commandShow(
     var total_output: u64 = 0;
     try stdout.interface.print("outputs:\n", .{});
     for (tx.outputs, 0..) |output, i| {
-        total_output += output.value;
+        if (output.value > zhww.btc_sign.max_money) {
+            stderrPrint("warning: output amount exceeds Bitcoin's money range\n", .{});
+            return error.InvalidArgument;
+        }
+        total_output = std.math.add(u64, total_output, output.value) catch {
+            stderrPrint("warning: output amount total is out of range\n", .{});
+            return error.InvalidArgument;
+        };
         try stdout.interface.print("  {d}: {d} sats", .{ i, output.value });
         var buffer: [90]u8 = undefined;
         if (try zhww.btc_address.fromScriptPubKey(&buffer, output.script_pubkey, network)) |address| {
@@ -1550,11 +1570,16 @@ fn commandShow(
         stderrPrint("warning: cannot verify the fee because an input amount is unknown\n", .{});
     } else if (total_input >= total_output) {
         const fee = total_input - total_output;
-        try stdout.interface.print(
-            "fee: {d} sats ({d}.{d:0>2}%)\n",
-            .{ fee, fee * 100 / total_input, (fee * 10000 / total_input) % 100 },
-        );
-        if (fee * 100 > total_input) {
+        if (total_input == 0) {
+            try stdout.interface.print("fee: {d} sats\n", .{fee});
+        } else {
+            const basis_points = @as(u128, fee) * 10_000 / total_input;
+            try stdout.interface.print(
+                "fee: {d} sats ({d}.{d:0>2}%)\n",
+                .{ fee, basis_points / 100, basis_points % 100 },
+            );
+        }
+        if (@as(u128, fee) * 100 > total_input) {
             stderrPrint("warning: fee is more than 1% of the total input\n", .{});
         }
     } else {
@@ -1573,16 +1598,7 @@ fn inputInfo(
     psbt: zhww.btc_psbt.Psbt,
     index: usize,
 ) !?zhww.btc_transaction.TxOut {
-    if (psbt.inputs[index].witness_utxo) |utxo| return utxo;
-    if (psbt.inputs[index].non_witness_utxo) |prev_tx| {
-        const prevout = psbt.unsigned_tx.inputs[index].prevout;
-        const txid = try prev_tx.txid(allocator);
-        if (!std.mem.eql(u8, &txid, &prevout.txid)) return null;
-        for (prev_tx.outputs, 0..) |output, vout| {
-            if (vout == prevout.vout) return output;
-        }
-    }
-    return null;
+    return zhww.btc_sign.utxoForDisplay(allocator, psbt, index);
 }
 
 /// Detect the change output when a mnemonic is given.
@@ -1594,8 +1610,7 @@ fn changeOutputs(
     const mnemonic = option(args, "--mnemonic") orelse return &.{};
     const passphrase = option(args, "--passphrase") orelse "";
     const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, passphrase);
-    const result = try zhww.btc_sign.sign(allocator, psbt, keys);
-    return result.change_outputs;
+    return zhww.btc_sign.findChangeOutputs(allocator, psbt, keys);
 }
 
 fn toHex(bytes: []const u8, out: []u8) []const u8 {
@@ -1680,47 +1695,74 @@ fn commandUrDecode(
     var message: []const u8 = undefined;
     const uri = try zhww.ur.parse(first);
 
+    if (!zhww.ur.typeEql(uri.ur_type, zhww.ur.type_crypto_psbt)) {
+        stderrPrint("expected ur:crypto-psbt, got ur:{s}\n", .{uri.ur_type});
+        return error.InvalidArgument;
+    }
+
     if (uri.seq == null) {
-        // Single part
-        const buffer = try allocator.alloc(u8, 64 * 1024);
-        message = try zhww.ur.decodeSingle(buffer, first, null);
+        // Single part. Allow the 64KB payload plus its CBOR byte-string header.
+        const buffer = try allocator.alloc(u8, zhww.ur_receive.max_payload_len + zhww.cbor.max_header_len);
+        message = try zhww.ur.decodeSingle(buffer, first, zhww.ur.type_crypto_psbt);
     } else {
-        // Multipart: the first part gives the size, then collect the rest
+        // Multipart: probe bounded metadata, then use the signing receiver (which compares
+        // duplicate fragments instead of silently keeping whichever one arrived first).
+        if (first.len > 8192) return error.InvalidArgument;
         var probe_buffer: [4096]u8 = undefined;
         const probe = try zhww.ur.decodePartUr(&probe_buffer, first);
 
         const seq_len = probe.part.seq_len;
         const message_len = probe.part.message_len;
         const fragment_len = probe.part.data.len;
+        if (message_len > zhww.ur_receive.max_payload_len + zhww.cbor.max_header_len or
+            fragment_len == 0 or @as(u64, seq_len) > message_len or
+            zhww.ur.maxPartCborLength(fragment_len) > probe_buffer.len)
+        {
+            stderrPrint("UR payload or fragment is too large\n", .{});
+            return error.InvalidArgument;
+        }
 
-        const bits = try allocator.alloc(u8, (seq_len + 7) / 8);
+        const bits = try allocator.alloc(u8, zhww.ur_receive.bitsLength(seq_len));
         const buffer = try allocator.alloc(u8, message_len);
         const part_buffer = try allocator.alloc(u8, zhww.ur.maxPartCborLength(fragment_len));
-
-        var decoder = zhww.ur.Decoder.init(bits, buffer, part_buffer);
-        _ = try decoder.receive(first);
+        var receiver = try zhww.ur_receive.Receiver.init(
+            zhww.ur.type_crypto_psbt,
+            buffer,
+            bits,
+            part_buffer,
+        );
+        _ = try receiver.receive(first);
         while (lines.next()) |line| {
-            const status = try decoder.receive(line);
+            if (line.len > 8192) return error.InvalidArgument;
+            const status = try receiver.receive(line);
             if (status == .complete) break;
         }
 
         stderrPrint("received {d}/{d} parts\n", .{
-            decoder.receivedFragmentCount(),
-            decoder.expectedFragmentCount(),
+            receiver.receivedPartCount(),
+            receiver.expectedPartCount(),
         });
-        message = decoder.result() orelse {
+        message = receiver.result() catch {
             stderrPrint("not all parts were received\n", .{});
             return error.InvalidArgument;
         };
     }
 
     const encoder = std.base64.standard.Encoder;
-    // Extract the payload (a PSBT, etc.) from the CBOR byte string
+    // Extract the PSBT from the one CBOR byte string and reject trailing CBOR data.
     var reader = zhww.cbor.Reader.init(message);
     const payload = reader.readBytes() catch {
         stderrPrint("cannot parse the UR payload as CBOR\n", .{});
         return error.InvalidArgument;
     };
+    reader.finish() catch {
+        stderrPrint("cannot parse the UR payload as one CBOR byte string\n", .{});
+        return error.InvalidArgument;
+    };
+    if (payload.len > zhww.ur_receive.max_payload_len) {
+        stderrPrint("PSBT exceeds the 64KB limit\n", .{});
+        return error.InvalidArgument;
+    }
     const encoded = try allocator.alloc(u8, encoder.calcSize(payload.len));
     _ = encoder.encode(encoded, payload);
     try stdout.interface.print("{s}\n", .{encoded});

@@ -118,12 +118,12 @@ pub const Psbt = struct {
         while (true) {
             const key_len = try cursor.readVarInt();
             if (key_len == 0) break; // end of map
-            const key = try cursor.readBytes(@intCast(key_len));
+            const key = try cursor.readSizedBytes(key_len);
             try checkDuplicate(keys.items, key);
             try keys.append(allocator, key);
 
             const value_len = try cursor.readVarInt();
-            const value = try cursor.readBytes(@intCast(value_len));
+            const value = try cursor.readSizedBytes(value_len);
 
             switch (key[0]) {
                 GLOBAL_UNSIGNED_TX => {
@@ -277,9 +277,9 @@ fn appendFilteredMap(
     while (cursor.remaining() > 0) {
         const field_start = cursor.pos;
         const key_len = try cursor.readVarInt();
-        const key = try cursor.readBytes(@intCast(key_len));
+        const key = try cursor.readSizedBytes(key_len);
         const value_len = try cursor.readVarInt();
-        _ = try cursor.readBytes(@intCast(value_len));
+        _ = try cursor.readSizedBytes(value_len);
 
         var skip = false;
         for (extra) |field| {
@@ -319,12 +319,12 @@ fn parseInputMap(
     while (true) {
         const key_len = try cursor.readVarInt();
         if (key_len == 0) break;
-        const key = try cursor.readBytes(@intCast(key_len));
+        const key = try cursor.readSizedBytes(key_len);
         try checkDuplicate(keys.items, key);
         try keys.append(allocator, key);
 
         const value_len = try cursor.readVarInt();
-        const value = try cursor.readBytes(@intCast(value_len));
+        const value = try cursor.readSizedBytes(value_len);
 
         switch (key[0]) {
             IN_NON_WITNESS_UTXO => {
@@ -340,6 +340,7 @@ fn parseInputMap(
             },
             IN_PARTIAL_SIG => {
                 if (key.len != 1 + 33 and key.len != 1 + 65) return error.InvalidPsbt;
+                if (!secp256k1.isValidPublicKey(key[1..])) return error.InvalidPsbt;
                 try partial_sigs.append(allocator, .{
                     .pubkey = key[1..],
                     .signature = value,
@@ -401,12 +402,12 @@ fn parseOutputMap(
     while (true) {
         const key_len = try cursor.readVarInt();
         if (key_len == 0) break;
-        const key = try cursor.readBytes(@intCast(key_len));
+        const key = try cursor.readSizedBytes(key_len);
         try checkDuplicate(keys.items, key);
         try keys.append(allocator, key);
 
         const value_len = try cursor.readVarInt();
-        const value = try cursor.readBytes(@intCast(value_len));
+        const value = try cursor.readSizedBytes(value_len);
 
         switch (key[0]) {
             OUT_REDEEM_SCRIPT => {
@@ -458,8 +459,11 @@ fn parseDerivation(
     pubkey: []const u8,
     value: []const u8,
 ) Error!Bip32Derivation {
-    if (value.len < 8 or (value.len - 4) % 4 != 0) return error.InvalidPsbt;
+    if (!secp256k1.isValidPublicKey(pubkey)) return error.InvalidPsbt;
+    // A master-key origin has a fingerprint and an empty path, so four bytes is valid.
+    if (value.len < 4 or (value.len - 4) % 4 != 0) return error.InvalidPsbt;
     const count = (value.len - 4) / 4;
+    if (count > std.math.maxInt(u8)) return error.InvalidPsbt;
     const path = try allocator.alloc(u32, count);
     for (path, 0..) |*index, i| {
         index.* = std.mem.readInt(u32, value[4 + i * 4 ..][0..4], .little);
@@ -473,9 +477,7 @@ fn parseDerivation(
 
 /// Whether the public key has a valid form (compressed 33 / uncompressed 65 bytes).
 pub fn isValidPubKeyFormat(pubkey: []const u8) bool {
-    if (pubkey.len == 33) return pubkey[0] == 2 or pubkey[0] == 3;
-    if (pubkey.len == 65) return pubkey[0] == 4;
-    return false;
+    return secp256k1.isValidPublicKey(pubkey);
 }
 
 // ---------------------------------------------------------------- tests

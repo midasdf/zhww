@@ -54,7 +54,7 @@ pub fn headLength(value: u64) usize {
 
 /// Length when encoded as a byte string (header + body).
 pub fn bytesLength(data_len: usize) usize {
-    return headLength(data_len) + data_len;
+    return std.math.add(usize, headLength(data_len), data_len) catch std.math.maxInt(usize);
 }
 
 /// Smallest value that n bytes can represent (used for the determinism check).
@@ -84,7 +84,7 @@ pub fn writeHead(out: []u8, major: MajorType, value: u64) Error![]u8 {
     const width = headLength(value);
     if (out.len < width) return error.BufferTooSmall;
 
-    const prefix: u8 = @as(u8, @intFromEnum(major)) << 5;
+    const prefix: u8 = @as(u8, @backingInt(major)) << 5;
     switch (width) {
         1 => out[0] = prefix | @as(u8, @intCast(value)),
         2 => {
@@ -136,17 +136,19 @@ pub fn writeTextHeader(out: []u8, length: usize) Error![]u8 {
 /// Byte string (major type 2).
 pub fn writeBytes(out: []u8, data: []const u8) Error![]u8 {
     const header = try writeBytesHeader(out, data.len);
-    if (out.len < header.len + data.len) return error.BufferTooSmall;
+    const total = std.math.add(usize, header.len, data.len) catch return error.BufferTooSmall;
+    if (out.len < total) return error.BufferTooSmall;
     @memcpy(out[header.len..][0..data.len], data);
-    return out[0 .. header.len + data.len];
+    return out[0..total];
 }
 
 /// Text string (major type 3). UTF-8 validity is not checked.
 pub fn writeText(out: []u8, text: []const u8) Error![]u8 {
     const header = try writeTextHeader(out, text.len);
-    if (out.len < header.len + text.len) return error.BufferTooSmall;
+    const total = std.math.add(usize, header.len, text.len) catch return error.BufferTooSmall;
+    if (out.len < total) return error.BufferTooSmall;
     @memcpy(out[header.len..][0..text.len], text);
-    return out[0 .. header.len + text.len];
+    return out[0..total];
 }
 
 // ---------------------------------------------------------------- decoding
@@ -188,7 +190,7 @@ pub const Reader = struct {
         if (self.pos >= self.data.len) return error.Truncated;
 
         const first = self.data[self.pos];
-        const major: MajorType = @enumFromInt(@as(u3, @intCast(first >> 5)));
+        const major: MajorType = @fromBackingInt(@intCast(@as(u3, @intCast(first >> 5))));
         const additional: u8 = first & 0x1f;
 
         var width: usize = 0;

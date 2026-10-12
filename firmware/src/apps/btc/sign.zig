@@ -24,6 +24,8 @@ const sighash = @import("sighash.zig");
 const psbt_mod = @import("psbt.zig");
 
 pub const SIGHASH_ALL: u32 = 0x01;
+/// Bitcoin Core's consensus money range (21 million BTC, in satoshis).
+pub const max_money: u64 = 21_000_000 * 100_000_000;
 
 /// Kind of scriptPubKey.
 pub const ScriptKind = enum {
@@ -139,11 +141,23 @@ pub fn sign(
 
     // Sign each input
     const signatures = try allocator.alloc(?[]const u8, tx.inputs.len);
-    const signer_keys = try allocator.alloc(?KeySource.RawKey, tx.inputs.len);
+    const signer_pubkeys = try allocator.alloc(?[33]u8, tx.inputs.len);
     for (signatures) |*slot| slot.* = null;
-    for (signer_keys) |*slot| slot.* = null;
+    for (signer_pubkeys) |*slot| slot.* = null;
 
     for (tx.inputs, 0..) |_, index| {
+        const input = psbt.inputs[index];
+        // A finalized input must not be modified by adding a new partial signature. Supporting
+        // mixed finalized/unfinalized PSBTs requires preserving and validating the final stack.
+        if (input.final_script_sig != null or input.final_script_witness != null) {
+            return error.InvalidPsbt;
+        }
+        // This signer deliberately supports only SIGHASH_ALL. Ignoring a PSBT's requested
+        // sighash would produce a signature different from what the host asked the user to review.
+        if (input.sighash_type) |requested| {
+            if (requested != SIGHASH_ALL) return error.UnsupportedSighash;
+        }
+
         const utxo = resolved[index] orelse {
             try unsigned.append(allocator, index);
             continue;
@@ -151,10 +165,11 @@ pub fn sign(
         const kind = detectScriptKind(utxo.script_pubkey);
 
         // Find the key
-        const found = try findKeyForInput(allocator, psbt, keys, index, utxo, kind) orelse {
+        var found = try findKeyForInput(allocator, psbt, keys, index, utxo, kind) orelse {
             try unsigned.append(allocator, index);
             continue;
         };
+        defer std.crypto.secureZero(u8, &found.private_key);
 
         // Compute the signature hash
         const message = try sighashForInput(
@@ -179,7 +194,7 @@ pub fn sign(
         blob[der.len] = @intCast(SIGHASH_ALL);
 
         signatures[index] = blob;
-        signer_keys[index] = found;
+        signer_pubkeys[index] = found.public_key;
         try partial_sigs.append(allocator, .{
             .index = index,
             .pubkey = found.public_key,
@@ -192,12 +207,19 @@ pub fn sign(
     var amounts_complete = true;
     for (resolved) |entry| {
         if (entry) |utxo| {
-            total_input += utxo.amount;
+            if (utxo.amount > max_money) return error.InvalidPsbt;
+            total_input = std.math.add(u64, total_input, utxo.amount) catch return error.InvalidPsbt;
+            if (total_input > max_money) return error.InvalidPsbt;
         } else {
             amounts_complete = false;
         }
     }
-    const total_output = tx.totalOutput();
+    var total_output: u64 = 0;
+    for (tx.outputs) |output| {
+        if (output.value > max_money) return error.InvalidPsbt;
+        total_output = std.math.add(u64, total_output, output.value) catch return error.InvalidPsbt;
+        if (total_output > max_money) return error.InvalidPsbt;
+    }
     const fee: ?u64 = if (amounts_complete) blk: {
         if (total_input < total_output) return error.InvalidPsbt;
         break :blk total_input - total_output;
@@ -209,7 +231,7 @@ pub fn sign(
     // Finalization (only when every input could be signed)
     var final_tx: ?[]const u8 = null;
     if (unsigned.items.len == 0) {
-        final_tx = try finalize(allocator, psbt, signatures, signer_keys, resolved);
+        final_tx = try finalize(allocator, psbt, signatures, signer_pubkeys, resolved);
     }
 
     return .{
@@ -235,17 +257,27 @@ fn resolveUtxo(
     psbt: psbt_mod.Psbt,
     index: usize,
 ) Error!?ResolvedUtxo {
+    if (index >= psbt.inputs.len or index >= psbt.unsigned_tx.inputs.len) return error.InvalidPsbt;
     const input = psbt.inputs[index];
-    const prevout = psbt.unsigned_tx.inputs[index].prevout;
+    const previous = try resolveNonWitnessUtxo(allocator, psbt, index);
 
-    // For a witness input, use witness_utxo.
-    // Even under P2SH, a P2WPKH redeemScript means a witness input (P2SH-P2WPKH).
+    // For a witness input, use witness_utxo. A nested P2SH witness is accepted only when
+    // redeemScript itself hashes to the P2SH program; its shape alone is not enough.
     if (input.witness_utxo) |utxo| {
+        if (utxo.value > max_money) return error.InvalidPsbt;
         const kind = detectScriptKind(utxo.script_pubkey);
-        const is_witness_input = kind.isWitness() or (kind == .p2sh and
-            input.redeem_script != null and
-            detectScriptKind(input.redeem_script.?) == .p2wpkh);
+        const is_witness_input = kind.isWitness() or
+            (kind == .p2sh and nestedP2wpkhMatches(utxo.script_pubkey, input.redeem_script));
         if (is_witness_input) {
+            // When both forms are supplied, they must describe the same previous output. This
+            // prevents the display path and signing path from choosing different amounts/scripts.
+            if (previous) |trusted| {
+                if (trusted.value != utxo.value or
+                    !std.mem.eql(u8, trusted.script_pubkey, utxo.script_pubkey))
+                {
+                    return error.InvalidPsbt;
+                }
+            }
             return .{
                 .script_pubkey = utxo.script_pubkey,
                 .amount = utxo.value,
@@ -254,25 +286,50 @@ fn resolveUtxo(
         }
     }
 
-    // Find the matching output in the non-witness utxo.
-    // **A non-witness input that only has witness_utxo is not signed** (BIP174 rule).
-    if (input.non_witness_utxo) |prev_tx| {
-        // Check that the txid matches (prevents replacement attacks)
-        const txid = try prev_tx.txid(allocator);
-        if (!std.mem.eql(u8, &txid, &prevout.txid)) return error.InvalidPsbt;
-
-        for (prev_tx.outputs, 0..) |out, vout| {
-            if (vout != prevout.vout) continue;
-            return .{
-                .script_pubkey = out.script_pubkey,
-                .amount = out.value,
-                .redeem_script = input.redeem_script,
-            };
-        }
-        return error.InvalidPsbt;
+    // A non-witness input that only has witness_utxo is not signed (BIP174 rule).
+    if (previous) |utxo| {
+        if (utxo.value > max_money) return error.InvalidPsbt;
+        return .{
+            .script_pubkey = utxo.script_pubkey,
+            .amount = utxo.value,
+            .redeem_script = input.redeem_script,
+        };
     }
-
     return null;
+}
+
+fn resolveNonWitnessUtxo(
+    allocator: std.mem.Allocator,
+    psbt: psbt_mod.Psbt,
+    index: usize,
+) Error!?transaction.TxOut {
+    const prev_tx = psbt.inputs[index].non_witness_utxo orelse return null;
+    const prevout = psbt.unsigned_tx.inputs[index].prevout;
+    const txid = try prev_tx.txid(allocator);
+    if (!std.mem.eql(u8, &txid, &prevout.txid)) return error.InvalidPsbt;
+    if (prevout.vout >= prev_tx.outputs.len) return error.InvalidPsbt;
+    return prev_tx.outputs[@intCast(prevout.vout)];
+}
+
+fn nestedP2wpkhMatches(script_pubkey: []const u8, redeem_script: ?[]const u8) bool {
+    const redeem = redeem_script orelse return false;
+    if (detectScriptKind(redeem) != .p2wpkh or detectScriptKind(script_pubkey) != .p2sh) return false;
+    var redeem_hash: [20]u8 = undefined;
+    hashes.hash160(&redeem_hash, redeem);
+    return std.mem.eql(u8, script_pubkey[2..22], &redeem_hash);
+}
+
+/// Resolve exactly the UTXO the signer will use, for a pre-signing display.
+///
+/// Keeping this in the signing module prevents a UI from preferring an untrusted
+/// `witness_utxo` for a legacy input while the signer correctly uses `non_witness_utxo`.
+pub fn utxoForDisplay(
+    allocator: std.mem.Allocator,
+    psbt: psbt_mod.Psbt,
+    index: usize,
+) Error!?transaction.TxOut {
+    const resolved = try resolveUtxo(allocator, psbt, index) orelse return null;
+    return .{ .value = resolved.amount, .script_pubkey = resolved.script_pubkey };
 }
 
 fn findKeyForInput(
@@ -289,6 +346,7 @@ fn findKeyForInput(
         const node = try keys.derive(derivation.path);
         if (node.keyIsPrivate()) {
             const pub_key = try node.publicKey();
+            if (!std.mem.eql(u8, derivation.pubkey, &pub_key)) continue;
             if (matchesKey(utxo, kind, pub_key)) {
                 return .{ .private_key = node.key.priv, .public_key = pub_key };
             }
@@ -411,7 +469,7 @@ fn sighashForInput(
 ///
 /// Only the change chains of BIP84/49/44 (`.../1/i`) are considered.
 /// **A payment to a receive address (`.../0/i`) is not treated as change** (to avoid misjudging it).
-fn findChangeOutputs(
+pub fn findChangeOutputs(
     allocator: std.mem.Allocator,
     psbt: psbt_mod.Psbt,
     keys: KeySource,
@@ -457,7 +515,7 @@ fn finalize(
     allocator: std.mem.Allocator,
     psbt: psbt_mod.Psbt,
     signatures: []const ?[]const u8,
-    keys: []const ?KeySource.RawKey,
+    pubkeys: []const ?[33]u8,
     resolved: []const ?ResolvedUtxo,
 ) Error![]const u8 {
     const tx = psbt.unsigned_tx;
@@ -466,13 +524,13 @@ fn finalize(
 
     for (inputs, 0..) |*input, index| {
         const signature = signatures[index] orelse return error.NoMatchingKey;
-        const key = keys[index] orelse return error.NoMatchingKey;
+        const pub_key = pubkeys[index] orelse return error.NoMatchingKey;
         const utxo = resolved[index] orelse return error.InvalidPsbt;
         const kind = detectScriptKind(utxo.script_pubkey);
 
         // Copy the public key into stable storage before putting it in the witness.
         // Passing the address of a local variable becomes an invalid reference once the loop exits.
-        const pub_key_copy = try allocator.dupe(u8, &key.public_key);
+        const pub_key_copy = try allocator.dupe(u8, &pub_key);
 
         switch (kind) {
             .p2wpkh => {
@@ -488,7 +546,7 @@ fn finalize(
                 redeem[0] = 0x00;
                 redeem[1] = 0x14;
                 var h160: [20]u8 = undefined;
-                hashes.hash160(&h160, &key.public_key);
+                hashes.hash160(&h160, &pub_key);
                 @memcpy(redeem[2..22], &h160);
                 input.script_sig = try pushData(allocator, &redeem);
                 const witness = try allocator.alloc([]const u8, 2);
@@ -498,7 +556,7 @@ fn finalize(
             },
             .p2pkh => {
                 const sig_push = try pushData(allocator, signature);
-                const pub_push = try pushData(allocator, &key.public_key);
+                const pub_push = try pushData(allocator, &pub_key);
                 const script_sig = try allocator.alloc(u8, sig_push.len + pub_push.len);
                 @memcpy(script_sig[0..sig_push.len], sig_push);
                 @memcpy(script_sig[sig_push.len..], pub_push);
@@ -587,8 +645,14 @@ pub fn signPsbtBytes(
 
 /// Build a key set from a seed (BIP32 master key).
 pub fn keysFromMnemonic(mnemonic: []const u8, passphrase: []const u8) Error!KeySource {
+    // PBKDF2 accepts arbitrary text by design, but a wallet entry point must reject a typo
+    // instead of silently deriving an unrelated wallet from a bad word or checksum.
+    var entropy: [32]u8 = undefined;
+    defer std.crypto.secureZero(u8, &entropy);
+    _ = try bip39.mnemonicToEntropy(&entropy, mnemonic);
+
     var seed: [64]u8 = undefined;
-    defer @memset(&seed, 0); // wipe the seed as soon as it is no longer needed
+    defer std.crypto.secureZero(u8, &seed);
     try bip39.mnemonicToSeed(&seed, mnemonic, passphrase);
     return KeySource.fromSeed(&seed);
 }
@@ -641,6 +705,13 @@ test "pushData representation" {
     try testing.expectEqual(@as(u8, 0x4C), long[0]);
     try testing.expectEqual(@as(u8, 80), long[1]);
     try testing.expectEqual(@as(usize, 82), long.len);
+}
+
+test "wallet key entry rejects an invalid mnemonic checksum" {
+    try testing.expectError(
+        error.ChecksumMismatch,
+        keysFromMnemonic("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon", ""),
+    );
 }
 
 test "builds a key set from a mnemonic (matches the BIP84 test vector address)" {

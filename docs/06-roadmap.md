@@ -1,7 +1,7 @@
 # 06. Roadmap
 
 - **Target version**: v0.1
-- **Last updated**: 2026-10-12
+- **Last updated**: 2026-10-13
 
 Each milestone is defined as a pair of "something that works" and "how to verify it". **Anything that cannot be reproduced on a test network is not considered done.**
 
@@ -26,7 +26,11 @@ Each milestone is defined as a pair of "something that works" and "how to verify
 | Tests | Match the official BIP39, BIP32 and BIP84 vectors. PSBT round trip with Core (signet) |
 | Done | (1) The **same addresses are derived from the same seed** as the reference implementation (2) A send completes on signet (3) The seed cannot be recovered from the SD card after power loss (the test in [02](02-architecture.md) §8) |
 
-### Progress (as of 2026-10-12)
+### Component progress (as of 2026-10-13)
+
+“Done” below means the named component passes its stated host tests. It does not mean the milestone
+or hardware-wallet flow is done. The remaining architecture work is tracked in the
+[2026-10-13 internal review](10-security-audit-2026-10-13.md).
 
 | Item | State |
 |---|---|
@@ -39,30 +43,38 @@ Each milestone is defined as a pair of "something that works" and "how to verify
 | Fee calculation and change detection | ✅ Done (no fee is computed when an input amount is unknown) |
 | Combining dice and camera entropy | ✅ Done (verified with HKDF-SHA256 / RFC 5869 vectors) |
 | **Interoperability with Bitcoin Core** | ✅ Done (signs a PSBT created by Core; Core's `finalizepsbt` returns `complete: true` and `testmempoolaccept` returns `allowed: true`. The finalized result matches byte-for-byte) |
-| **2-of-3 multisig (P2WSH)** | ✅ Done (sends to a 2-of-3 address from Core, signs with this implementation, and Core accepts it. The public-key order in the witnessScript also matches Core) |
-| **Taproot key-path signing (BIP341/BIP86)** | ✅ Done (sends to a P2TR address from Core, signs with this implementation, and Core accepts it. The Schnorr signature also passes BIP340 verification. The script path is out of scope) |
+| **2-of-3 multisig (P2WSH)** | 🧩 Standalone signer and Core interoperability test pass; not integrated into the normal PSBT workflow |
+| **Taproot key-path signing (BIP341/BIP86)** | 🧩 Standalone signer and Core interoperability test pass; not integrated into the normal PSBT workflow |
 | **QR transfer (BC-UR)** | ✅ Done (Bytewords / CBOR / single- and multi-part. Matches the strings of the specification and reference implementations. Redundant parts (MUR) are not implemented) |
 | **FAT32 (microSD exchange)** | ✅ Done (reading and writing, `IN.PSBT` → `OUT.PSBT` handoff with the `OUT.TMP` → rename scheme. Verified in CI with `mtools` and `fsck.fat`) |
-| EIP-712 (typed data) | ✅ Done (matches known values from the specification; signatures also match an independent implementation) |
-| ERC-7730 (clear signing) and ABI decoding | ✅ Done (display fields verified against real registry descriptors; dangerous patterns raise a warning) |
-| **EVM transaction signing (Legacy / EIP-1559)** | ✅ Done (the examples given in the EIPs, plus byte-for-byte agreement with viem / ethers.js signatures) |
-| Screen UI layer (layouts, QR encoder, PNG preview) | ✅ Done (hardware-independent; the whole 7-screen device flow can be reproduced on a PC) |
-| Mutation and fuzz tests on broken input | ✅ Done (added; 11 bugs found so far) |
+| EIP-712 (typed data) | 🧩 Hash/sign library matches known and independent values; not integrated with approval UI |
+| ERC-7730 (clear signing) and ABI decoding | 🧩 Renderer tests pass; not connected to EVM signing or authenticated descriptor provisioning |
+| **EVM transaction signing (Legacy / EIP-1559)** | 🧩 Signatures match independent values; CLI has no approval gate |
+| Screen UI layer (layouts, QR encoder, PNG preview) | 🧩 Rendering components and host previews pass; there is no approval state machine |
+| Mutation and fuzz tests on broken input | ✅ Present; the 2026-10-13 review still found additional issues |
 | Sending on the real device (signet) | ⬜ Not started (hardware required) |
-| On-device screen UI and QR send/receive | ⬜ Not started (hardware required; the screen UI layer above is the hardware-independent part) |
-| Development CLI | ✅ Done (`address` / `sign` / `show` / `screen` / `walkthrough` / `card` / `mnemonic` / `ur` / `ur-decode` / `evm-sign` / `evm-show`. Supports Zig 0.17's `std.Io`) |
+| Immutable prepare → display → physical approval → sign state machine | ⬜ Not started (architecture work; can be developed and tested on the host first) |
+| I-2 key isolation and I-3 independent hash comparison | ⬜ Not started |
+| Session-wide secret erasure | ⬜ Not started |
+| On-device screen UI and QR send/receive | ⬜ Not started (HAL and hardware verification required) |
+| Development CLI | ✅ Implemented as a development tool; signing commands sign immediately and are not the device flow |
 | CI (build and tests on Linux) | ✅ Done (GitHub Actions. On the same Linux as the device it verifies the tests, the CLI, Core-vector signing, the UR round trip and the FAT32 microSD handoff on every run) |
 
-### Work that can be done without hardware ends here
+### Substantial host-side architecture work remains
 
-As of 2026-10-12, **all work that does not require hardware is complete**.
-Only the following three items remain.
+The next tasks do not require target hardware and must precede HAL work.
 
 | What remains | Type | Reason |
 |---|---|---|
-| On-device display, camera and buttons | **Hardware required** | The LCD (ST7789) and camera (OV5647) must be connected and verified (the screen layouts themselves are already implemented and can be previewed on a PC) |
-| Sending on the real device (signet) | **Hardware required** | It can only be confirmed by exchanging data with a real node (over QR or microSD) |
-| MUR (the redundant parts of the fountain code) | Optional hardening | Repeating the sequential parts is enough in practice. An improvement for environments with heavy packet loss |
+| Approval state machine and immutable approved request | **Release blocker** | Signing must be impossible before complete display and physical approval |
+| Key isolation and independent signing-hash comparison | **Release blocker** | The documented I-2/I-3 boundaries do not exist in the current code |
+| Session-wide secret erasure | **Release blocker** | Temporary buffer wipes do not erase master/derived/session copies |
+| Integrate P2TR/P2WSH into PSBT | **Required feature integration** | Current Core tests call standalone modules |
+| Integrate EVM parsing, ERC-7730/EIP-712 display, and signing | **Required feature integration** | Current modules and CLI are separate |
+| Descriptor authenticity/update design | **Security design** | Clear-signing metadata changes what users believe they authorize |
+| On-device display, camera, buttons, SD, and RNG | **Hardware required** | The HAL must be implemented and verified on the selected board |
+| Sending on the real device (signet/Sepolia) | **Hardware required** | End-to-end behavior must be checked against real nodes |
+| MUR fountain recovery | Optional hardening | Sequential retransmission works but is less robust under frame loss |
 
 ---
 

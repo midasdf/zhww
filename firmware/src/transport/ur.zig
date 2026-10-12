@@ -387,7 +387,7 @@ pub fn findFragmentLength(message_len: usize, min_fragment_len: usize, max_fragm
     var fragment_len = message_len;
     var count: usize = 1;
     while (count <= max_fragment_count) : (count += 1) {
-        fragment_len = (message_len + count - 1) / count;
+        fragment_len = ceilDiv(message_len, count);
         if (fragment_len <= max_fragment_len) break;
     }
     return fragment_len;
@@ -426,7 +426,7 @@ pub const Encoder = struct {
         if (!isValidType(ur_type)) return error.InvalidEncoding;
 
         const fragment_len = try findFragmentLength(message.len, min_fragment_len, max_fragment_len);
-        const seq_len = (message.len + fragment_len - 1) / fragment_len;
+        const seq_len = ceilDiv(message.len, fragment_len);
         if (seq_len > std.math.maxInt(u32)) return error.InvalidEncoding;
 
         if (scratch.len < maxPartCborLength(fragment_len)) return error.BufferTooSmall;
@@ -608,18 +608,20 @@ pub const Decoder = struct {
         const part = decoded.part;
 
         if (self.seq_len == 0) {
-            // The first part fixes the metadata for the whole message.
+            // The first part fixes the metadata for the whole message. Use overflow-safe ceiling
+            // division and reject an empty fragment before it can become a divisor.
             const seq_len: usize = part.seq_len;
-            if ((part.message_len + seq_len - 1) / seq_len != part.data.len) return error.InvalidEncoding;
-            if ((part.message_len + part.data.len - 1) / part.data.len != seq_len) return error.InvalidEncoding;
-            if (self.bits.len < (seq_len + 7) / 8) return error.BufferTooSmall;
+            if (part.data.len == 0) return error.InvalidEncoding;
+            if (ceilDiv(part.message_len, seq_len) != part.data.len) return error.InvalidEncoding;
+            if (ceilDiv(part.message_len, part.data.len) != seq_len) return error.InvalidEncoding;
+            if (self.bits.len < ceilDiv(seq_len, 8)) return error.BufferTooSmall;
             if (self.message.len < part.message_len) return error.BufferTooSmall;
 
             self.seq_len = part.seq_len;
             self.message_len = part.message_len;
             self.fragment_len = part.data.len;
             self.checksum = part.checksum;
-            @memset(self.bits[0 .. (seq_len + 7) / 8], 0);
+            @memset(self.bits[0..ceilDiv(seq_len, 8)], 0);
         } else if (part.seq_len != self.seq_len or
             part.message_len != self.message_len or
             part.checksum != self.checksum or
@@ -676,6 +678,11 @@ pub const Decoder = struct {
         return .complete;
     }
 };
+
+/// Ceiling division without the overflowing `(a + b - 1)` intermediate. `b` must be non-zero.
+fn ceilDiv(a: usize, b: usize) usize {
+    return a / b + @intFromBool(a % b != 0);
+}
 
 // ---------------------------------------------------------------- tests
 

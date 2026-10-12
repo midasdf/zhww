@@ -1,6 +1,6 @@
 # firmware/tests/ — tests and official test vectors
 
-- **Last updated**: 2026-10-12
+- **Last updated**: 2026-10-13
 
 ```bash
 cd firmware && zig build test
@@ -9,8 +9,9 @@ cd firmware && zig build test
 `firmware/tests.zig` runs both the implementation's unit tests (the `test` blocks under `src/`) and
 the integration tests based on official test vectors (this directory).
 
-**Currently: all 322 tests pass.** (Verified to pass in all four modes — Debug / ReleaseSafe /
-ReleaseFast / ReleaseSmall. GitHub Actions also checks this on Linux on every run.)
+**Currently: all 391 tests pass.** The 2026-10-13 review reran Debug, ReleaseSafe, ReleaseFast
+and ReleaseSmall. GitHub Actions checks Debug plus ReleaseSafe on Linux. Use the four-mode command
+below when checking optimizer-sensitive behavior.
 
 ## The strongest verification: Bitcoin Core accepts our signatures
 

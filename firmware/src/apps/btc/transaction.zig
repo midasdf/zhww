@@ -167,9 +167,11 @@ pub const Transaction = struct {
     }
 
     /// Total output value (sats).
-    pub fn totalOutput(self: Transaction) u64 {
+    pub fn totalOutput(self: Transaction) Error!u64 {
         var total: u64 = 0;
-        for (self.outputs) |output| total += output.value;
+        for (self.outputs) |output| {
+            total = std.math.add(u64, total, output.value) catch return error.InvalidEncoding;
+        }
         return total;
     }
 };
@@ -293,5 +295,5 @@ test "total output value" {
     const allocator = arena.allocator();
     const tx = try Transaction.parse(allocator, try hexAlloc(allocator, bip143_unsigned_tx));
     // 0x06b22c20 (1.1234 BTC) + 0x0d519390 (2.2345 BTC)
-    try testing.expectEqual(@as(u64, 335_790_000), tx.totalOutput());
+    try testing.expectEqual(@as(u64, 335_790_000), try tx.totalOutput());
 }

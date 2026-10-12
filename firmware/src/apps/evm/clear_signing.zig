@@ -447,11 +447,6 @@ pub fn renderTransaction(
             try appendCalldataSummary(allocator, &items, calldata, selector);
         },
         .found => |format| {
-            try items.append(allocator, .{
-                .label = "Action",
-                .value = format.intent,
-                .warning = false,
-            });
             try renderFormat(allocator, descriptor, container, format, calldata, token_metadata, &items);
         },
     }
@@ -488,6 +483,14 @@ fn renderFormat(
         try appendCalldataSummary(allocator, items, calldata, format.selector);
         return;
     };
+
+    // The intent is descriptor-provided prose. Show it only after the calldata has decoded
+    // canonically; otherwise it could claim "Transfer" above bytes that mean something else.
+    try items.append(allocator, .{
+        .label = "Action",
+        .value = format.intent,
+        .warning = false,
+    });
 
     const context = RenderContext{
         .allocator = allocator,
@@ -1939,11 +1942,11 @@ test "rejects non-canonical calldata without fabricating values" {
     });
 
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &.{});
-    try testing.expectEqual(@as(usize, 4), items.len);
-    try testing.expectEqualStrings("Transfer stETH", items[0].value);
-    try testing.expectEqualStrings("WARNING", items[1].label);
-    try testing.expect(std.mem.indexOf(u8, items[1].value, "not the canonical ABI form") != null);
-    try testing.expect(items[1].warning);
+    try testing.expectEqual(@as(usize, 3), items.len);
+    try testing.expectEqualStrings("WARNING", items[0].label);
+    try testing.expect(std.mem.indexOf(u8, items[0].value, "not the canonical ABI form") != null);
+    try testing.expect(items[0].warning);
+    for (items) |item| try testing.expect(!std.mem.eql(u8, item.label, "Action"));
 
     descriptor.deinit();
 }
@@ -1977,10 +1980,10 @@ test "a descriptor containing a tuple only matches selectors and does not displa
         word(0),
     });
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &.{});
-    try testing.expectEqual(@as(usize, 4), items.len);
-    try testing.expectEqualStrings("Submit order", items[0].value);
-    try testing.expect(std.mem.indexOf(u8, items[1].value, "unsupported argument type") != null);
-    try testing.expect(items[1].warning);
+    try testing.expectEqual(@as(usize, 3), items.len);
+    try testing.expect(std.mem.indexOf(u8, items[0].value, "unsupported argument type") != null);
+    try testing.expect(items[0].warning);
+    for (items) |item| try testing.expect(!std.mem.eql(u8, item.label, "Action"));
 
     descriptor.deinit();
 }

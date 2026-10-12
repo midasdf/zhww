@@ -14,13 +14,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Zig 0.17.0
         run: |
           # Note: ziglang.org's index.json does not always list 0.17.0, but the
           # binary tarball is available. Pin the version to keep builds reproducible.
           curl -fsSL -o zig.tar.xz https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
+          echo '1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026  zig.tar.xz' | sha256sum -c -
           tar -xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-0.17.0" >> "$GITHUB_PATH"
 
@@ -101,7 +102,9 @@ jobs:
           echo "EVM OK (EIP-1559 signature matches the independent implementation)"
 
       - name: Install Foundry (anvil)
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1
+        with:
+          version: v1.8.5
 
       - name: "EVM: a local node accepts our signed transactions (anvil)"
         working-directory: firmware

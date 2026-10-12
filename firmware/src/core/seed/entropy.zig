@@ -113,6 +113,8 @@ pub const Dice = struct {
 /// Combine inputs such as dice, camera and TRNG to produce BIP39 entropy.
 ///
 /// `out.len` is 16/20/24/28/32 bytes (corresponding to the BIP39 word counts).
+/// The dice contribution must meet the documented minimum for that entropy size; extra
+/// sources never compensate for too few rolls because they are optional and may be broken.
 /// **No dynamic memory** (fixed-size buffers only).
 pub fn combine(
     out: []u8,
@@ -122,11 +124,15 @@ pub fn combine(
     if (out.len != 16 and out.len != 20 and out.len != 24 and out.len != 28 and out.len != 32) {
         return error.InvalidMnemonic;
     }
-    if (dice.len < 1) return error.UnsupportedNormalization; // dice are required
+    // The count is part of the deterministic mapping. Accepting extra rolls would let leading
+    // rolls of 1 (base-6 zero digits) collide with a shorter record.
+    if (dice.len != requiredRolls(out.len)) return error.InvalidMnemonic;
 
     // lay out the dice and all additional sources as HKDF-Extract input
     var ikm: [512]u8 = undefined;
-    const dice_bytes = dice.toBytes();
+    defer std.crypto.secureZero(u8, &ikm);
+    var dice_bytes = dice.toBytes();
+    defer std.crypto.secureZero(u8, &dice_bytes);
     @memcpy(ikm[0..64], &dice_bytes);
     var len: usize = 64;
     for (extra_sources) |source| {
@@ -136,11 +142,28 @@ pub fn combine(
     }
 
     var prk: [32]u8 = undefined;
+    defer std.crypto.secureZero(u8, &prk);
     hkdfExtract(&prk, hkdf_salt, ikm[0..len]);
     var derived: [32]u8 = undefined;
+    defer std.crypto.secureZero(u8, &derived);
     try hkdfExpand(&derived, prk, hkdf_info);
 
     @memcpy(out, derived[0..out.len]);
+}
+
+/// Minimum dice count used by the public generation path.
+///
+/// The project requirement fixes 50 rolls for 128-bit entropy and 99 for 256-bit entropy.
+/// Intermediate BIP39 sizes use a proportional ceiling, while retaining those two endpoints.
+pub fn requiredRolls(entropy_len: usize) usize {
+    return switch (entropy_len) {
+        16 => rolls_for_12_words,
+        20 => 62,
+        24 => 75,
+        28 => 87,
+        32 => rolls_for_24_words,
+        else => 0,
+    };
 }
 
 /// Build a mnemonic from rolls and additional sources.
@@ -291,15 +314,22 @@ test "additional entropy sources affect the result" {
     try testing.expect(!std.mem.eql(u8, a, b));
 }
 
-test "rejects input without dice (dice are required)" {
-    const empty: Dice = .{};
+test "rejects too few dice rolls even when an extra source is present" {
+    var dice: Dice = .{};
+    try dice.rollString("123456");
+    const extra: [32]u8 = @splat(0x42);
     var entropy: [16]u8 = undefined;
-    try testing.expectError(error.UnsupportedNormalization, combine(&entropy, empty, &.{}));
+    try testing.expectError(error.InvalidMnemonic, combine(&entropy, dice, &.{&extra}));
+
+    while (dice.len < rolls_for_12_words) try dice.roll(1);
+    try combine(&entropy, dice, &.{&extra});
+    try dice.roll(1);
+    try testing.expectError(error.InvalidMnemonic, combine(&entropy, dice, &.{&extra}));
 }
 
 test "entropy length validation" {
     var dice: Dice = .{};
-    try dice.rollString("123456");
+    while (dice.len < rolls_for_12_words) try dice.roll(1);
     var wrong: [15]u8 = undefined;
     try testing.expectError(error.InvalidMnemonic, combine(&wrong, dice, &.{}));
 }
