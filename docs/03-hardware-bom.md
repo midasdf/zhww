@@ -378,6 +378,21 @@ Check the silkscreen for the pin order before connecting: the 4-pin boards come 
 `VCC GND DO AO` and mirror-image orders. Nothing here has been bought or measured in this session, and
 no specific product page could be verified - the specification above is what matters.
 
+
+**Cheaper listing of the same part (2026-10-13)**: [Adafruit OPT4048 module, Switch Science 10457](https://www.switch-science.com/products/10457),
+**¥2,090, in stock** - the same OPT4048 chip as 9281 (¥2,739), so the 600 us conversion time, the four
+X/Y/Z/W channels (the fourth is the wideband one to sample), the 0x44 I2C address and the two
+STEMMA QT/Qwiic connectors are identical. Buy this one; the ¥650 difference buys nothing.
+
+One consequence to act on: this board is **25.4 x 17.78 mm**, and the enclosure's sensor bay is
+currently 16 mm. The bay has to grow to roughly 28 x 21 mm (the case is parametric, so this is a
+parameter change plus a re-render), and the printed light-guide sleeve has to line up with the
+sensor's aperture on the new board rather than the LM393 module's.
+
+Useful extras this board brings: it has breakout pads for I2C, the address pin and an interrupt output
+(so it can also be wired with jumpers if a Qwiic cable is ever impractical), and it carries a level
+shifter so it works from both 3.3 V and 5 V rails.
+
 ## 3. Assembly procedure (solder-free; target 45 minutes; for the Pi Zero 2 WH)
 
 1. **Fit the LCD HAT** — plug it into the 40-pin header (1 minute)
