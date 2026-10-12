@@ -313,7 +313,7 @@ photoresistor is a **bare serpentine squiggle** on a ceramic or plastic base.
 **female-to-female (F-F) jumper wires, 4 of them** (or a 4-way F-F ribbon of the same length).
 Choose **10-20 cm**: the display sits on the header, so the wires have to come around it. Nothing else
 is needed - no Grove or Qwiic adapter, because these boards have plain 0.1" pins. The **light guide is
-printed as part of the case** (a sleeve for a 6.4 mm tube over the sensor in the 16 mm bay), so there is
+printed as part of the case** (a collar and floor window that carry the light guide down through the underside (the 16 mm side bay has not existed since v0.4)), so there is
 nothing extra to buy for it.
 
 **Wiring** (3 wires are enough to start; `DO` is optional):
