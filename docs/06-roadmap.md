@@ -39,6 +39,8 @@
 | 手数料計算・お釣り判定 | ✅ 完了（入力額が不明なら手数料を計算しない） |
 | ダイス・カメラの entropy 結合 | ✅ 完了（HKDF-SHA256 / RFC 5869 ベクタで検証） |
 | **Bitcoin Core との相互運用** | ✅ 完了（Core が作った PSBT に署名し、Core の `finalizepsbt` が `complete: true`、`testmempoolaccept` が `allowed: true`。最終化結果はバイト単位で一致） |
+| **2-of-3 マルチシグ（P2WSH）** | ✅ 完了（Core の 2-of-3 アドレスに送金し、本実装で署名して Core が受理。witnessScript の公開鍵順も Core と一致） |
+| **QR 転送（BC-UR）** | ✅ 完了（Bytewords / CBOR / 単一・マルチパート。仕様と参照実装の文字列に一致。冗長パート（MUR）は未実装） |
 | EIP-712（型付きデータ） | ✅ 完了（仕様の既知値と一致。署名も独立実装と一致） |
 | ERC-7730（clear signing）・ABI デコード | ✅ 完了（実際のレジストリの記述子で表示項目を検証。危険パターンは警告付き） |
 | 実機（signet）での送金 | ⬜ 未着手（実機が必要） |

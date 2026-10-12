@@ -9,7 +9,7 @@ cd firmware && zig build test
 実装のユニットテスト（`src/` 内の `test` ブロック）と、公式テストベクタによる統合テスト
 （本ディレクトリ）を `firmware/tests.zig` がまとめて実行する。
 
-**現在: 151 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
+**現在: 195 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
 4 モードすべてで成功することを確認済み。GitHub Actions でも Linux 上で毎回検証している）
 
 ## 最も強い検証: Bitcoin Core が署名を受理する
@@ -54,14 +54,16 @@ firmware/tests/
 │   ├── bip86.json            BIP86 P2TR（内部鍵・出力鍵・アドレス）
 │   ├── bip143.json           BIP143 Native P2WPKH（未署名 tx / sighash / DER 署名 / 署名済み tx）
 │   ├── bip174.json           BIP174 PSBT（不正 20 件 / 妥当 27 件・Base64）
-│   └── core_psbt.json        Bitcoin Core が作った PSBT と、Core の最終化結果（相互運用）
+│   ├── core_psbt.json        Bitcoin Core が作った PSBT と、Core の最終化結果（単一署名）
+│   └── core_multisig.json    2-of-3 マルチシグ（Core が作った UTXO と、Core の最終化結果）
 ├── bip39_vectors_test.zig
 ├── bip32_vectors_test.zig
 ├── address_vectors_test.zig
 ├── bip143_test.zig
 ├── bip174_test.zig
 ├── sign_test.zig             署名と最終化の統合テスト（外部ベクタが無い経路）
-└── core_interop_test.zig     Bitcoin Core との相互運用（Core が署名を受理する）
+├── core_interop_test.zig     Bitcoin Core との相互運用（Core が署名を受理する）
+└── multisig_test.zig         2-of-3 マルチシグ（Core が署名を受理する）
 
 EVM のテストは実装ファイル内（`src/apps/evm/*.zig` の `test` ブロック）にあり、
 RLP 公式ベクタ・EIP-155 の公式例・EIP-55・EIP-191 を検証する。
@@ -79,6 +81,7 @@ RLP 公式ベクタ・EIP-155 の公式例・EIP-55・EIP-191 を検証する。
 | `bip143.json` | https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki |
 | `bip174.json` | https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki |
 | `core_psbt.json` | Bitcoin Core v31.1.0（regtest で実際に作成。`createpsbt` + `utxoupdatepsbt` の出力） |
+| `core_multisig.json` | Bitcoin Core v31.1.0（regtest。`createmultisig` のアドレスへ送金し、`createpsbt` で作ったトランザクション） |
 
 > **注意**: `bip39.json` の seed はパスフレーズ **"TREZOR"** で導出された値である
 > （空のパスフレーズでは一致しない）。
@@ -110,6 +113,11 @@ LLM が生成したコードに対して、テストが実際に誤りを検出�
 | 6 | **ダングリングポインタ** | 最終化で `witness[1] = &key.public_key`（ループ内のローカル変数のアドレス）を保持していた。署名は正しいのに公開鍵だけ別の値になるという形で検出。**メモリ安全性のバグ**であり、統合テストが無ければ本番で初めて気づく類 |
 | 7 | **`EcdsaSignature.data` は `r‖s` ではない** | libsecp256k1 の内部表現（この環境ではリトルエンディアン）で、`r‖s` のビッグエンディアンではない。EVM 側の実装時に気づき、`core` に `signRecoverable` を追加して extern 宣言を集約した |
 | 8 | **固定長配列をハッシュしていなかった** | EIP-712 では**固定長配列も動的配列と同じく** `keccak256(要素の連結)` にする（`SomeType[5]` は 5 要素の構造体と同じ）。仕様書の該当文を確認して修正。サブケースに分割してオラクルと比較することで特定した |
+| 9 | **値渡しの構造体へのスライスを返していた** | `slice(self: ParsedScript)` が値渡しのコピー（関数フレーム内）へのスライスを返しており、呼び出し元では不正な参照になっていた。**#6 と同じクラスのメモリ安全性のバグ**で、パース結果の 2 番目以降が不定値になる形で検出。`*const` 受け取りに変更して修正 |
+
+**メモリ安全性について**: #6 と #9 はどちらも「一時的な値への参照を保持してしまう」バグである。
+Zig は値渡しが基本なので、**構造体の内部を指すスライスを返す関数は `*const` で受ける**こと、
+**ループ内のローカル変数のアドレスを長生きする構造へ入れない**ことを徹底する。
 
 **教訓**:
 - 「公式ベクタが通った」だけでは不十分。同じ値が並ぶベクタは順序のバグを隠す。
