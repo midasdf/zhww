@@ -91,7 +91,7 @@ fn run(init: std.process.Init) !void {
         }
     } else if (std.mem.eql(u8, command, "cat")) {
         if (args.items.len < 4) return error.Usage;
-        const data = try volume.readFileAlloc(allocator, args.items[2], 8 * 1024 * 1024);
+        const data = try volume.readFileAlloc(allocator, args.items[2], 128 * 1024 * 1024);
         defer allocator.free(data);
         try dir.writeFile(io, .{ .sub_path = args.items[3], .data = data });
         std.debug.print("cat: {s} -> {d} bytes\n", .{ args.items[2], data.len });
