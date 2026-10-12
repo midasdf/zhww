@@ -531,6 +531,27 @@ So this is a genuine decision point: the assembly story gets *better* (one board
 HAT covering anything), at the cost of the enclosure and HAL rework. Nothing has been bought; the
 specifications above are from the product page.
 
+
+**Chosen camera (owner decision, 2026-10-13)**: [Arducam Mega 3MP SPI camera, Switch Science 8941](https://www.switch-science.com/products/8941),
+**Y4,840, in stock** - not the 5 MP version, which costs Y1,650 more for resolution this does not need.
+
+Why 3 MP is plenty, with the arithmetic: at 10-20 cm a 3 cm QR occupies roughly 18% of a 60 degree
+field of view, so on a 3 MP sensor (2048 x 1536) the code lands on about 370 px across 69 modules -
+**about 5 px per module**, against a decoder that has been verified down to **1 px per module**.
+
+Three more reasons this module is a better fit than the 5 MP one:
+
+- It carries **its own controller with a high-level command API** and an **open-source SDK with a
+  hardware abstraction layer**, so the driver is command-level rather than a sensor register table. That
+  is a large reduction in the work this project has to write and verify.
+- **Standard SPI**, listed for ARM and RISC-V MCUs, so the RP2350 is a supported target.
+- Under **200 mW, with a 42 ms wake-up from sleep**, so the camera can stay off until it is needed - it
+  does not have to be powered while signing.
+
+Unconfirmed: whether the box includes a cable as the 5 MP Mega does, and the same two driver items
+already recorded above (fixed-focus softness at close range handled by windowing, and reading the luma
+channel only).
+
 ## 3. Assembly procedure (solder-free; target 45 minutes; for the Pi Zero 2 WH)
 
 1. **Fit the LCD HAT** — plug it into the 40-pin header (1 minute)
