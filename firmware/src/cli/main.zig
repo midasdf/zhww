@@ -20,6 +20,7 @@ const usage =
     \\  address    アドレスを表示する
     \\  evm-show   署名済み/未署名の EVM トランザクションを表示する（raw hex）
     \\  evm-sign   EVM のトランザクション（JSON）に署名する
+    \\  screen     実機の画面（240×240）を PNG で出力する（PC での確認用）
     \\  show       PSBT の中身を人間可読で表示する（画面の代わり）
     \\  sign       PSBT（base64）に署名する。標準入力から読む
     \\  mnemonic   ダイスの出目から mnemonic を作る（記録の検証用）
@@ -42,6 +43,13 @@ const usage =
     \\  --passphrase "..."      パスフレーズ（任意）
     \\  入力（JSON）: chainId / nonce / to / value / gasLimit / gasPrice、
     \\                 または maxFeePerGas と maxPriorityFeePerGas（EIP-1559）
+    \\
+    \\screen のオプション:
+    \\  --demo                    サンプルの確認画面を出す（入力不要）
+    \\  --network mainnet|testnet|signet|regtest （アドレス表示用。既定: mainnet）
+    \\  --mnemonic "..."          渡すとお釣りを判定する（任意）
+    \\  --scale <n>               1 ドットを n 倍で出力する（既定: 1）
+    \\  入力に PSBT（base64）を渡すと、その確認画面を描く
     \\
     \\show のオプション:
     \\  --network mainnet|testnet|signet|regtest （アドレス表示用。既定: mainnet）
@@ -128,6 +136,10 @@ fn run(init: std.process.Init.Minimal, stdout: anytype) !void {
     }
     if (std.mem.eql(u8, command, "evm-sign")) {
         try commandEvmSign(allocator, args.items[1..], stdout);
+        return;
+    }
+    if (std.mem.eql(u8, command, "screen")) {
+        try commandScreen(allocator, args.items[1..], stdout);
         return;
     }
     if (std.mem.eql(u8, command, "show")) {
@@ -607,6 +619,167 @@ fn warnDangerousCalldata(selector: [4]u8) !void {
     if (std.mem.eql(u8, &selector, &permit)) {
         stderrPrint("注意: permit（オフチェーン署名の代行）です\n", .{});
     }
+}
+
+// ---------------------------------------------------------------- screen
+
+const png = @import("png.zig");
+
+/// 実機の画面（240×240）を組み立てて PNG で出力する。
+///
+/// 実機が無くても UI を確認できるようにするためのコマンド。
+/// `--demo` ならサンプル、PSBT を渡せばその確認画面を描く。
+fn commandScreen(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdout: anytype,
+) !void {
+    const network = try networkOf(args);
+    const screen_width: usize = 240;
+    const screen_height: usize = 240;
+
+    const pixels = try allocator.alloc(u16, screen_width * screen_height);
+    var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, screen_width, screen_height);
+
+    var title: []const u8 = undefined;
+    var lines_buf: [4]zhww.ui_screen.Line = undefined;
+    var line_count: usize = 0;
+    var warnings_buf: [3][]const u8 = undefined;
+    var warning_count: usize = 0;
+
+    const demo = option(args, "--demo") != null;
+    var qr_modules: ?[]u8 = null;
+    if (demo) {
+        title = "CONFIRM";
+        lines_buf[0] = .{ .label = "To", .value = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu" };
+        lines_buf[1] = .{ .label = "Amount", .value = "0.00100000 BTC", .kind = .strong };
+        lines_buf[2] = .{ .label = "Fee", .value = "1234 sats (0.12%)" };
+        line_count = 3;
+        warnings_buf[0] = "Check the address on your own screen";
+        warning_count = 1;
+    } else {
+        const input = try readAllStdin(allocator);
+        const trimmed = std.mem.trim(u8, input, " \t\r\n");
+        if (trimmed.len == 0) {
+            stderrPrint("PSBT（base64）を渡すか、--demo を指定してください\n", .{});
+            return error.Usage;
+        }
+        const decoder = std.base64.standard.Decoder;
+        const raw = try allocator.alloc(u8, try decoder.calcSizeForSlice(trimmed));
+        try decoder.decode(raw, trimmed);
+        const psbt = try zhww.btc_psbt.Psbt.parse(allocator, raw);
+
+        // 送金先（お釣り以外の最初の出力）を探す
+        const change = try changeOutputs(allocator, psbt, args);
+        title = "CONFIRM";
+        var to_address: []const u8 = "(unknown script)";
+        var amount: u64 = 0;
+        var found = false;
+        for (psbt.unsigned_tx.outputs, 0..) |output, i| {
+            var is_change = false;
+            for (change) |index| {
+                if (index == i) is_change = true;
+            }
+            if (is_change) continue;
+            var buffer: [90]u8 = undefined;
+            if (try zhww.btc_address.fromScriptPubKey(&buffer, output.script_pubkey, network)) |address| {
+                to_address = try allocator.dupe(u8, address);
+            }
+            amount = output.value;
+            found = true;
+            break;
+        }
+        if (!found) {
+            stderrPrint("送金先の出力が見つかりません\n", .{});
+            return error.InvalidArgument;
+        }
+
+        lines_buf[0] = .{ .label = "To", .value = to_address };
+        lines_buf[1] = .{ .label = "Amount", .value = try std.fmt.allocPrint(allocator, "{d} sats", .{amount}) , .kind = .strong };
+
+        // 手数料
+        var total_input: u64 = 0;
+        var unknown_value = false;
+        for (0..psbt.inputs.len) |i| {
+            const info = try inputInfo(allocator, psbt, i);
+            if (info) |utxo| {
+                total_input += utxo.value;
+            } else {
+                unknown_value = true;
+            }
+        }
+        var total_output: u64 = 0;
+        for (psbt.unsigned_tx.outputs) |output| total_output += output.value;
+
+        if (unknown_value) {
+            lines_buf[2] = .{ .label = "Fee", .value = "unknown" };
+            warnings_buf[warning_count] = "Input amount unknown: cannot verify the fee";
+            warning_count += 1;
+            line_count = 3;
+        } else if (total_input >= total_output) {
+            const fee = total_input - total_output;
+            lines_buf[2] = .{
+                .label = "Fee",
+                .value = try std.fmt.allocPrint(allocator, "{d} sats", .{fee}),
+            };
+            line_count = 3;
+            if (fee * 100 > total_input) {
+                warnings_buf[warning_count] = "Fee is more than 1% of the input";
+                warning_count += 1;
+            }
+        } else {
+            line_count = 2;
+            warnings_buf[warning_count] = "Outputs exceed inputs";
+            warning_count += 1;
+        }
+        if (change.len == 0 and psbt.unsigned_tx.outputs.len > 1) {
+            warnings_buf[warning_count] = "Change could not be identified";
+            warning_count += 1;
+        }
+    }
+
+    // QR（デモでは市松模様。実際の UR は QR エンコーダ実装後に差し込む）
+    var qr_bitmap: ?zhww.ui_screen.Bitmap = null;
+    if (demo) {
+        const size: usize = 25;
+        qr_modules = try allocator.alloc(u8, size * size);
+        for (0..size) |y| {
+            for (0..size) |x| {
+                const finder = (x < 7 and y < 7) or (x >= size - 7 and y < 7) or (x < 7 and y >= size - 7);
+                const on = finder or (x + y) % 3 == 0;
+                qr_modules.?[y * size + x] = if (on) 1 else 0;
+            }
+        }
+        qr_bitmap = .{ .width = size, .height = size, .modules = qr_modules.? };
+    }
+
+    const screen = zhww.ui_screen.Screen{
+        .title = title,
+        .lines = lines_buf[0..line_count],
+        .warnings = warnings_buf[0..warning_count],
+        .qr = qr_bitmap,
+        .footer_left = "OK",
+        .footer_right = "CANCEL",
+    };
+    screen.render(&fb);
+
+    // 拡大して PNG で出す（既定は等倍）
+    const scale_text = option(args, "--scale") orelse "1";
+    const scale = try std.fmt.parseInt(usize, scale_text, 10);
+    if (scale <= 1) {
+        try png.writeRgb565(&stdout.interface, allocator, pixels, screen_width, screen_height);
+    } else {
+        const big = try allocator.alloc(u16, screen_width * scale * screen_height * scale);
+        for (0..screen_height * scale) |y| {
+            for (0..screen_width * scale) |x| {
+                big[y * screen_width * scale + x] =
+                    pixels[(y / scale) * screen_width + (x / scale)];
+            }
+        }
+        try png.writeRgb565(&stdout.interface, allocator, big, screen_width * scale, screen_height * scale);
+    }
+    try stdout.interface.flush();
+    stderrPrint("画面を PNG で出力しました（{d}×{d}）\n", .{ screen_width * scale, screen_height * scale });
 }
 
 // ---------------------------------------------------------------- show（表示）

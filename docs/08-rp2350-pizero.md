@@ -86,6 +86,28 @@ Waveshare の HAT は BCM 番号で次のピンを使う。40pin が Pi 互換�
 | 起動 | BOOTSEL → UF2、ベクタテーブル、リンカスクリプト | 中 |
 | UI | 画面（アドレス・金額・手数料・警告の表示、QR 描画） | 中〜高 |
 
+### 実装済みの UI 層（ハードウェア非依存・2026-10-12）
+
+実機が無くても UI を固められるよう、**画面の組み立ては PC 上で完結する形**にしてある。
+
+| ファイル | 内容 | テスト |
+|---|---|---|
+| [src/ui/font.zig](../firmware/src/ui/font.zig) | 8×8 ビットマップフォント（パブリックドメイン、出典を明記） | 字形の検証 |
+| [src/ui/framebuffer.zig](../firmware/src/ui/framebuffer.zig) | RGB565 の描画（点・矩形・文字・ドット列）。範囲外はクリップ | ピクセル単位で検証 |
+| [src/ui/screen.zig](../firmware/src/ui/screen.zig) | 240×240 の画面レイアウト（タイトル・ラベル/値・警告・QR・フッター） | 領域ごとの描画を検証 |
+| [src/cli/png.zig](../firmware/src/cli/png.zig) | PNG 出力（無圧縮 zlib。外部ライブラリ不要） | 構造と CRC / Adler-32 を検証 |
+
+**PC で画面を見る方法**（実機は不要）:
+
+```bash
+cd firmware && zig build
+./zig-out/bin/zhww screen --demo --scale 2 > demo.png
+cat psbt.txt | ./zig-out/bin/zhww screen --network regtest --scale 2 > confirm.png
+```
+
+実際に Bitcoin Core が作った PSBT から「送金先・金額・手数料」の確認画面が描けることを確認済み。
+QR の中身は QR エンコーダの実装後に差し込む（現在はデモ用の市松模様）。
+
 ## 6. 変えずに済むもの
 
 - `core/` と `apps/`（BIP39/BIP32・アドレス・PSBT・署名・EVM・ERC-7730・UR）は**そのまま**
