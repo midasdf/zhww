@@ -27,6 +27,7 @@ const usage =
     \\  ur-decode   Read UR parts and turn them back into a PSBT (base64)
     \\  light-encode Turn a PSBT (base64) into raw 8-bit samples of a flickering screen
     \\  light-decode Read those samples back and turn them into a PSBT (base64)
+    \\  qr-decode   Decode a QR code in a grayscale image (the camera path, on a PC)
     \\  mnemonic    Build a mnemonic from dice rolls (for verifying your records)
     \\  evm-sign    Sign an EVM transaction (JSON)
     \\  evm-show    Show a signed or unsigned EVM transaction (raw hex)
@@ -90,6 +91,16 @@ const usage =
     \\  --symbol-rate <sps>        Symbol rate of the recording (default: 30)
     \\  --hysteresis <counts>      Schmitt trigger dead zone (default: 12)
     \\  < raw 8-bit samples        Input; the PSBT (base64) goes to stdout
+    \\
+    \\qr-decode options (image -> QR text -> UR parts -> PSBT):
+    \\  --image <file>             Grayscale image (repeatable; "-" or no image = stdin)
+    \\  --assemble                 Every image is one UR part; print the PSBT (base64) once
+    \\                             every part has been seen (nothing at all before that)
+    \\  --format pgm|raw           pgm = PGM (P5); raw = 8-bit pixels, needs --width/--height
+    \\                             (default: PGM when the data starts with "P5", else raw)
+    \\  --width <n> --height <n>   Dimensions of a raw 8-bit image
+    \\  --type <type name>         UR type to assemble (default: crypto-psbt)
+    \\  Without --assemble the decoded text of each image is written to stdout, one line each.
     \\
     \\mnemonic options:
     \\  --dice "123456..."         Dice rolls (1-6)
@@ -209,6 +220,10 @@ fn run(init: std.process.Init.Minimal, stdout: anytype, io: std.Io) !void {
     }
     if (std.mem.eql(u8, command, "light-decode")) {
         try commandLightDecode(allocator, args.items[1..], stdout);
+        return;
+    }
+    if (std.mem.eql(u8, command, "qr-decode")) {
+        try qr_tool.run(allocator, args.items[1..], &stdout.interface, io);
         return;
     }
     if (std.mem.eql(u8, command, "help") or std.mem.eql(u8, command, "--help")) {
@@ -1857,3 +1872,7 @@ fn printLightDecodeStats(stats: light_tool.DecodeStats) void {
     );
     if (stats.last_error) |name| stderrPrint("light-decode: last rejection: {s}\n", .{name});
 }
+
+// ---------------------------------------------------------------- QR camera path
+
+const qr_tool = @import("qr_tool.zig");
