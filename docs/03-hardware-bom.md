@@ -68,7 +68,10 @@ Pi Zero 2 WH は**工場でヘッダが実装済み**のモデルで、この 2 
 
 **筐体について**: SeedSigner のケースは**画面と基板の寸法は同じ**だが、**ポートの穴が合わない**
 （RP2350-PiZero は USB-C ×2・microSD の位置が違う・BOOT/RUN ボタンがある・カメラは積まない）。
-そのため自前のパラメトリックな OpenSCAD を用意した（[hardware/enclosure](../hardware/enclosure/README.md)）。
+そのため自前のパラメトリックな OpenSCAD を用意し、**レンダリングで外形と構造を確認済み**
+（穴の位置だけ実機で実測して確定する。[hardware/enclosure](../hardware/enclosure/README.md)）。
+
+![筐体のプレビュー](images/case-preview.png)
 
 **一体型（画面・ボタン・カメラが最初から入った機器）は「普及」の観点では最有力**だが、
 Linux が動かないため本リポジトリの Zig ファームウェアはそのままでは動かない

@@ -30,13 +30,38 @@ Inventor（.ipt）の編集可能ソース付き）。
 - **寸法がパラメータ**なので、部品を変えたら再生成できる
 - テキストなので差分管理・レビューができる（本リポジトリの他の部分と同じ流儀）
 
+## レンダリング結果（確認済み）
+
+![筐体のプレビュー](../../docs/images/case-preview.png)
+
+*左が下側（トレイ。四隅に HAT を押さえる支柱、右側面に USB-C の穴）、右が上蓋
+（表示窓・ジョイスティック・3 ボタン）。2026-10-12 に OpenSCAD 2026.10.11 でレンダリング。*
+
+**確認したこと**:
+
+| 項目 | 結果 |
+|---|---|
+| 構文とレンダリング | `Status: NoError`（有効な多様体） |
+| 下側（tray） | 外形 69.8 × 34.8 × 15.7mm ＝ 基板 65×30 ＋ 肉厚 2×2 ＋ 遊び 0.4×2 ✅ |
+| 上蓋（lid） | 外形 69.8 × 34.8 × 3.5mm ✅ |
+| 穴の干渉 | 初期の仮パラメータで表示窓とボタン穴が重なっていたのを検出し、配置を修正済み |
+
+**まだ実測していないのは穴の位置だけ**で、外形と構造は確定している。
+
 ## 使い方
 
 ```bash
-# OpenSCAD を入れる（macOS: brew install --cask openscad / Linux: apt install openscad）
+# OpenSCAD を入れる
+#   macOS: 公式の配布（https://openscad.org/downloads.html）から .dmg を入れる
+#          ※ Homebrew の cask は Gatekeeper の検査を通らず 2026-09-01 に無効化されている
+#   Linux: apt install openscad
 openscad -o zhww-case.stl hardware/enclosure/zhww-case.scad          # STL を書き出す
 openscad -o tray.stl -D 'part="tray"' hardware/enclosure/zhww-case.scad
 openscad -o lid.stl  -D 'part="lid"'  hardware/enclosure/zhww-case.scad
+
+# プレビュー画像（README の画像と同じもの）
+openscad -o case.png --imgsize=1000,750 --autocenter --viewall --projection=o \
+  --colorscheme=Tomorrow hardware/enclosure/zhww-case.scad
 ```
 
 ## 実機が届いたら実測して埋めること
@@ -47,15 +72,15 @@ openscad -o lid.stl  -D 'part="lid"'  hardware/enclosure/zhww-case.scad
 | パラメータ | 何を測るか |
 |---|---|
 | `display_x` / `display_y` | HAT の基板端から LCD 表示領域までの距離 |
-| `joystick_x` / `joystick_y` / `joystick_d` | ジョイスティックの中心位置と軸の直径 |
+| `joystick_x` / `joystick_y` / `joystick_d` | ジョイスティックの中心位置と軸の直径（現在は LCD の右側という仮置き） |
 | `button1..3_x/y` / `button_d` | 3 ボタンの中心位置と直径 |
 | `usb_c1_y` / `usb_c2_y` / `usb_c_w/h` | USB-C コネクタの位置・寸法 |
 | `hdmi_y` / `hdmi_w/h` | mini HDMI の位置・寸法 |
 | `sd_y` / `sd_w/h` | microSD スロットの位置・寸法 |
 | `header_h` | 40pin ヘッダ＋ソケットを挿したときの高さ |
 
-**注意**: この環境に OpenSCAD が無いため、**この .scad はまだレンダリングしていない**。
-構文と寸法は実機で確認すること。
+**注意**: 外形と構造はレンダリングで確認済みだが、**穴の位置は実測してから確定する**。
+現在の値は公開情報から分かる範囲＋妥当な仮置きであり、実機に合わせて更新すること。
 
 ## 出典（参考にした公開情報）
 

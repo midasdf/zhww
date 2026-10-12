@@ -42,12 +42,12 @@ display_y = 3.0;        // HAT 手前端から LCD 手前端まで（未実測�
 // 操作部（HAT 上のジョイスティックと 3 ボタン）
 // --- 実測して埋める（位置は仮。SeedSigner のケースはボタンキャップ方式なので同じ考え方）---
 joystick_d = 8.0;       // ジョイスティックの穴の直径
-joystick_x = 42.0;      // HAT 左端から
-joystick_y = 18.0;      // HAT 手前端から
+joystick_x = 46.0;      // HAT 左端から（LCD の右側に置く想定。実測して確定）
+joystick_y = 8.0;       // HAT 手前端から
 button_d = 5.2;         // タクトスイッチの穴
-button1_x = 18.0;  button1_y = 22.0;
-button2_x = 26.0;  button2_y = 22.0;
-button3_x = 34.0;  button3_y = 22.0;
+button1_x = 40.0;  button1_y = 24.0;
+button2_x = 48.0;  button2_y = 24.0;
+button3_x = 56.0;  button3_y = 24.0;
 
 // ポート（RP2350-PiZero: USB-C ×2、mini HDMI、microSD、BOOT / RUN）
 // --- 実測して埋める（Pi Zero とは位置が違うため、SeedSigner のケースの穴はそのまま使えない）---
@@ -88,6 +88,9 @@ module tray() {
         translate([-1, wall + sd_y, floor_t + 2])
             cube([wall + 2, sd_w, sd_h]);
     }
+
+    // HAT を押さえる支柱（基板の四隅。高さは実測して調整する）
+    posts();
 }
 
 // ---------------------------------------------------------------- 上蓋
