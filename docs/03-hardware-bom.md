@@ -13,7 +13,7 @@
 | 1 | SBC | **Raspberry Pi Zero 2 WH (header pre-installed)** | ¥3,500–4,400 | スイッチサイエンス (Switch Science), 千石電商 (Sengoku Denshi), Amazon |
 | 2 | Display | **Adafruit Mini PiTFT 135×240** (product 4393, 1.14", ST7789, **two tactile buttons on the board**, **Qwiic/STEMMA QT port**, 38.6×24.5 mm, pre-assembled) | $9.95 | Adafruit (US) |
 | 3 | Light receiver (**the input path**) | **LM393 light-sensor module with a photodiode/phototransistor and both an analog and a digital output** (the common 4-pin "LM393 light sensor" boards) | ¥300–600 | Akizuki Denshi, aitendo, Amazon.co.jp, Yahoo Shopping |
-| 3 | Camera | OV5647 5MP (**the version with the 22-pin FPC for Pi Zero**; Aokin / AuviPal, etc.) | ¥1,000–1,800 | Amazon |
+| — | Camera (**not bought** — the light receiver was chosen, see §2.5) | OV5647 5MP (**the version with the 22-pin FPC for Pi Zero**; Aokin / AuviPal, etc.) | ¥1,000–1,800 | Amazon |
 | 4 | microSD | 8–32GB (A1 or better; compatibility varies) | ¥800 | Consumer electronics retailer |
 | 5 | Power | **Not onboard (external power)**. USB power cable + a power source you already own (PC / mobile battery pack / dry-cell box) | ¥0–3,000 | — |
 | 6 | GPIO hammer header | 2×20 (pushes pins into place without soldering) | ¥800 | 秋月電子 (Akizuki Denshi), Amazon |
