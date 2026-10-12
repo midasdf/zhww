@@ -10,7 +10,8 @@
 
 | # | Part | Spec / model number | Approx. cost | Example source |
 |---|---|---|---|---|
-| 1 | SBC | **Raspberry Pi Zero 2 WH (header pre-installed)** | ¥3,500–4,400 | スイッチサイエンス (Switch Science), 千石電商 (Sengoku Denshi), Amazon |
+| 1 | SBC | **Waveshare RP2350-PiZero** - available domestically at [Switch Science 10733](https://www.switch-science.com/products/10733) (previously listed as Waveshare direct / Amazon) |
+| 1b | SBC (v0.1 Linux build) | **Raspberry Pi Zero 2 WH (header pre-installed)** | ¥3,500–4,400 | スイッチサイエンス (Switch Science), 千石電商 (Sengoku Denshi), Amazon |
 | 2 | Display | **Adafruit Mini PiTFT 135×240** (product 4393, 1.14", ST7789, **two tactile buttons on the board**, **Qwiic/STEMMA QT port**, 38.6×24.5 mm, pre-assembled) | ~¥2,500 | **Switch Science (domestic)**: https://www.switch-science.com/products/7422 |
 | 3 | Light receiver (**the input path**) | **LM393 light-sensor module with a photodiode/phototransistor and both an analog and a digital output** (the common 4-pin "LM393 light sensor" boards) | ¥300–600 | Akizuki Denshi, aitendo, Amazon.co.jp, Yahoo Shopping |
 | — | Camera (**not bought** — the light receiver was chosen, see §2.6) | OV5647 5MP (**the version with the 22-pin FPC for Pi Zero**; Aokin / AuviPal, etc.) | ¥1,000–1,800 | Amazon |
