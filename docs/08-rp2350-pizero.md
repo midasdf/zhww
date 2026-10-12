@@ -106,7 +106,15 @@ cat psbt.txt | ./zig-out/bin/zhww screen --network regtest --scale 2 > confirm.p
 ```
 
 実際に Bitcoin Core が作った PSBT から「送金先・金額・手数料」の確認画面が描けることを確認済み。
-QR の中身は QR エンコーダの実装後に差し込む（現在はデモ用の市松模様）。
+
+![Core の PSBT から描いた確認画面（240×240 を 2 倍で出力）](images/screen-confirm-psbt.png)
+
+*Core の PSBT（送金先 bcrt1qf593…、99990000 sats、手数料 10000 sats。手数料は Core の
+`decodepsbt` と一致）から描いた確認画面。*
+
+![デモ画面](images/screen-confirm-demo.png)
+
+*デモ画面。QR の位置には現在デモ用の市松模様が入っている（QR エンコーダ実装後に差し替える）。*
 
 ## 6. 変えずに済むもの
 
