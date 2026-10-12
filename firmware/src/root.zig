@@ -34,6 +34,8 @@ pub const ui_framebuffer = @import("ui/framebuffer.zig");
 pub const ui_screen = @import("ui/screen.zig");
 pub const ui_st7789 = @import("ui/st7789.zig");
 pub const ui_qr = @import("ui/qr.zig");
+pub const block_device = @import("fs/block_device.zig");
+pub const fs_fat32 = @import("fs/fat32.zig");
 pub const ui_indicator = @import("ui/indicator.zig");
 pub const evm_rlp = @import("apps/evm/rlp.zig");
 pub const evm_address = @import("apps/evm/address.zig");
@@ -67,6 +69,8 @@ test {
     _ = ui_screen;
     _ = ui_st7789;
     _ = ui_qr;
+    _ = block_device;
+    _ = fs_fat32;
     _ = ui_indicator;
     _ = evm_rlp;
     _ = evm_address;

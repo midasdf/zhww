@@ -753,6 +753,7 @@ pub const Fat32 = struct {
     pub fn writeFile(self: *Fat32, path: []const u8, data: []const u8) Error!void {
         const parts = try splitPath(path);
         try validateName(parts.name);
+        if (data.len > 0xFFFFFFFF) return error.BufferTooSmall; // FAT のサイズ欄は 32 ビット
         const parent = try self.stat(parts.parent);
         if (!parent.isDirectory()) return error.NotADirectory;
 
@@ -1600,8 +1601,6 @@ fn parseMbr(mbr: *const [sector_size]u8, device: BlockDevice, device_sectors: u6
 /// ```
 pub const Iterator = struct {
     fs: *Fat32,
-    /// 走査対象のディレクトリの先頭クラスタ。
-    first_cluster: u32 = 0,
     cluster: u32 = 0,
     sector_in_cluster: u16 = 0,
     sector_lba: u32 = 0,

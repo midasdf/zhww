@@ -63,6 +63,8 @@ bat_y0 = 11.0;
 
 // ---------------------------------------------------------------- HAT（上に載る）
 
+hat_w = 65.0;           // HAT の幅（wiki: 65 × 30.2mm）
+hat_d = 30.2;           // HAT の奥行き
 hat_t = 1.6;
 // 表示窓（HAT の中央やや左。MEASURED）
 display_size = 23.4;    // 表示領域（wiki より）
@@ -186,12 +188,36 @@ module lid() {
     }
 }
 
+// ---------------------------------------------------------------- 内部（断面確認用）
+
+// 基板・40pin ヘッダ・HAT・microSD カードを**実際の高さ**で置く。
+// 「穴とボタンが干渉して見える」という指摘を確かめるために、断面で高さ関係を示す。
+module internals() {
+    // 基板（65 × 30 × 1.6）
+    color("SteelBlue")
+        translate([wall + clearance, wall + clearance, floor_t])
+            cube([board_w, board_d, board_t]);
+    // 40pin ヘッダ（奥の長辺。基板の上に立つ）
+    color("Green")
+        translate([wall + clearance + corner_r, wall + clearance + board_d - 2.5,
+                   floor_t + board_t])
+            cube([board_w - corner_r * 2, 2.5, header_h]);
+    // HAT（65 × 30.2 × 1.6。ヘッダの上に載る）
+    color("Orange")
+        translate([wall + clearance, wall + clearance, floor_t + board_t + header_h])
+            cube([hat_w, hat_d, hat_t]);
+    // microSD カード（左から挿さっている状態。基板の上面すれすれ）
+    color("Silver")
+        translate([-1, wall + clearance + sd_y0 + 2, floor_t + board_t + 0.2])
+            cube([12, 11, 0.8]);
+}
+
 // ---------------------------------------------------------------- 配置確認（2D）
 
-// 基板の外形・コネクタ・HAT の要素を**重ねて**描く平面図。
+// 基板と HAT を**別々のパネル**に描く平面図（重ねると高さの違いで誤解を招くため）。
 // 公式の寸法図と見比べて、位置のずれを見つけるためのもの。
 module layout_check() {
-    // 基板の外形（角丸）と取付穴
+    // --- 左のパネル: 基板（下の層） ---
     color("SteelBlue") difference() {
         offset(r = corner_r) offset(delta = -corner_r) square([board_w, board_d]);
         for (p = [[hole_inset, hole_inset],
@@ -200,33 +226,34 @@ module layout_check() {
                   [board_w - hole_inset, board_d - hole_inset]])
             translate([p[0], p[1]]) circle(d = hole_d);
     }
-
-    // 手前の長辺のコネクタ（HDMI / USB-C ×2）
-    color("Gray")
-        translate([hdmi_x, -1]) square([hdmi_w, 4]);
-    color("Gray")
-        translate([usb_c1_x, -1]) square([usb_c_w, 4]);
-    color("Gray")
-        translate([usb_c2_x, -1]) square([usb_c_w, 4]);
-
+    // 手前の長辺のコネクタ（HDMI / USB-C ×2）と 40pin ヘッダ
+    color("Gray") translate([hdmi_x, -4]) square([hdmi_w, 4]);
+    color("Gray") translate([usb_c1_x, -4]) square([usb_c_w, 4]);
+    color("Gray") translate([usb_c2_x, -4]) square([usb_c_w, 4]);
+    color("Green") translate([corner_r, board_d]) square([board_w - corner_r * 2, 2.5]);
     // 左の短辺の microSD、右の短辺の BAT
-    color("DimGray") translate([-1, sd_y0]) square([4, sd_len]);
-    color("DimGray") translate([board_w - 3, bat_y0]) square([4, bat_w]);
+    color("DimGray") translate([-4, sd_y0]) square([4, sd_len]);
+    color("DimGray") translate([board_w, bat_y0]) square([4, bat_w]);
 
-    // HAT の要素（上に載るもの）
-    color("Orange") translate([display_x, display_y]) square([display_size, display_size]);
-    color("Crimson") {
-        for (y = button_y) translate([button_x, y]) circle(d = button_d);
-        translate([joystick_x, joystick_y]) circle(d = joystick_d);
+    // --- 右のパネル: HAT（上の層。x をずらして並べる） ---
+    translate([board_w + 25, 0]) {
+        color("SteelBlue") offset(r = corner_r) offset(delta = -corner_r) square([hat_w, hat_d]);
+        color("Orange") translate([display_x, display_y]) square([display_size, display_size]);
+        color("Crimson") {
+            for (y = button_y) translate([button_x, y]) circle(d = button_d);
+            translate([joystick_x, joystick_y]) circle(d = joystick_d);
+        }
+        for (p = [[hole_inset, hole_inset],
+                  [board_w - hole_inset, hole_inset],
+                  [hole_inset, board_d - hole_inset],
+                  [board_w - hole_inset, board_d - hole_inset]])
+            translate([p[0], p[1]]) circle(d = hole_d);
     }
-
-    // 40pin ヘッダの位置（奥の長辺）
-    color("Green") translate([corner_r, board_d - 2.5]) square([board_w - corner_r * 2, 2.5]);
 }
 
 // ---------------------------------------------------------------- 出力
 
-part = "all";   // "tray" / "lid" / "all" / "check"（-D 'part="check"' で切り替え）
+part = "all";   // "tray" / "lid" / "all" / "check" / "section"（-D で切り替え）
 
 if (part == "all") {
     tray();
@@ -237,4 +264,15 @@ if (part == "all") {
     lid();
 } else if (part == "check") {
     layout_check();
+} else if (part == "section") {
+    // 手前半分を切り取って、内部の高さ関係を見えるようにする
+    difference() {
+        union() {
+            tray();
+            internals();
+            lid();
+        }
+        translate([-5, -5, -5])
+            cube([inner_w + wall * 2 + 10, wall + clearance + board_d / 2, inner_h + floor_t + wall + 10]);
+    }
 }
