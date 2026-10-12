@@ -1176,11 +1176,10 @@ fn alignmentPositions(version: u8) AlignmentPositions {
         (@as(usize, version) * 4 + num * 2 + 1) / (num * 2 - 2) * 2;
     var out = AlignmentPositions{ .len = num };
     out.pos[0] = 6;
-    var pos = size - 7;
-    var i = num - 1;
-    while (i >= 1) : (i -= 1) {
-        out.pos[i] = pos;
-        pos -= step;
+    // 最後の位置が「一辺 - 7」で、そこから step ずつ左へ戻る。
+    var i: usize = 1;
+    while (i < num) : (i += 1) {
+        out.pos[i] = size - 7 - (num - 1 - i) * step;
     }
     return out;
 }
@@ -1598,12 +1597,14 @@ fn correctAndExtract(
     const short_len = total_data / nblocks;
     const num_long = total_data % nblocks;
     const max_dlen = short_len + @intFromBool(num_long > 0);
+    // 規格 7.6: データ長が 1 多いブロックは**最後**に置かれる（qr.zig / ZXing / segno と同じ）。
+    const first_long = nblocks - num_long;
 
     var offsets: [max_blocks]usize = @splat(0);
     var acc: usize = 0;
     for (0..nblocks) |b| {
         offsets[b] = acc;
-        acc += short_len + @intFromBool(b < num_long);
+        acc += short_len + @intFromBool(b >= first_long);
     }
 
     const work = try allocator.alloc(u8, raw.len);
@@ -1614,7 +1615,7 @@ fn correctAndExtract(
     var k: usize = 0;
     while (k < max_dlen) : (k += 1) {
         for (0..nblocks) |b| {
-            const dlen = short_len + @intFromBool(b < num_long);
+            const dlen = short_len + @intFromBool(b >= first_long);
             if (k < dlen) {
                 work[offsets[b] + k] = raw[pos];
                 pos += 1;
@@ -1631,7 +1632,7 @@ fn correctAndExtract(
 
     var scratch: RsScratch = .{};
     for (0..nblocks) |b| {
-        const dlen = short_len + @intFromBool(b < num_long);
+        const dlen = short_len + @intFromBool(b >= first_long);
         const block = work[offsets[b] .. offsets[b] + dlen + ecc_per];
         _ = try rsCorrect(block, ecc_per, &scratch);
         @memcpy(data_out[offsets[b] .. offsets[b] + dlen], work[offsets[b] .. offsets[b] + dlen]);
@@ -2376,11 +2377,7 @@ test "Reed-Solomon: 能力内の誤りを訂正し、超えると失敗する" {
         while (trial < 8) : (trial += 1) {
             var damaged: [16 + 30]u8 = @splat(0);
             @memcpy(damaged[0..total], codeword[0..total]);
-            var placed: usize = 0;
-            while (placed < ecc_len / 2) : (placed += 1) {
-                const at = random.uintLessThan(usize, total);
-                damaged[at] ^= random.int(u8) | 1;
-            }
+            try testing.expectEqual(ecc_len / 2, corruptDistinct(&damaged, total, ecc_len / 2, random));
             const corrected = try rsCorrect(damaged[0..total], ecc_len, &scratch);
             try testing.expect(corrected <= ecc_len / 2 + 1);
             try testing.expectEqualSlices(u8, codeword[0..total], damaged[0..total]);
@@ -2389,11 +2386,7 @@ test "Reed-Solomon: 能力内の誤りを訂正し、超えると失敗する" {
         // 能力を超える誤り（t + 2 個）は、遅くとも誤り訂正で失敗するか別の符号語になる。
         var damaged: [16 + 30]u8 = @splat(0);
         @memcpy(damaged[0..total], codeword[0..total]);
-        var placed: usize = 0;
-        while (placed < ecc_len / 2 + 2) : (placed += 1) {
-            const at = random.uintLessThan(usize, total);
-            damaged[at] ^= random.int(u8) | 1;
-        }
+        _ = corruptDistinct(&damaged, total, ecc_len / 2 + 2, random);
         const outcome = rsCorrect(damaged[0..total], ecc_len, &scratch);
         if (outcome) |_| {
             // 別の符号語に化けた場合は、元と一致しないことを確認する。
@@ -2402,6 +2395,22 @@ test "Reed-Solomon: 能力内の誤りを訂正し、超えると失敗する" {
             try testing.expectEqual(Error.TooManyErrors, e);
         }
     }
+}
+
+/// テスト専用: 異なる位置に `count` 個の誤りを入れて、実際に入れた個数を返す。
+fn corruptDistinct(codeword: *[16 + 30]u8, total: usize, count: usize, random: std.Random) usize {
+    var used: [16 + 30]bool = @splat(false);
+    var placed: usize = 0;
+    var attempts: usize = 0;
+    while (placed < count and attempts < 200) : (attempts += 1) {
+        const at = random.uintLessThan(usize, total);
+        if (used[at]) continue;
+        used[at] = true;
+        const delta = random.int(u8) | 1;
+        codeword[at] ^= delta;
+        if (codeword[at] != 0 or delta != 0) placed += 1;
+    }
+    return placed;
 }
 
 /// テスト専用: データコードワード列に対する RS の ECC を計算する。
