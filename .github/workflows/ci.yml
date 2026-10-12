@@ -100,6 +100,19 @@ jobs:
           test "$TX" = "$EXPECTED"
           echo "EVM OK (EIP-1559 signature matches the independent implementation)"
 
+      - name: Install Foundry (anvil)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: EVM: a local node accepts our signed transactions (anvil)
+        working-directory: firmware
+        run: |
+          # The EVM counterpart of the Bitcoin Core interop test: a real node must accept and mine
+          # the transactions this firmware signs. anvil derives its accounts from the standard test
+          # mnemonic at m/44'/60'/0'/0/, which is exactly the path this firmware uses.
+          anvil --port 8545 --chain-id 31337 &
+          ./tests/evm_node_check.sh
+          kill %1
+
       - name: EVM display (evm-show)
         working-directory: firmware
         run: |
