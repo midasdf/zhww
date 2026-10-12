@@ -23,6 +23,10 @@ pub const btc_transaction = @import("apps/btc/transaction.zig");
 pub const btc_sighash = @import("apps/btc/sighash.zig");
 pub const btc_psbt = @import("apps/btc/psbt.zig");
 pub const btc_sign = @import("apps/btc/sign.zig");
+pub const evm_rlp = @import("apps/evm/rlp.zig");
+pub const evm_address = @import("apps/evm/address.zig");
+pub const evm_transaction = @import("apps/evm/transaction.zig");
+pub const evm_eip191 = @import("apps/evm/eip191.zig");
 
 test {
     _ = base58;
@@ -38,4 +42,8 @@ test {
     _ = btc_sighash;
     _ = btc_psbt;
     _ = btc_sign;
+    _ = evm_rlp;
+    _ = evm_address;
+    _ = evm_transaction;
+    _ = evm_eip191;
 }

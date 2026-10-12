@@ -9,7 +9,7 @@ cd firmware && zig build test
 実装のユニットテスト（`src/` 内の `test` ブロック）と、公式テストベクタによる統合テスト
 （本ディレクトリ）を `firmware/tests.zig` がまとめて実行する。
 
-**現在: 87 件すべて成功。**
+**現在: 115 件すべて成功。**
 
 ## ディレクトリ構成
 
@@ -30,6 +30,9 @@ firmware/tests/
 ├── bip143_test.zig
 ├── bip174_test.zig
 └── sign_test.zig             署名と最終化の統合テスト（外部ベクタが無い経路）
+
+EVM のテストは実装ファイル内（`src/apps/evm/*.zig` の `test` ブロック）にあり、
+RLP 公式ベクタ・EIP-155 の公式例・EIP-55・EIP-191 を検証する。
 ```
 
 ## ベクタの出典（自前の期待値は使わない）

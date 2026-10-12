@@ -193,13 +193,15 @@ pub const Iterator = struct {
             // ショートリスト: 0xC0 + ペイロード長（0〜55）
             0xC0...0xF7 => {
                 const length = prefix - 0xC0;
-                return self.openList(length);
+                return try self.openList(length);
             },
             // ロングリスト: 0xF7 + 長さのバイト数（1〜8）
             0xF8...0xFF => {
                 const length = try self.readLongLength(prefix - 0xF7);
-                return self.openList(length);
+                return try self.openList(length);
             },
+            // 0x00〜0x7F は上で処理済み
+            else => unreachable,
         }
     }
 
@@ -245,7 +247,11 @@ pub fn decodeList(data: []const u8) Error![]const u8 {
         .list => |bytes| bytes,
         else => return error.InvalidEncoding,
     };
-    // 残りをすべて読み、構造が正準であることを確認する
+    // 先頭のリストが入力全体を覆っていることを確認する（末尾の余分なデータを拒否）
+    if (@intFromPtr(payload.ptr) + payload.len != @intFromPtr(data.ptr) + data.len) {
+        return error.InvalidEncoding;
+    }
+    // 中身をすべて読み、構造が正準であることを確認する
     while ((try it.next()) != null) {}
     try it.finish();
     return payload;
@@ -316,26 +322,19 @@ fn encodeValue(out: []u8, value: Value) Error![]u8 {
 
 /// デコードしたトークン列を正準 RLP に組み直す。
 ///
-/// 非正準な入力を渡すと、組み直した結果が元のバイト列と異なる。したがって
-/// 「デコード → 再エンコード」が一致することは、受理した入力が正準形であり、
-/// かつイテレータが正しい境界を返したことの確認になる。
+/// イテレータは深さ優先でトークンを返すため、その順に書き出すだけでよい
+/// （リストは「ヘッダ → 中身 → 終端」の順に現れる）。非正準な入力を渡すと、
+/// 組み直した結果が元のバイト列と異なる。したがって「デコード → 再エンコード」
+/// が一致することは、受理した入力が正準形であり、かつイテレータが正しい境界を
+/// 返したことの確認になる。
 fn reencode(out: []u8, it: *Iterator) Error![]u8 {
     var pos: usize = 0;
     while (try it.next()) |item| {
-        switch (item) {
-            .bytes => |bytes| pos += (try encodeBytes(out[pos..], bytes)).len,
-            .list => |payload| {
-                var sub = Iterator.open(payload);
-                var body_buf: [4096]u8 = undefined;
-                const body = try reencode(&body_buf, &sub);
-                const header = try encodeListHeader(out[pos..], body.len);
-                pos += header.len;
-                if (out.len < pos + body.len) return error.BufferTooSmall;
-                @memcpy(out[pos..][0..body.len], body);
-                pos += body.len;
-            },
-            .list_end => return out[0..pos],
-        }
+        pos += switch (item) {
+            .bytes => |bytes| (try encodeBytes(out[pos..], bytes)).len,
+            .list => |payload| (try encodeListHeader(out[pos..], payload.len)).len,
+            .list_end => 0,
+        };
     }
     return out[0..pos];
 }
@@ -343,13 +342,157 @@ fn reencode(out: []u8, it: *Iterator) Error![]u8 {
 /// 公式テストベクタ（RLPTests/rlptest.json）。`in` を `input`、`out` を `encoded` に
 /// そのまま写している（16 進文字列は 0x を除いた部分）。
 ///
-/// - `bigint`（2^256）は u256 に収まらないため整数ではなくバイト列として持つ
+/// - `bigint`（2^256）は u256 に収まらないため、整数ではなく**その値のビッグエンディアン
+///   表現（33 バイト）**をバイト列として持つ（RLP の整数表現は先頭ゼロを除いた
+///   ビッグエンディアンなので、公式の `out` と同じ比較ができる）
 const vectors = [_]struct {
     name: []const u8,
     input: Value,
     encoded: []const u8,
 }{
-    // @@VECTORS@@
+    .{
+        .name = "emptystring",
+        .input = .{ .bytes = "" },
+        .encoded = "80",
+    },
+    .{
+        .name = "bytestring00",
+        .input = .{ .bytes = "\x00" },
+        .encoded = "00",
+    },
+    .{
+        .name = "bytestring01",
+        .input = .{ .bytes = "\x01" },
+        .encoded = "01",
+    },
+    .{
+        .name = "bytestring7F",
+        .input = .{ .bytes = "\x7f" },
+        .encoded = "7f",
+    },
+    .{
+        .name = "shortstring",
+        .input = .{ .bytes = "dog" },
+        .encoded = "83646f67",
+    },
+    .{
+        .name = "shortstring2",
+        .input = .{ .bytes = "Lorem ipsum dolor sit amet, consectetur adipisicing eli" },
+        .encoded = "b74c6f72656d20697073756d20646f6c6f722073697420616d65742c20636f6e7365637465747572206164697069736963696e6720656c69",
+    },
+    .{
+        .name = "longstring",
+        .input = .{ .bytes = "Lorem ipsum dolor sit amet, consectetur adipisicing elit" },
+        .encoded = "b8384c6f72656d20697073756d20646f6c6f722073697420616d65742c20636f6e7365637465747572206164697069736963696e6720656c6974",
+    },
+    .{
+        .name = "longstring2",
+        .input = .{ .bytes = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur mauris magna, suscipit sed vehicula non, iaculis faucibus tortor. Proin suscipit ultricies malesuada. Duis tortor elit, dictum quis tristique eu, ultrices at risus. Morbi a est imperdiet mi ullamcorper aliquet suscipit nec lorem. Aenean quis leo mollis, vulputate elit varius, consequat enim. Nulla ultrices turpis justo, et posuere urna consectetur nec. Proin non convallis metus. Donec tempor ipsum in mauris congue sollicitudin. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Suspendisse convallis sem vel massa faucibus, eget lacinia lacus tempor. Nulla quis ultricies purus. Proin auctor rhoncus nibh condimentum mollis. Aliquam consequat enim at metus luctus, a eleifend purus egestas. Curabitur at nibh metus. Nam bibendum, neque at auctor tristique, lorem libero aliquet arcu, non interdum tellus lectus sit amet eros. Cras rhoncus, metus ac ornare cursus, dolor justo ultrices metus, at ullamcorper volutpat" },
+        .encoded = "b904004c6f72656d20697073756d20646f6c6f722073697420616d65742c20636f6e73656374657475722061646970697363696e6720656c69742e20437572616269747572206d6175726973206d61676e612c20737573636970697420736564207665686963756c61206e6f6e2c20696163756c697320666175636962757320746f72746f722e2050726f696e20737573636970697420756c74726963696573206d616c6573756164612e204475697320746f72746f7220656c69742c2064696374756d2071756973207472697374697175652065752c20756c7472696365732061742072697375732e204d6f72626920612065737420696d70657264696574206d6920756c6c616d636f7270657220616c6971756574207375736369706974206e6563206c6f72656d2e2041656e65616e2071756973206c656f206d6f6c6c69732c2076756c70757461746520656c6974207661726975732c20636f6e73657175617420656e696d2e204e756c6c6120756c74726963657320747572706973206a7573746f2c20657420706f73756572652075726e6120636f6e7365637465747572206e65632e2050726f696e206e6f6e20636f6e76616c6c6973206d657475732e20446f6e65632074656d706f7220697073756d20696e206d617572697320636f6e67756520736f6c6c696369747564696e2e20566573746962756c756d20616e746520697073756d207072696d697320696e206661756369627573206f726369206c756374757320657420756c74726963657320706f737565726520637562696c69612043757261653b2053757370656e646973736520636f6e76616c6c69732073656d2076656c206d617373612066617563696275732c2065676574206c6163696e6961206c616375732074656d706f722e204e756c6c61207175697320756c747269636965732070757275732e2050726f696e20617563746f722072686f6e637573206e69626820636f6e64696d656e74756d206d6f6c6c69732e20416c697175616d20636f6e73657175617420656e696d206174206d65747573206c75637475732c206120656c656966656e6420707572757320656765737461732e20437572616269747572206174206e696268206d657475732e204e616d20626962656e64756d2c206e6571756520617420617563746f72207472697374697175652c206c6f72656d206c696265726f20616c697175657420617263752c206e6f6e20696e74657264756d2074656c6c7573206c65637475732073697420616d65742065726f732e20437261732072686f6e6375732c206d65747573206163206f726e617265206375727375732c20646f6c6f72206a7573746f20756c747269636573206d657475732c20617420756c6c616d636f7270657220766f6c7574706174",
+    },
+    .{
+        .name = "zero",
+        .input = .{ .uint = 0 },
+        .encoded = "80",
+    },
+    .{
+        .name = "smallint",
+        .input = .{ .uint = 1 },
+        .encoded = "01",
+    },
+    .{
+        .name = "smallint2",
+        .input = .{ .uint = 16 },
+        .encoded = "10",
+    },
+    .{
+        .name = "smallint3",
+        .input = .{ .uint = 79 },
+        .encoded = "4f",
+    },
+    .{
+        .name = "smallint4",
+        .input = .{ .uint = 127 },
+        .encoded = "7f",
+    },
+    .{
+        .name = "mediumint1",
+        .input = .{ .uint = 128 },
+        .encoded = "8180",
+    },
+    .{
+        .name = "mediumint2",
+        .input = .{ .uint = 1000 },
+        .encoded = "8203e8",
+    },
+    .{
+        .name = "mediumint3",
+        .input = .{ .uint = 100000 },
+        .encoded = "830186a0",
+    },
+    // in = 83729609699884896815286331701780722（15 バイト）
+    .{
+        .name = "mediumint4",
+        .input = .{ .uint = 0x102030405060708090a0b0c0d0e0f2 },
+        .encoded = "8f102030405060708090a0b0c0d0e0f2",
+    },
+    // in = 105315505618206987246253880190783558935785933862974822347068935681（29 バイト）
+    .{
+        .name = "mediumint5",
+        .input = .{ .uint = 0x100020003000400050006000700080009000a000b000c000d000e01 },
+        .encoded = "9c0100020003000400050006000700080009000a000b000c000d000e01",
+    },
+    .{
+        .name = "emptylist",
+        .input = .{ .list = &.{  } },
+        .encoded = "c0",
+    },
+    .{
+        .name = "stringlist",
+        .input = .{ .list = &.{ .{ .bytes = "dog" }, .{ .bytes = "god" }, .{ .bytes = "cat" } } },
+        .encoded = "cc83646f6783676f6483636174",
+    },
+    .{
+        .name = "multilist",
+        .input = .{ .list = &.{ .{ .bytes = "zw" }, .{ .list = &.{ .{ .uint = 4 } } }, .{ .uint = 1 } } },
+        .encoded = "c6827a77c10401",
+    },
+    .{
+        .name = "shortListMax1",
+        .input = .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" }, .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" }, .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" }, .{ .bytes = "asdf" }, .{ .bytes = "qwer" } } },
+        .encoded = "f784617364668471776572847a78637684617364668471776572847a78637684617364668471776572847a78637684617364668471776572",
+    },
+    .{
+        .name = "longList1",
+        .input = .{ .list = &.{ .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } } } },
+        .encoded = "f840cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376",
+    },
+    .{
+        .name = "longList2",
+        .input = .{ .list = &.{ .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } }, .{ .list = &.{ .{ .bytes = "asdf" }, .{ .bytes = "qwer" }, .{ .bytes = "zxcv" } } } } },
+        .encoded = "f90200cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376cf84617364668471776572847a786376",
+    },
+    .{
+        .name = "listsoflists",
+        .input = .{ .list = &.{ .{ .list = &.{ .{ .list = &.{  } }, .{ .list = &.{  } } } }, .{ .list = &.{  } } } },
+        .encoded = "c4c2c0c0c0",
+    },
+    .{
+        .name = "listsoflists2",
+        .input = .{ .list = &.{ .{ .list = &.{  } }, .{ .list = &.{ .{ .list = &.{  } } } }, .{ .list = &.{ .{ .list = &.{  } }, .{ .list = &.{ .{ .list = &.{  } } } } } } } },
+        .encoded = "c7c0c1c0c3c0c1c0",
+    },
+    .{
+        .name = "dictTest1",
+        .input = .{ .list = &.{ .{ .list = &.{ .{ .bytes = "key1" }, .{ .bytes = "val1" } } }, .{ .list = &.{ .{ .bytes = "key2" }, .{ .bytes = "val2" } } }, .{ .list = &.{ .{ .bytes = "key3" }, .{ .bytes = "val3" } } }, .{ .list = &.{ .{ .bytes = "key4" }, .{ .bytes = "val4" } } } } },
+        .encoded = "ecca846b6579318476616c31ca846b6579328476616c32ca846b6579338476616c33ca846b6579348476616c34",
+    },
+    // 公式ベクタの `bigint`: in = 2^256、out = 0xa1 0100...00（33 バイトの整数）
+    .{
+        .name = "bigint",
+        .input = .{ .bytes = "\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" },
+        .encoded = "a1010000000000000000000000000000000000000000000000000000000000000000",
+    },
 };
 
 test "公式ベクタ: エンコード" {
@@ -411,8 +554,12 @@ test "公式ベクタ: デコード（正準形の往復）" {
             std.debug.print("ベクタ {s}: 再エンコード失敗 ({s})\n", .{ vector.name, @errorName(err) });
             return err;
         };
-        try it.finish();
         try testing.expectEqualSlices(u8, encoded, reencoded);
+
+        // 5) 最後まで読み切れること（余分なデータや閉じていないリストがないこと）
+        var walk = Iterator.open(encoded);
+        while ((try walk.next()) != null) {}
+        try walk.finish();
     }
 }
 
@@ -500,21 +647,32 @@ test "余分なデータを拒否する" {
 
 test "整数の境界（0、1 バイト、55/56 バイト境界）" {
     var buf: [64]u8 = undefined;
+    var expected: [64]u8 = undefined;
+    var hex_buf: [256]u8 = undefined;
 
     try expectHex("80", try encodeUint(&buf, 0));
     try expectHex("7f", try encodeUint(&buf, 0x7f));
     try expectHex("8180", try encodeUint(&buf, 0x80));
     try expectHex("820400", try encodeUint(&buf, 0x400));
-    try expectHex("a0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", try encodeUint(&buf, std.math.maxInt(u256)));
+    try expectHex(
+        "a0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        try encodeUint(&buf, std.math.maxInt(u256)),
+    );
 
-    // 1 バイトの 0x80 は長さヘッダが付く（0x80 単体は空文字列）
+    // 1 バイトの 0x80 には長さヘッダが付く（0x80 単体は空文字列）
     try expectHex("8180", try encodeBytes(&buf, &[_]u8{0x80}));
     try expectHex("80", try encodeBytes(&buf, &.{}));
 
-    // 55 バイトはショート形式、56 バイトはロング形式
+    // 55 バイトはショート形式（0xB7 = 0x80 + 55）
     var data: [56]u8 = undefined;
     @memset(&data, 0xaa);
-    try expectHex("b7" ++ ("aa" ** 55), try encodeBytes(&buf, data[0..55]));
-    var long_out: [64]u8 = undefined;
-    try expectHex("b838" ++ ("aa" ** 56), try encodeBytes(&long_out, &data));
+    expected[0] = 0xb7;
+    @memset(expected[1..56], 0xaa);
+    try expectHex(toHex(&hex_buf, expected[0..56]), try encodeBytes(&buf, data[0..55]));
+
+    // 56 バイトはロング形式（0xB8 + 長さ 1 バイト 0x38 = 56）
+    expected[0] = 0xb8;
+    expected[1] = 56;
+    @memset(expected[2..58], 0xaa);
+    try expectHex(toHex(&hex_buf, expected[0..58]), try encodeBytes(&buf, &data));
 }

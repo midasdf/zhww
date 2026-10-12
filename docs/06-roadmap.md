@@ -40,7 +40,8 @@
 | ダイス・カメラの entropy 結合 | ✅ 完了（HKDF-SHA256 / RFC 5869 ベクタで検証） |
 | 画面 UI・QR 送受信 | ⬜ 未着手（実機が必要） |
 | 開発用 CLI | ⬜ 未着手（Zig 0.17 の `std.Io` API の確定待ち） |
-| EVM（RLP / EIP-155 / EIP-1559 / EIP-191） | 🔄 実装中 |
+| EVM（RLP / EIP-155 / EIP-1559 / EIP-191 / EIP-55） | ✅ 完了（EIP-155 の公式例とバイト単位で一致） |
+| EIP-712（型付きデータ）・ERC-7730（clear signing） | ⬜ 未着手 |
 
 ---
 
