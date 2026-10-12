@@ -324,45 +324,33 @@ nothing extra to buy for it.
 | `AO` | **an ADC pin** (`GPIO26` or `GPIO27`) | the firmware samples this; the pin has to be confirmed against Adafruit's pin list for the display |
 | `DO` | any free GPIO | optional hardware-threshold path |
 
-**Why not a Qwiic/STEMMA QT light sensor** (asked, and worth writing down): the Mini PiTFT has a
-Qwiic port and Switch Science sells both a [Qwiic-Qwiic cable](https://www.switch-science.com/products/6896)
-and a [BH1750 light sensor breakout](https://www.switch-science.com/products/6745), which looks like a
-cable-only, no-soldering answer. It cannot carry this signal:
+**Qwiic works - with an I2C ADC.** An earlier note here said a Qwiic light sensor was impossible; that
+was wrong, and the mistake was mine: it conflated the *sensor's integration time* with the *bus*. A
+BH1750 lux sensor really is unusable (one measurement takes 16-180 ms, ~50x too slow, and the time
+varies), but I2C itself is not the limit. Put an **I2C ADC** on the Qwiic port and the analog light
+level arrives as a normal sample stream.
 
-| | Needed | BH1750 |
-|---|---|---|
-| Readings per second | **3000** (30 symbols/s x 100 samples per symbol) | at most ~60 (one measurement takes 16-180 ms) |
-| Sampling clock | uniform, so the receiver can recover the bit clock | the measurement time itself varies by tens of percent |
-
-That is roughly **50x short**, and even at the slowest sender rate (10 symbols/s, 1000 samples/s) it is
-16x short. Dropping to one sample per symbol would mean redesigning the receiver around a jittery,
-asynchronous clock - a much more fragile design for a signing device - and even then the margin would
-be thin. A Qwiic port carries **I2C only**: it cannot pass an analog light level to the ADC, which is
-what the receiver needs.
-
-So the light signal has to reach an **ADC pin** through the 0.1 inch header, and female-to-female
-jumpers are what does it. The Qwiic port is still useful for the things I2C is good at - extra buttons,
-a rotary encoder, a slow environment sensor - and the Qwiic cable is worth having for those.
-
-**Do the jumpers physically fit?** Pitch is not the problem: the board's 40-pin header, the LM393
-module's pins and female-to-female Dupont jumpers are all **2.54 mm (0.1 inch)**, so they mate. (Check
-the module anyway: a few boards ship with 2.0 mm or 1.27 mm headers.) The real question is whether
-**any pins are still reachable once the display is plugged in**, and that depends on how much of the
-header the Mini PiTFT's socket covers - which is **not yet confirmed** and must be checked against
-Adafruit's guide or the board itself.
-
-| If the socket covers | Then |
+| Part | Status |
 |---|---|
-| the first 26 pins (the usual PiTFT footprint, so pins 27-40 stay free) | use the free pins. **ADC0 is GPIO26 = physical pin 35**, inside that range, so the analog signal reaches an ADC. The free pins include GND but **no 3V3**, so power the module from the **Qwiic port**: a Qwiic-to-male-header cable is exactly the "STEMMA QT / Qwiic to Premium Male Headers" cable Adafruit sells, and it was offered as an add-on on the display's own product page |
-| all 40 pins | the display has to come off the header: a 40-pin female-female ribbon with the display at the far end, or a 40-pin breakout/T-splitter. Both are cable-only, no soldering |
+| **[Qwiic - ADS1015 12-bit ADC, 4 channel (Switch Science 5722)](https://www.switch-science.com/products/5722)** | **Verified to exist domestically.** 12-bit, and the ADS1015 converts at up to **3300 samples/s** in continuous mode - enough for 100 samples per symbol at 30 symbols/s with a 10% margin. (The 16-bit ADS1115 does only 860 samples/s, so pick the 1015.) Price and stock unconfirmed |
+| **[Qwiic-Qwiic cable 50 mm (Switch Science 6896)](https://www.switch-science.com/products/6896)** | Verified product page. One cable from the display's Qwiic port to the ADC |
+| A photodiode/phototransistor module with an analog output (LM393-type board) | **Still to be verified domestically.** Its `AO` goes to the ADC's A0 through three short wires; both boards live together in the sensor bay, so no wire runs to the 40-pin header at all |
 
-A Dupont housing is about **5.8 mm tall and 10 mm long per 4-way plug**, which is why the wires should
-be **10-20 cm**: they have to come out from under the display's edge and route to the sensor bay. The
-case has room for that (16 mm bay, internal height 19.5 mm), but the routing is the thing to check
-first when the parts arrive.
+Why the timing is comfortable rather than marginal:
 
-Powering the module from a spare GPIO driven high instead of 3V3 also works (the LM393 board draws a
-couple of milliamps) and has a side benefit: the firmware can switch the sensor off between uses.
+| Quantity | Value |
+|---|---|
+| ADC sample period | 0.3 ms at 3300 samples/s |
+| Symbol period | 33 ms at 30 symbols/s |
+| Jitter the receiver tolerates | about +-10% of a symbol = **+-3.3 ms** |
+| I2C read jitter | tens of microseconds to a millisecond |
+
+The receiver's own header already says a 12-bit ADC must be shifted down to 8 bits, so the ADS1015
+feeds `light_rx` **unchanged** - the 371 tests still describe it exactly.
+
+What this buys: **no wire to the 40-pin header at all**, so the question of how many pins the display's
+socket covers stops mattering, and the sensor's power comes from the Qwiic port rather than a stolen
+3V3 pin. The light path stays the first candidate.
 
 Check the silkscreen for the pin order before connecting: the 4-pin boards come in both
 `VCC GND DO AO` and mirror-image orders. Nothing here has been bought or measured in this session, and
