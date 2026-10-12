@@ -1,7 +1,7 @@
 # 03. Hardware BOM and Assembly
 
 - **Target version**: v0.1
-- **Last updated**: 2026-10-12
+- **Last updated**: 2026-10-13
 - **Policy**: No soldering. Just seat off-the-shelf parts.
 
 ---
@@ -335,6 +335,28 @@ level arrives as a normal sample stream.
 | **[Qwiic - ADS1015 12-bit ADC, 4 channel (Switch Science 5722)](https://www.switch-science.com/products/5722)** | **Verified to exist domestically.** 12-bit, and the ADS1015 converts at up to **3300 samples/s** in continuous mode - enough for 100 samples per symbol at 30 symbols/s with a 10% margin. (The 16-bit ADS1115 does only 860 samples/s, so pick the 1015.) Price and stock unconfirmed |
 | **[Qwiic-Qwiic cable 50 mm (Switch Science 6896)](https://www.switch-science.com/products/6896)** | Verified product page. One cable from the display's Qwiic port to the ADC |
 | A photodiode/phototransistor module with an analog output (LM393-type board) | **Still to be verified domestically.** Its `AO` goes to the ADC's A0 through three short wires; both boards live together in the sensor bay, so no wire runs to the 40-pin header at all |
+
+**One Qwiic lux sensor is fast enough to skip the ADC entirely (checked 2026-10-13).** Of ten Switch
+Science product pages surveyed, the
+**[Qwiic - OPT4048 三刺激値カラーセンサモジュール (Switch Science 9281)](https://www.switch-science.com/products/9281)**
+is the only plug-and-play Qwiic **ambient-light** sensor whose conversion time is short enough to sample a
+screen flicker: **600 µs per channel, one of 12 selectable conversion times from 600 µs to 800 ms** (stated on
+the product page; Adafruit's CircuitPython OPT4048 driver lists the same 12 values from datasheet page 29).
+**¥2,739, in stock** on the store's own variant data. One Qwiic cable into the display's STEMMA QT port would
+then be the whole light receiver — no ADC, no photodiode wiring.
+
+Caveats, **all unverified** and to be measured on the bench before this displaces the ADS1015 path:
+
+- the auto full-scale range (7 ranges, 2.2-144 klux) changes gain between conversions, so the range must be
+  **pinned manually** for amplitude sampling; the driver exposes `Range.AUTO` plus the seven fixed ranges
+- 600 µs is the shortest and therefore the least sensitive setting; signal-to-noise from a screen at close
+  range, through the IR-cut/CIE filters, on the wideband channel is untested
+- it is a colour sensor that also reports lux, not a plain photodiode: sample the **wideband (clear) channel**
+- the display's STEMMA QT port must land on the I2C pins the firmware uses
+
+Every other Qwiic ambient-light sensor on that list is **25 ms or slower** (fastest settings: VEML6030 and
+VEML7700 25 ms, LTR-381RGB-01 25 ms, MAX44009 6.25 ms but manual-mode only / 100 ms in auto mode, VCNL4200 and
+VCNL4030 50 ms, LTR-329 50 ms, VCNL4020 100 ms), which is the same order as the BH1750 already rejected above.
 
 Why the timing is comfortable rather than marginal:
 
