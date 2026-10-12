@@ -7,7 +7,7 @@ v0.1 は **既成部品のみ**で構成するため、このディレクトリ�
 ```
 hardware/
 ├── README.md        ← 本ファイル
-├── enclosure/       ← 筐体（v0.1 は SeedSigner の STL を流用、独自設計は v0.2 以降）
+├── enclosure/       ← 筐体（OpenSCAD のパラメトリック設計。実機で穴位置を実測して確定する）
 └── pcb/             ← 独自基板（v0.2 以降。現状は空）
 ```
 
@@ -16,6 +16,7 @@ hardware/
 | 項目 | 方針 |
 |---|---|
 | 基板 | v0.1 では作らない（既成部品を載せるだけ）。小型化する場合のみ KiCad で設計 |
+| 筐体 | **自前の OpenSCAD**（テキストで差分管理・再生成できる）。SeedSigner のケースは寸法の参考にとどめる（ポート穴が合わないため。詳細は [enclosure/README.md](enclosure/README.md)） |
 | EDA | KiCad（オープンソース、ファイルがテキストで差分管理可能） |
 | 公開物（基板を作る場合） | KiCad プロジェクト一式、Gerber / ドリル、BOM（LCSC / Mouser 型番）、インタラクティブ BOM、組立図 |
 | 筐体 | STL と STEP の両方を公開（STEP は改変しやすいため） |
