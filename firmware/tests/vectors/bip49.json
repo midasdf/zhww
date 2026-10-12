@@ -1,0 +1,21 @@
+{
+  "source": "https://github.com/bitcoin/bips/blob/master/bip-0049.mediawiki",
+  "network": "testnet",
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+  "root_uprv": "uprv8tXDerPXZ1QsVNjUJWTurs9kA1KGfKUAts74GCkcXtU8GwnH33GDRbNJpEqTvipfCyycARtQJhmdfWf8oKt41X9LL1zeD2pLsWmxEk3VAwd",
+  "account": {
+    "path": "m/49'/1'/0'",
+    "uprv": "uprv91G7gZkzehuMVxDJTYE6tLivdF8e4rvzSu1LFfKw3b2Qx1Aj8vpoFnHdfUZ3hmi9jsvPifmZ24RTN2KhwB8BfMLTVqaBReibyaFFcTP1s9n",
+    "upub": "upub5EFU65HtV5TeiSHmZZm7FUffBGy8UKeqp7vw43jYbvZPpoVsgU93oac7Wk3u6moKegAEWtGNF8DehrnHtv21XXEMYRUocHqguyjknFHYfgY"
+  },
+  "addresses": [
+    {
+      "path": "m/49'/1'/0'/0/0",
+      "wif": "cULrpoZGXiuC19Uhvykx7NugygA3k86b3hmdCeyvHYQZSxojGyXJ",
+      "privkey_hex": "c9bdb49cfbaedca21c4b1f3a7803c34636b1d7dc55a717132443fc3f4c5867e8",
+      "pubkey": "03a1af804ac108a8a51782198c2d034b28bf90c8803f5a53f76276fa69a4eae77f",
+      "keyhash": "38971f73930f6c141d977ac4fd4a727c854935b3",
+      "address": "2Mww8dCYPUpKHofjgcXcBCEGmniw9CoaiD2"
+    }
+  ]
+}

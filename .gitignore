@@ -1,0 +1,33 @@
+# OS / エディタ
+.DS_Store
+Thumbs.db
+*.swp
+
+# Zig
+.zig-cache/
+zig-out/
+
+# ビルド成果物
+build/
+dist/
+*.img
+*.sha256
+*.sig
+*.o
+*.a
+
+# KiCad
+hardware/**/fp-info-cache
+hardware/**/*-backups/
+hardware/**/*.kicad_prl
+hardware/**/gerber/
+hardware/**/*.zip
+
+# 3D
+hardware/enclosure/**/renders/
+
+# 秘密情報（絶対にコミットしない）
+*.seed
+*.mnemonic
+secrets/
+.env
