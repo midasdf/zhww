@@ -7,18 +7,23 @@
 
 ## 1. 対応マトリクス
 
+**状態**: ✅ 実装済み / 🔄 実装中 / ⬜ 未着手 / ❌ スコープ外
+
 | 機能 | BTC | EVM | 優先度 |
 |---|---|---|---|
-| 単一署名 P2WPKH (BIP84) | ✅ v0.1 | — | 必須 |
-| 単一署名 P2PKH / P2SH-P2WPKH | ✅ v0.1 | — | 中 |
-| マルチシグ P2WSH (P2SH なし) | ✅ v0.3 | — | 高 |
-| Taproot key-path (BIP86) | ✅ v0.3 | — | 中 |
+| 単一署名 P2WPKH (BIP84) | ✅ 実装済み | — | 必須 |
+| 単一署名 P2PKH / P2SH-P2WPKH | ✅ 実装済み | — | 中 |
+| 単一署名 P2PK | ✅ 実装済み（署名と最終化） | — | — |
+| マルチシグ P2WSH (P2SH なし) | ⬜ 未着手 | — | 高 |
+| Taproot key-path (BIP86) | ✅ アドレス生成のみ（署名は未着手） | — | 中 |
 | Taproot script-path | ❌ スコープ外 | — | — |
-| Legacy / EIP-1559 トランザクション | — | ✅ v0.2 | 必須 |
-| ERC-20 transfer / approve | — | ✅ v0.2 | 必須 |
-| EIP-191 personal_sign | — | ✅ v0.2 | 必須 |
-| EIP-712 typed data v4 | — | ✅ v0.2 | 必須 |
-| ERC-7730 clear signing | — | ✅ v0.2〜 | 高 |
+| PSBT（BIP174）の解析・検証・書き出し | ✅ 実装済み | — | 必須 |
+| Legacy / EIP-1559 トランザクション | — | ✅ 実装済み | 必須 |
+| ERC-20 transfer / approve | — | ✅ 実装済み（危険パターンの警告つき） | 必須 |
+| EIP-191 personal_sign | — | ✅ 実装済み | 必須 |
+| EIP-712 typed data v4 | — | ✅ 実装済み | 必須 |
+| ERC-7730 clear signing | — | ✅ 実装済み（記述子の適用と警告） | 高 |
+| QR 転送（BC-UR） | 🔄 実装中 | 🔄 実装中 | 必須 |
 | ed25519 系チェーン | ❌ v0.2 以降 | ❌ | — |
 
 ---
