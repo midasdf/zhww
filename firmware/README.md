@@ -120,6 +120,13 @@ cat psbt.txt | ./zig-out/bin/zhww sign --mnemonic "…"
 # ダイスの記録から mnemonic を再計算（記録の検証用）
 ./zig-out/bin/zhww mnemonic --dice "123456123456…" --words 12
 ./zig-out/bin/zhww mnemonic --dice "…" --words 24 --camera aabbccdd
+
+# PSBT を UR（QR 転送用）にして、1 行 1 パートで表示する
+cat psbt.txt | ./zig-out/bin/zhww ur --fragment 40
+#   → ur:crypto-psbt/1-4/… のように出力される（アニメーション QR の各コマ）
+
+# UR のパートを読み取って PSBT に戻す
+./zig-out/bin/zhww ur-decode < parts.txt
 ```
 
 **出力の方針**: 結果は標準出力、診断（手数料・警告）は標準エラー。
