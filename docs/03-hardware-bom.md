@@ -425,6 +425,38 @@ The firmware is unaffected: the sensor is on I2C, so only its physical position 
 still matters (it keeps the phone's own light from spilling in sideways), but the phone now does most of
 the shielding.
 
+
+### 2.12 A single board that replaces the whole stack (found 2026-10-13)
+
+[Switch Science 10387](https://www.switch-science.com/products/10387), **Y4,059, in stock**: an
+RP2350 **module with the screen and the camera already on it**.
+
+| It has | Why it matters here |
+|---|---|
+| **RP2350A**, 520 KB SRAM, **16 MB flash** | The same chip family the firmware already targets |
+| **2 inch 240 x 320 IPS, ST7789T3 over SPI** | Same controller as the display we already drive |
+| **Capacitive touch, CST816D over I2C** | No buttons at all - but the UI design has to change |
+| **OV5640 5 MP camera included**, 24-pin 0.5 mm FPC | **The camera input path becomes possible for free**, and its decoder is already written and verified (124/124 against independent encoders) |
+| **microSD (SPI)**, 6-axis IMU, LiPo charge circuit | Not needed for the standard build, but they cost nothing |
+| **2 x 12-bit ADC and 22 usable GPIO on installed headers** | The ADC pins are free here, so a light sensor can be added as well as the camera |
+| **USB-C with drag-and-drop UF2 flashing** | No programmer needed |
+
+Cost comparison for the current plan: board Y1,991 + display Y2,500 + OPT4048 Y2,090 + Qwiic cable
+Y550 = **Y7,131** - this single board is **cheaper and does more**, including the camera.
+
+What it costs us instead:
+
+- **A new enclosure** - but a simpler one: one board plus a screen window, no HAT, no standoffs, no
+  Qwiic routing.
+- **A different screen shape** (240 x 320 portrait). The layout is already driven by a framebuffer size
+  argument, so this is a new variant rather than a rewrite.
+- **HAL work**: display pin mapping, touch input, and a camera driver. The signing core, the UI layer
+  and the transport stack are unaffected.
+
+So this is a genuine decision point: the assembly story gets *better* (one board, camera included, no
+HAT covering anything), at the cost of the enclosure and HAL rework. Nothing has been bought; the
+specifications above are from the product page.
+
 ## 3. Assembly procedure (solder-free; target 45 minutes; for the Pi Zero 2 WH)
 
 1. **Fit the LCD HAT** — plug it into the 40-pin header (1 minute)
