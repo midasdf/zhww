@@ -155,6 +155,9 @@ cat psbt.txt | ./zig-out/bin/zhww show --network regtest --mnemonic "…"
 cat psbt.txt | ./zig-out/bin/zhww ur --fragment 40
 #   → ur:crypto-psbt/1-4/… のように出力される（アニメーション QR の各コマ）
 
+# 実機の画面の流れ（カード待ち → 確認 → 結果の QR）を PNG で出力する
+./zig-out/bin/zhww walkthrough --image card.img --mnemonic "…" --out-dir .
+
 # 実機の画面（240×240）を PNG で確認する（実機が無くても UI を詰められる）
 ./zig-out/bin/zhww screen --demo --scale 2 > demo.png
 cat psbt.txt | ./zig-out/bin/zhww screen --qr --scale 2 > qr.png   # UR を QR 表示

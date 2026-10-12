@@ -18,7 +18,7 @@ const usage =
     \\
     \\コマンド:
     \\  address    アドレスを表示する
-    \\  card       FAT32 イメージ（microSD の代わり）を操作する\n    \\  evm-show   署名済み/未署名の EVM トランザクションを表示する（raw hex）
+    \\  walkthrough 実機の画面の流れを PNG で出力する（PC での確認用）\n    \\  card       FAT32 イメージ（microSD の代わり）を操作する\n    \\  evm-show   署名済み/未署名の EVM トランザクションを表示する（raw hex）
     \\  evm-sign   EVM のトランザクション（JSON）に署名する
     \\  screen     実機の画面（240×240）を PNG で出力する（PC での確認用）
     \\  show       PSBT の中身を人間可読で表示する（画面の代わり）
@@ -35,6 +35,7 @@ const usage =
     \\  --network mainnet|testnet|signet|regtest （既定: mainnet）
     \\  --kind p2wpkh|p2pkh|p2sh-p2wpkh|p2tr （既定: p2wpkh）
     \\
+    \\walkthrough のオプション（カードの実物が無くても画面の流れを確認できる）:\n    \\  --image <ファイル>    FAT32 イメージ\n    \\  --mnemonic "..."      署名に使う mnemonic\n    \\  --out-dir <ディレクトリ>   PNG の出力先（既定: カレント）\n    \\  --scale <n>           1 ドットを n 倍（既定: 2）\n    \\
     \\card の使い方（--image <ファイル> が必須。カードの実物が無くても試せる）:\n    \\  card list                    ファイル一覧\n    \\  card read  --name /IN.PSBT   内容を標準出力へ\n    \\  card write --name /OUT.PSBT  標準入力から書く\n    \\  card rm    --name /OUT.PSBT  削除\n    \\  card mv    --name /OUT.TMP --to /OUT.PSBT   リネーム\n    \\  card sign  --mnemonic "..."  /IN.PSBT に署名して /OUT.PSBT を作る\n    \\                               （/OUT.TMP に書いてからリネームする）\n    \\
     \\evm-show のオプション:
     \\  入力は raw トランザクションの 16 進数（0x の有無は問わない）
@@ -134,6 +135,10 @@ fn run(init: std.process.Init.Minimal, stdout: anytype, io: std.Io) !void {
     }
     if (std.mem.eql(u8, command, "evm-show")) {
         try commandEvmShow(allocator, args.items[1..], stdout);
+        return;
+    }
+    if (std.mem.eql(u8, command, "walkthrough")) {
+        try commandWalkthrough(allocator, args.items[1..], stdout, io);
         return;
     }
     if (std.mem.eql(u8, command, "card")) {
@@ -507,6 +512,178 @@ fn jsonHex(allocator: std.mem.Allocator, root: std.json.ObjectMap, name: []const
     const out = try allocator.alloc(u8, hex_text.len / 2);
     _ = std.fmt.hexToBytes(out, hex_text) catch return error.InvalidArgument;
     return out;
+}
+
+// ---------------------------------------------------------------- walkthrough
+
+/// 実機の画面の流れ（カードを挿す → 対象を確認 → 署名 → 結果を QR で出す）を
+/// PNG に書き出す。実機が無くても UI と受け渡しの流れを確認できる。
+fn commandWalkthrough(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdout: anytype,
+    io: std.Io,
+) !void {
+    _ = stdout;
+    const image_path = try requiredOption(args, "--image");
+    const mnemonic = try requiredOption(args, "--mnemonic");
+    const out_dir = option(args, "--out-dir") orelse ".";
+    const scale_text = option(args, "--scale") orelse "2";
+    const scale = try std.fmt.parseInt(usize, scale_text, 10);
+
+    const file = std.Io.Dir.cwd().openFile(io, image_path, .{ .mode = .read_write }) catch {
+        stderrPrint("イメージを開けません: {s}\n", .{image_path});
+        return error.InvalidArgument;
+    };
+    defer file.close(io);
+    const stat = std.Io.File.stat(file, io) catch return error.InvalidArgument;
+
+    var device = file_device.FileDevice.init(file, io, stat.size);
+    var fs = try zhww.fs_fat32.Fat32.mount(device.device(), allocator);
+    defer fs.deinit();
+
+    const width: usize = 240;
+    const height: usize = 240;
+    const pixels = try allocator.alloc(u16, width * height);
+    const big = try allocator.alloc(u16, width * scale * height * scale);
+
+    // --- 画面 1: カードを待っている ---
+    {
+        var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, width, height);
+        const screen = zhww.ui_screen.Screen{
+            .title = "ZHWW",
+            .lines = &.{
+                .{ .label = "", .value = "INSERT CARD", .kind = .strong },
+                .{ .label = "", .value = "Put a FAT32 microSD with IN.PSBT" },
+            },
+            .footer_left = "",
+            .footer_right = "POWER ON",
+        };
+        screen.render(&fb);
+        try writeScreenPng(allocator, io, out_dir, "1-waiting.png", pixels, big, width, height, scale);
+    }
+
+    // --- 画面 2: カードの中身を確認 ---
+    {
+        var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, width, height);
+        var list_buffer: [4]zhww.ui_screen.Line = undefined;
+        var count: usize = 0;
+        var names: [4][]const u8 = undefined;
+        var sizes: [4]u64 = undefined;
+
+        var iterator = try fs.openDir("/");
+        var entry: zhww.fs_fat32.Entry = .{};
+        while (try iterator.next(&entry)) {
+            if (entry.isDot() or entry.isDirectory()) continue;
+            if (count >= list_buffer.len) break;
+            names[count] = try allocator.dupe(u8, entry.nameSlice());
+            sizes[count] = entry.size;
+            count += 1;
+        }
+        for (0..count) |i| {
+            list_buffer[i] = .{
+                .label = "",
+                .value = try std.fmt.allocPrint(allocator, "{s} ({d}B)", .{ names[i], sizes[i] }),
+            };
+        }
+        const has_input = fs.exists("/IN.PSBT") catch false;
+        const screen = zhww.ui_screen.Screen{
+            .title = if (has_input) "SIGN THIS?" else "NO IN.PSBT",
+            .lines = list_buffer[0..count],
+            .warnings = if (has_input) &.{} else &.{"IN.PSBT was not found on the card"},
+            .footer_left = "CANCEL",
+            .footer_right = if (has_input) "SIGN" else "",
+        };
+        screen.render(&fb);
+        try writeScreenPng(allocator, io, out_dir, "2-found.png", pixels, big, width, height, scale);
+    }
+
+    // --- 画面 3: 結果を QR で出す（署名済み PSBT を UR にする）---
+    {
+        const raw = try fs.readFileAlloc(allocator, "/IN.PSBT", 64 * 1024);
+        var psbt_bytes: []const u8 = raw;
+        if (!std.mem.startsWith(u8, raw, "psbt\xff")) {
+            var cleaned = std.ArrayList(u8).empty;
+            for (raw) |c| {
+                if (c != '\n' and c != '\r' and c != ' ' and c != '\t') try cleaned.append(allocator, c);
+            }
+            const decoder = std.base64.standard.Decoder;
+            const decoded = try allocator.alloc(u8, try decoder.calcSizeForSlice(cleaned.items));
+            try decoder.decode(decoded, cleaned.items);
+            psbt_bytes = decoded;
+        }
+        const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, "");
+        const outcome = try zhww.btc_sign.signPsbtBytes(allocator, psbt_bytes, keys);
+
+        // 署名済み PSBT を UR にする（1 パート目を表示する = 実機のアニメーション QR と同じ）
+        var scratch: [8192]u8 = undefined;
+        var encoder = try zhww.ur.Encoder.init(
+            zhww.ur.type_crypto_psbt,
+            outcome.signed_psbt,
+            60,
+            zhww.ur.default_min_fragment_len,
+            &scratch,
+        );
+        var part_buffer: [1024]u8 = undefined;
+        const first_part = (try encoder.next(&part_buffer, .lower)) orelse "";
+
+        var matrix = try zhww.ui_qr.encode(allocator, first_part, .m);
+        defer matrix.deinit(allocator);
+
+        var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, width, height);
+        const lines = [_]zhww.ui_screen.Line{
+            .{ .label = "SCAN", .value = try std.fmt.allocPrint(
+                allocator,
+                "signed  {d}/{d} inputs",
+                .{ outcome.result.partial_sigs.len, outcome.result.partial_sigs.len + outcome.result.unsigned_inputs.len },
+            ) },
+            .{ .label = "", .value = try std.fmt.allocPrint(
+                allocator,
+                "fee {d} sats",
+                .{outcome.result.fee orelse 0},
+            ) },
+        };
+        const screen = zhww.ui_screen.Screen{
+            .title = "SIGNED",
+            .lines = &lines,
+            .qr = .{ .width = matrix.size, .height = matrix.size, .modules = matrix.modules },
+            .footer_left = "BACK",
+            .footer_right = "NEXT PART",
+        };
+        screen.render(&fb);
+        try writeScreenPng(allocator, io, out_dir, "3-signed.png", pixels, big, width, height, scale);
+        stderrPrint("QR（1 パート目）: {d} 文字 / v{d}\n", .{ first_part.len, matrix.version });
+    }
+}
+
+/// フレームバッファを拡大して PNG としてファイルに書く。
+fn writeScreenPng(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    out_dir: []const u8,
+    name: []const u8,
+    pixels: []const u16,
+    big: []u16,
+    width: usize,
+    height: usize,
+    scale: usize,
+) !void {
+    const s = if (scale == 0) 1 else scale;
+    for (0..height * s) |y| {
+        for (0..width * s) |x| {
+            big[y * width * s + x] = pixels[(y / s) * width + (x / s)];
+        }
+    }
+
+    const path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ out_dir, name });
+    const file = try std.Io.Dir.cwd().createFile(io, path, .{});
+    defer file.close(io);
+
+    var buffer: [8192]u8 = undefined;
+    var writer = file.writer(io, &buffer);
+    try png.writeRgb565(&writer.interface, allocator, big, width * s, height * s);
+    try writer.interface.flush();
+    stderrPrint("書きました: {s}（{d}×{d}）\n", .{ path, width * s, height * s });
 }
 
 // ---------------------------------------------------------------- card（FAT32 イメージ）

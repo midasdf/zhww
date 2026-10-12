@@ -246,6 +246,30 @@ PC / スマホ側のツールと取り決める仕様をここで固定する。
 | マルチシグでは `OUT.PSBT` を次の署名者の `IN.PSBT` にする | 複数台での署名リレーが同じ手順で回る |
 | ファイルサイズの上限を決める（**64KB**） | 実機の SRAM は 520KB。上限を超えたら署名せず画面に理由を出す |
 
+### 画面の流れ（PC 上で再現できる）
+
+実機が無くても、カードを挿してから結果を出すまでの画面を PNG で確認できる。
+
+```bash
+# FAT32 イメージを用意して IN.PSBT を置く（mtools）
+mkfs.fat -F 32 -C card.img 40000
+jq -r .unsigned_psbt_base64 firmware/tests/vectors/core_psbt.json > in.txt
+mcopy -i card.img in.txt ::/IN.PSBT
+
+# 実機の画面の流れを出力する
+cd firmware && zig build
+./zig-out/bin/zhww walkthrough --image ../card.img \
+  --mnemonic "abandon … about" --out-dir ../docs/images
+```
+
+| 画面 | 内容 |
+|---|---|
+| ![1](images/1-waiting.png) | **カード待ち**: `INSERT CARD` |
+| ![2](images/2-found.png) | **確認**: カード上のファイル一覧と `SIGN` / `CANCEL` |
+| ![3](images/3-signed.png) | **結果**: 署名数・手数料と、署名済み PSBT の UR を QR で表示（`NEXT PART` で次のパートへ） |
+
+QR は独立した読み取り実装（OpenCV の QRCodeDetector）で `ur:crypto-psbt/…` として復号できることを確認済み。
+
 ### エラー時の表示（画面に出す）
 
 - カードが無い / 読めない → `NO CARD`
