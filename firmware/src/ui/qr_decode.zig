@@ -420,6 +420,8 @@ const Candidate = struct {
 
 /// 5 連ラン（暗・明・暗・明・暗）の相対幅。位置検出は 1:1:3:1:1、アラインは 1:1:1:1:1。
 const finder_ratio = [5]f64{ 1, 1, 3, 1, 1 };
+/// 位置検出パターンの候補リストの上限（溢れたら弱いものから捨てる）。
+const max_finder_candidates: usize = 512;
 const align_ratio = [5]f64{ 1, 1, 1, 1, 1 };
 
 const RatioResult = struct { center: usize, module: f64 };
@@ -439,6 +441,26 @@ fn ratioCenter(counts: [5]usize, expected: [5]f64, tolerance: f64) ?RatioResult 
         if (@abs(got - want) > allowed) return null;
     }
     return .{ .center = counts[0] + counts[1] + counts[2] / 2, .module = module };
+}
+
+/// アラインメントパターン用のラン判定。
+///
+/// 中心の 1 モジュール（暗）とその周りの明の輪は、隣のデータモジュールと融合しない
+/// ので厳密に見る。一方、外側の暗い枠は隣のデータと繋がって長くなりうるため、
+/// 「1 モジュール以上」だけを要求する（ZXing の AlignmentPatternFinder と同じ考え方）。
+fn alignRatio(counts: [5]usize, tolerance: f64) ?f64 {
+    const inner = counts[1] + counts[2] + counts[3];
+    if (inner < 3) return null;
+    const module = @as(f64, @floatFromInt(inner)) / 3.0;
+    if (module < 1.0) return null;
+    const allowed = tolerance * module + 1.0;
+    for (1..4) |i| {
+        const got: f64 = @floatFromInt(counts[i]);
+        if (@abs(got - module) > allowed) return null;
+    }
+    if (@as(f64, @floatFromInt(counts[0])) < 0.4 * module) return null;
+    if (@as(f64, @floatFromInt(counts[4])) < 0.4 * module) return null;
+    return module;
 }
 
 /// ラン走査の作業領域（1 行分のラン開始位置）。
@@ -489,11 +511,14 @@ fn runPixel(bin: *const BitMatrix, vertical: bool, major: isize, minor: isize) b
 ///
 /// 中心が暗でない場合や、比が合わない場合は null。`total_hint` を渡すと、
 /// 直交方向の全長が大きく違う候補を弾く（位置検出パターンの縦横比の確認）。
+const ScanKind = enum { finder, alignment };
+
 fn crossCheck(
     bin: *const BitMatrix,
     cx: f64,
     cy: f64,
     horizontal: bool,
+    kind: ScanKind,
     expected: [5]f64,
     tolerance: f64,
     total_hint: ?f64,
@@ -549,20 +574,62 @@ fn crossCheck(
         }
     }
 
-    const r = ratioCenter(counts, expected, tolerance) orelse return null;
+    const module = switch (kind) {
+        .finder => (ratioCenter(counts, expected, tolerance) orelse return null).module,
+        .alignment => alignRatio(counts, tolerance) orelse return null,
+    };
     const total: f64 = @floatFromInt(counts[0] + counts[1] + counts[2] + counts[3] + counts[4]);
     if (total_hint) |hint| {
         if (@abs(total - hint) > 0.5 * hint + 1.0) return null;
     }
+    // 中心ランの画素範囲は [c_major - center_neg, c_major + center_pos] なので、
+    // 連続座標での中心は +0.5 した値になる（画素 i は [i, i+1) を占める）。
     const center_pos = counts[2] - 1 - center_neg;
     const t = (@as(f64, @floatFromInt(center_pos)) - @as(f64, @floatFromInt(center_neg))) / 2.0;
-    const major_f = @as(f64, @floatFromInt(c_major)) + t;
+    const major_f = @as(f64, @floatFromInt(c_major)) + t + 0.5;
     const minor_f = @as(f64, @floatFromInt(c_minor)) + 0.5;
     return .{
         .x = if (horizontal) major_f else minor_f,
         .y = if (horizontal) minor_f else major_f,
-        .module = r.module,
+        .module = module,
     };
+}
+
+/// 位置検出パターンの外側（中心から 4 モジュール）が明るいか確かめる。
+///
+/// 本物の位置検出パターンは分離帯（明）と静穏域に囲まれているので、中心から
+/// ±4 モジュールの 4 点は必ず明になる。走査で測ったモジュール長は画像軸に沿った
+/// 長さなので、シンボルが回転していてもこの 4 点は分離帯の上に落ちる。
+fn hasLightRing(bin: *const BitMatrix, cx: f64, cy: f64, module: f64) bool {
+    const d = 4.0 * module;
+    const points = [4]Point{
+        .{ .x = cx + d, .y = cy },
+        .{ .x = cx - d, .y = cy },
+        .{ .x = cx, .y = cy + d },
+        .{ .x = cx, .y = cy - d },
+    };
+    var light: usize = 0;
+    for (points) |p| {
+        if (!samplePixel(bin, p)) light += 1;
+    }
+    return light >= 3;
+}
+
+/// すでに複数行で確認できている候補のモジュール長。
+///
+/// データ領域に偶然現れる 1:1:3:1:1 は本物よりずっと小さい（1〜3 画素）ことが多いので、
+/// 基準から外れたものを捨てると候補リストが溢れない。位置検出パターンは 3 つとも
+/// 同じモジュール長なので、回転していてもこの判定は使える。
+fn referenceModule(items: []const Candidate) ?f64 {
+    var best_count: usize = 2; // count >= 3 のものだけを基準にする
+    var best: ?f64 = null;
+    for (items) |c| {
+        if (c.count > best_count) {
+            best_count = c.count;
+            best = c.module;
+        }
+    }
+    return best;
 }
 
 /// 既存候補に近ければまとめ、そうでなければ追加する。
@@ -581,7 +648,16 @@ fn mergeCandidate(list: *std.ArrayList(Candidate), allocator: std.mem.Allocator,
             return;
         }
     }
-    if (list.items.len >= 512) return;
+    // 上限に達したら、いちばん弱い（確認回数の少ない）候補を追い出す。
+    if (list.items.len >= max_finder_candidates) {
+        var weakest: usize = 0;
+        for (list.items, 0..) |p, i| {
+            if (p.count < list.items[weakest].count) weakest = i;
+        }
+        if (list.items[weakest].count >= c.count) return;
+        list.items[weakest] = c;
+        return;
+    }
     try list.append(allocator, c);
 }
 
@@ -598,6 +674,7 @@ fn scanRuns(
     hi: usize,
     expected: [5]f64,
     tolerance: f64,
+    relaxed_ring: bool,
     out: *std.ArrayList(Candidate),
 ) Error!void {
     const major_len = if (vertical) bin.height else bin.width;
@@ -617,19 +694,28 @@ fn scanRuns(
             if (!first_dark) continue;
             var counts: [5]usize = undefined;
             for (0..5) |k| counts[k] = scanner.starts[i + k + 1] - scanner.starts[i + k];
-            const r = ratioCenter(counts, expected, tolerance) orelse continue;
-            const major_center = @as(f64, @floatFromInt(scanner.starts[i] + r.center)) + 0.5;
+            _ = ratioCenter(counts, expected, tolerance) orelse continue;
+            const major_center = (@as(f64, @floatFromInt(scanner.starts[i + 2])) +
+                @as(f64, @floatFromInt(scanner.starts[i + 3]))) / 2.0;
             const minor_center = @as(f64, @floatFromInt(minor)) + 0.5;
             const cx = if (vertical) minor_center else major_center;
             const cy = if (vertical) major_center else minor_center;
             const total_px: f64 = @floatFromInt(counts[0] + counts[1] + counts[2] + counts[3] + counts[4]);
             // 直交方向のクロスチェック → 走査方向で中心を詰める。
-            const first = crossCheck(bin, cx, cy, vertical, expected, tolerance, total_px) orelse continue;
-            const second = crossCheck(bin, first.x, first.y, !vertical, expected, tolerance, total_px) orelse continue;
+            const first = crossCheck(bin, cx, cy, vertical, .finder, expected, tolerance, total_px) orelse continue;
+            const second = crossCheck(bin, first.x, first.y, !vertical, .finder, expected, tolerance, total_px) orelse continue;
+            const measured = (first.module + second.module) / 2.0;
+            // 分離帯に囲まれていないものは位置検出パターンではない。
+            if (!relaxed_ring and !hasLightRing(bin, second.x, second.y, measured)) continue;
+            // すでに複数行で確認できた候補があるなら、モジュール長が大きく違うものを
+            // 落とす（データ領域に偶然現れる小さな 1:1:3:1:1 をふるい落とす）。
+            if (referenceModule(out.items)) |reference| {
+                if (measured < 0.5 * reference or measured > 2.0 * reference) continue;
+            }
             try mergeCandidate(out, allocator, .{
                 .x = second.x,
                 .y = second.y,
-                .module = (first.module + second.module) / 2.0,
+                .module = measured,
             });
         }
     }
@@ -637,7 +723,10 @@ fn scanRuns(
 
 // ---------------------------------------------------------------- 位置検出
 
-/// 位置検出パターンを探す。確認回数の多い順に並べて返す（呼び出し側が free する）。
+/// 位置検出パターンを探す（確認回数の多い順、呼び出し側が free する）。
+///
+/// `relaxed` が false のときは分離帯の判定を入れて厳しく絞る。true のときは
+/// 判定を外し、許容も広げて、行と列の両方を走査する（汚れた画像・欠けた画像向け）。
 fn findFinderPatterns(
     allocator: std.mem.Allocator,
     bin: *const BitMatrix,
@@ -649,9 +738,9 @@ fn findFinderPatterns(
     defer scanner.deinit(allocator);
 
     const tolerance: f64 = if (relaxed) 0.75 else 0.5;
-    try scanRuns(allocator, bin, &scanner, false, 0, bin.width, finder_ratio, tolerance, &out);
-    if (out.items.len < 3) {
-        try scanRuns(allocator, bin, &scanner, true, 0, bin.height, finder_ratio, tolerance, &out);
+    try scanRuns(allocator, bin, &scanner, false, 0, bin.width, finder_ratio, tolerance, relaxed, &out);
+    if (relaxed or out.items.len < 3) {
+        try scanRuns(allocator, bin, &scanner, true, 0, bin.height, finder_ratio, tolerance, relaxed, &out);
     }
     // 確認回数の多い順（単純な挿入ソート。候補は多くても数百）。
     const items = out.items;
@@ -661,6 +750,14 @@ fn findFinderPatterns(
         var j = i;
         while (j > 0 and items[j - 1].count < key.count) : (j -= 1) items[j] = items[j - 1];
         items[j] = key;
+    }
+    if (trace) {
+        std.debug.print("[cand] relaxed={} total={d}\n", .{ relaxed, items.len });
+        for (items, 0..) |c, ci| {
+            if (ci < 8) {
+                std.debug.print("[cand] {d}: ({d:.2},{d:.2}) module={d:.3} count={d}\n", .{ ci, c.x, c.y, c.module, c.count });
+            }
+        }
     }
     return try out.toOwnedSlice(allocator);
 }
@@ -695,7 +792,8 @@ fn scoreTriple(p: Candidate, q: Candidate, r: Candidate, relaxed: bool) ?f64 {
     const m_min = @min(mods[0], @min(mods[1], mods[2]));
     const m_max = @max(mods[0], @max(mods[1], mods[2]));
     if (m_min < 1.0) return null;
-    const module_ratio_limit: f64 = if (relaxed) 2.0 else 1.5;
+    // 3 つの位置検出パターンのモジュール長は（多少の遠近を除けば）揃っているはず。
+    const module_ratio_limit: f64 = if (relaxed) 1.8 else 1.35;
     if (m_max > m_min * module_ratio_limit) return null;
 
     const pts = [3]Point{ .{ .x = p.x, .y = p.y }, .{ .x = q.x, .y = q.y }, .{ .x = r.x, .y = r.y } };
@@ -731,21 +829,20 @@ fn scoreTriple(p: Candidate, q: Candidate, r: Candidate, relaxed: bool) ?f64 {
     const leg_ratio = @max(l1, l2) / @min(l1, l2);
     const leg_limit: f64 = if (relaxed) 3.0 else 2.2;
     if (leg_ratio > leg_limit) return null;
-    // 2 辺は「辺の長さ / モジュール長」がほぼ同じはず（遠近でも数モジュール差）。
+    // 2 辺は「辺の長さ / モジュール長」がほぼ同じで、規格上の寸法（17 + 4v）に近いはず。
     const module = (p.module + q.module + r.module) / 3.0;
-    const modules_h = @max(l1, l2) / module;
-    const modules_v = @min(l1, l2) / module;
-    if (modules_h - modules_v > 0.35 * modules_h + 3.0) return null;
-
-    // 2 辺から決まる寸法が一致し、規格上の値（17 + 4v）に近いはず。
     const dim_h = @max(l1, l2) / module + 7.0;
     const dim_v = @min(l1, l2) / module + 7.0;
-    if (@abs(dim_h - dim_v) > 5.0) return null;
-    const nearest = nearestDimension((dim_h + dim_v) / 2.0) orelse return null;
-    if (@abs(dim_h - @as(f64, @floatFromInt(nearest))) > 4.0) return null;
+    const dim_avg = (dim_h + dim_v) / 2.0;
+    const dim_tol: f64 = if (relaxed) 8.0 else 4.0;
+    if (@abs(dim_h - dim_v) > dim_tol) return null;
+    const nearest = nearestDimension(dim_avg) orelse return null;
+    const dim_dev = @abs(dim_avg - @as(f64, @floatFromInt(nearest)));
+    if (dim_dev > dim_tol) return null;
 
     const counts: f64 = @floatFromInt(p.count + q.count + r.count);
-    return counts + modules_h * 0.5 - @abs(cos) * 4.0;
+    const spread = (m_max - m_min) / m_min;
+    return counts - spread * 12.0 - dim_dev * 2.0 - @abs(cos) * 3.0;
 }
 
 /// 3 点を左上・右上・左下に並べる。画像座標（y 下向き）で右手系になるようにする。
@@ -1034,16 +1131,17 @@ fn scanRunsInRect(
             if (!first_dark) continue;
             var counts: [5]usize = undefined;
             for (0..5) |k| counts[k] = scanner.starts[i + k + 1] - scanner.starts[i + k];
-            const r = ratioCenter(counts, align_ratio, 0.7) orelse continue;
+            const module_est = alignRatio(counts, 0.7) orelse continue;
             // モジュール長が想定から離れすぎた候補は落とす（データ領域の偶然を減らす）。
-            if (r.module < module_px * 0.4 or r.module > module_px * 2.5) continue;
-            const major_center = @as(f64, @floatFromInt(scanner.starts[i] + r.center)) + 0.5;
+            if (module_est < module_px * 0.4 or module_est > module_px * 2.5) continue;
+            // 中心は中央のラン（= 中心の暗モジュール）の中央。
+            const major_center = (@as(f64, @floatFromInt(scanner.starts[i + 2])) +
+                @as(f64, @floatFromInt(scanner.starts[i + 3]))) / 2.0;
             const minor_center = @as(f64, @floatFromInt(minor)) + 0.5;
             const cx = if (vertical) minor_center else major_center;
             const cy = if (vertical) major_center else minor_center;
-            const total_px: f64 = @floatFromInt(counts[0] + counts[1] + counts[2] + counts[3] + counts[4]);
-            const first = crossCheck(bin, cx, cy, vertical, align_ratio, 0.7, total_px) orelse continue;
-            const second = crossCheck(bin, first.x, first.y, !vertical, align_ratio, 0.7, total_px) orelse continue;
+            const first = crossCheck(bin, cx, cy, vertical, .alignment, align_ratio, 0.7, null) orelse continue;
+            const second = crossCheck(bin, first.x, first.y, !vertical, .alignment, align_ratio, 0.7, null) orelse continue;
             if (out.items.len >= 512) return;
             try out.append(allocator, .{
                 .x = second.x,
@@ -1600,11 +1698,17 @@ fn correctAndExtract(
     // 規格 7.6: データ長が 1 多いブロックは**最後**に置かれる（qr.zig / ZXing / segno と同じ）。
     const first_long = nblocks - num_long;
 
-    var offsets: [max_blocks]usize = @splat(0);
+    // 作業領域は「ブロックごとに [データ | ECC] が連続」するように置く。
+    var region: [max_blocks]usize = @splat(0);
+    var data_start: [max_blocks]usize = @splat(0);
     var acc: usize = 0;
+    var dacc: usize = 0;
     for (0..nblocks) |b| {
-        offsets[b] = acc;
-        acc += short_len + @intFromBool(b >= first_long);
+        const dlen = short_len + @intFromBool(b >= first_long);
+        region[b] = acc;
+        data_start[b] = dacc;
+        acc += dlen + ecc_per;
+        dacc += dlen;
     }
 
     const work = try allocator.alloc(u8, raw.len);
@@ -1617,7 +1721,7 @@ fn correctAndExtract(
         for (0..nblocks) |b| {
             const dlen = short_len + @intFromBool(b >= first_long);
             if (k < dlen) {
-                work[offsets[b] + k] = raw[pos];
+                work[region[b] + k] = raw[pos];
                 pos += 1;
             }
         }
@@ -1625,7 +1729,8 @@ fn correctAndExtract(
     // ECC 部のインターリーブを解く。
     for (0..ecc_per) |j| {
         for (0..nblocks) |b| {
-            work[total_data + b * ecc_per + j] = raw[pos];
+            const dlen = short_len + @intFromBool(b >= first_long);
+            work[region[b] + dlen + j] = raw[pos];
             pos += 1;
         }
     }
@@ -1633,9 +1738,12 @@ fn correctAndExtract(
     var scratch: RsScratch = .{};
     for (0..nblocks) |b| {
         const dlen = short_len + @intFromBool(b >= first_long);
-        const block = work[offsets[b] .. offsets[b] + dlen + ecc_per];
-        _ = try rsCorrect(block, ecc_per, &scratch);
-        @memcpy(data_out[offsets[b] .. offsets[b] + dlen], work[offsets[b] .. offsets[b] + dlen]);
+        const block = work[region[b] .. region[b] + dlen + ecc_per];
+        const corrected = try rsCorrect(block, ecc_per, &scratch);
+        if (trace) {
+            std.debug.print("[rs] block {d}/{d} dlen={d} ecc={d} corrected={d} first={x:0>2},{x:0>2},{x:0>2},{x:0>2}\n", .{ b, nblocks, dlen, ecc_per, corrected, block[0], block[1], block[2], block[3] });
+        }
+        @memcpy(data_out[data_start[b] .. data_start[b] + dlen], work[region[b] .. region[b] + dlen]);
     }
 }
 
@@ -1732,6 +1840,30 @@ fn parseBitStream(data: []const u8, version: u8, sink: *Sink) Error!void {
 
 // ---------------------------------------------------------------- 1 シンボルの復号
 
+/// 格子の 3 隅に位置検出パターン（7×7）が正しく現れているか。
+///
+/// QR ではない画像（文章の画面など）を「QR らしいが見つからない」と誤って報告しない
+/// ための確認と、明らかに違う格子を早めに捨てるための足切りを兼ねる。
+fn gridLooksLikeQr(grid: *const BitMatrix, dim: usize) bool {
+    const origins = [3][2]usize{ .{ 0, 0 }, .{ dim - 7, 0 }, .{ 0, dim - 7 } };
+    var mismatch: usize = 0;
+    for (origins) |o| {
+        var y: usize = 0;
+        while (y < 7) : (y += 1) {
+            var x: usize = 0;
+            while (x < 7) : (x += 1) {
+                // 中心 (3,3) からのチェビシェフ距離: 0-1 が暗、2 が明、3 が暗。
+                const dx = if (x > 3) x - 3 else 3 - x;
+                const dy = if (y > 3) y - 3 else 3 - y;
+                const cheb = @max(dx, dy);
+                const want = cheb != 2;
+                if (grid.get(o[0] + x, o[1] + y) != want) mismatch += 1;
+            }
+        }
+    }
+    return mismatch <= 12;
+}
+
 /// 格子（モジュール行列）からテキストを取り出す。失敗したら false（別候補を試す）。
 fn decodeGrid(
     allocator: std.mem.Allocator,
@@ -1739,8 +1871,11 @@ fn decodeGrid(
     dim: usize,
     sink: *Sink,
     info: *Info,
+    confirmed: *bool,
 ) Error!bool {
     if (dim < min_size or dim > max_size or (dim - 17) % 4 != 0) return false;
+    if (!gridLooksLikeQr(grid, dim)) return false;
+    confirmed.* = true;
     const version: u8 = @intCast((dim - 17) / 4);
     const fmt = readFormat(grid, dim) orelse {
         if (trace) std.debug.print("[grid] dim={d} format NG\n", .{dim});
@@ -1810,140 +1945,211 @@ const AttemptResult = enum {
     ok,
 };
 
+/// 3 点組とその採点（スコア降順に並べる）。
+const TripleScore = struct {
+    score: f64,
+    idx: [3]usize,
+};
+
+/// すべての 3 点組を採点してスコアの降順に並べる（上位だけを使う）。
+fn collectTriples(
+    allocator: std.mem.Allocator,
+    pats: []const Candidate,
+    relaxed: bool,
+    out: *std.ArrayList(TripleScore),
+) Error!void {
+    if (pats.len < 3) return;
+    const n = @min(pats.len, 24);
+    var a: usize = 0;
+    while (a < n) : (a += 1) {
+        var b = a + 1;
+        while (b < n) : (b += 1) {
+            var c = b + 1;
+            while (c < n) : (c += 1) {
+                const score = scoreTriple(pats[a], pats[b], pats[c], relaxed) orelse continue;
+                try out.append(allocator, .{ .score = score, .idx = .{ a, b, c } });
+            }
+        }
+    }
+    std.sort.pdq(TripleScore, out.items, {}, struct {
+        fn lessThan(_: void, x: TripleScore, y: TripleScore) bool {
+            return x.score > y.score;
+        }
+    }.lessThan);
+}
+
+/// 見つけた位置検出パターンから 1 シンボルの復号を試す。
+fn tryPatterns(
+    allocator: std.mem.Allocator,
+    bin: *const BitMatrix,
+    pats: []const Candidate,
+    relaxed: bool,
+    sink: *Sink,
+    info: *Info,
+    confirmed: *bool,
+) Error!AttemptResult {
+    var triples: std.ArrayList(TripleScore) = .empty;
+    defer triples.deinit(allocator);
+    try collectTriples(allocator, pats, relaxed, &triples);
+    if (triples.items.len == 0) return .not_found;
+
+    const limit = @min(triples.items.len, 6);
+    var sampled = false;
+    // 1 周目はタイミングパターンと整合する組だけ、2 周目で残りを試す。
+    var phase: usize = 0;
+    while (phase < 2) : (phase += 1) {
+        const want_consistent = phase == 0;
+        for (triples.items[0..limit]) |ts| {
+            const ordered = orderPatterns(pats[ts.idx[0]], pats[ts.idx[1]], pats[ts.idx[2]]);
+            const tl = ordered[0];
+            const tr = ordered[1];
+            const bl = ordered[2];
+
+            const tl_pt = Point{ .x = tl.x, .y = tl.y };
+            const tr_pt = Point{ .x = tr.x, .y = tr.y };
+            const bl_pt = Point{ .x = bl.x, .y = bl.y };
+            const dist_h = distance(tl_pt, tr_pt);
+            const dist_v = distance(tl_pt, bl_pt);
+            if (dist_h < 10.0 or dist_v < 10.0) continue;
+
+            // 方向ごとのモジュール長（回転していても正しい値になる測り方）。
+            const ux = (tr.x - tl.x) / dist_h;
+            const uy = (tr.y - tl.y) / dist_h;
+            const vx = (bl.x - tl.x) / dist_v;
+            const vy = (bl.y - tl.y) / dist_v;
+            const run_module = (tl.module + tr.module + bl.module) / 3.0;
+            // 位置検出パターンの暗ランは 7 モジュール分。相手との距離から上限を見積もる
+            // （いちばん短い辺でも 14 モジュールなので 0.35 倍あれば足りる）。
+            const walk_limit = @max(8.0, 0.35 * @min(dist_h, dist_v));
+            const m_h_tl = measureModuleAlong(bin, tl, ux, uy, run_module, walk_limit);
+            const m_h_tr = measureModuleAlong(bin, tr, ux, uy, run_module, walk_limit);
+            const m_v_tl = measureModuleAlong(bin, tl, vx, vy, run_module, walk_limit);
+            const m_v_bl = measureModuleAlong(bin, bl, vx, vy, run_module, walk_limit);
+            const m_h = (m_h_tl + m_h_tr) / 2.0;
+            const m_v = (m_v_tl + m_v_bl) / 2.0;
+            if (m_h < 1.0 or m_v < 1.0) continue;
+
+            // モジュール座標系の基底（1 モジュール分の画素ベクトル）。
+            const dm_h = dist_h / m_h;
+            const dm_v = dist_v / m_v;
+            if (dm_h < 10.0 or dm_v < 10.0) continue;
+            const ex = Point{ .x = (tr.x - tl.x) / dm_h, .y = (tr.y - tl.y) / dm_h };
+            const ey = Point{ .x = (bl.x - tl.x) / dm_v, .y = (bl.y - tl.y) / dm_v };
+
+            // タイミングパターンの遷移数から寸法を測る（距離に依存しないので遠近に強い）。
+            const dim_timing_h = timingDimension(
+                bin,
+                tl_pt,
+                tr_pt,
+                .{ .x = ey.x * 3.0, .y = ey.y * 3.0 * (m_h_tr / @max(m_h_tl, 0.5)) },
+                m_h,
+            );
+            const dim_timing_v = timingDimension(
+                bin,
+                tl_pt,
+                bl_pt,
+                .{ .x = ex.x * 3.0 * (m_v_bl / @max(m_v_tl, 0.5)), .y = ex.y * 3.0 },
+                m_v,
+            );
+            const dim_geo_raw = (dm_h + dm_v) / 2.0 + 7.0;
+
+            var timing_raw: ?f64 = null;
+            if (dim_timing_h != null and dim_timing_v != null) {
+                const ta: f64 = @floatFromInt(dim_timing_h.?);
+                const tb: f64 = @floatFromInt(dim_timing_v.?);
+                if (@abs(ta - tb) <= 4.0) timing_raw = (ta + tb) / 2.0;
+            } else if (dim_timing_h) |t| {
+                timing_raw = @floatFromInt(t);
+            } else if (dim_timing_v) |t| {
+                timing_raw = @floatFromInt(t);
+            }
+            const consistent = if (timing_raw) |t| @abs(t - dim_geo_raw) <= 5.0 else false;
+            if (consistent != want_consistent) continue;
+            if (trace) {
+                std.debug.print("[att] phase={d} score={d:.1} tl=({d:.1},{d:.1}) tr=({d:.1},{d:.1}) bl=({d:.1},{d:.1}) mh={d:.3} mv={d:.3} dim_t=({?},{?}) geo={d:.1}\n", .{ phase, ts.score, tl.x, tl.y, tr.x, tr.y, bl.x, bl.y, m_h, m_v, dim_timing_h, dim_timing_v, dim_geo_raw });
+            }
+
+            // 寸法の候補（優先順）。タイミング → 幾何 → ±1 段。
+            var dims: DimensionCandidates = .{};
+            if (timing_raw) |t| {
+                if (nearestDimension(t)) |d| dims.push(d);
+            }
+            if (nearestDimension(dim_geo_raw)) |d| dims.push(d);
+            if (dims.len > 0) {
+                const first = dims.dims[0];
+                if (first >= 25) {
+                    dims.push(first - 4);
+                    dims.push(first + 4);
+                }
+            }
+            if (dims.len == 0) continue;
+
+            for (dims.dims[0..dims.len]) |dim| {
+                const df: f64 = @floatFromInt(dim);
+                // 4 点目は右下（アラインメント中心、無ければ平行四辺形の頂点）。
+                const br = Point{ .x = tr.x + bl.x - tl.x, .y = tr.y + bl.y - tl.y };
+                var transform = solveHomography(
+                    .{ .{ .x = 3.5, .y = 3.5 }, .{ .x = df - 3.5, .y = 3.5 }, .{ .x = 3.5, .y = df - 3.5 }, .{ .x = df - 3.5, .y = df - 3.5 } },
+                    .{ tl_pt, tr_pt, bl_pt, br },
+                ) orelse continue;
+
+                const module_px = (m_h + m_v) / 2.0;
+                if (dim >= 25) {
+                    const expected = transform.map(df - 6.5, df - 6.5);
+                    const search_modules = @max(4.0, df / 8.0);
+                    if (try findAlignmentPattern(allocator, bin, &transform, expected, module_px, search_modules)) |center| {
+                        if (trace) {
+                            std.debug.print("[att] dim={d} align=({d:.2},{d:.2}) expected=({d:.1},{d:.1})\n", .{ dim, center.x, center.y, expected.x, expected.y });
+                        }
+                        if (solveHomography(
+                            .{ .{ .x = 3.5, .y = 3.5 }, .{ .x = df - 3.5, .y = 3.5 }, .{ .x = 3.5, .y = df - 3.5 }, .{ .x = df - 6.5, .y = df - 6.5 } },
+                            .{ tl_pt, tr_pt, bl_pt, center },
+                        )) |t2| {
+                            transform = t2;
+                        }
+                    }
+                }
+
+                var grid = try sampleGrid(allocator, bin, &transform, dim);
+                defer grid.deinit(allocator);
+                sampled = true;
+
+                sink.reset();
+                if (try decodeGrid(allocator, &grid, dim, sink, info, confirmed)) return .ok;
+
+                // 鏡像（裏返し）で撮られた場合の保険として転置でも試す。
+                var flipped = try transposeGrid(allocator, &grid);
+                defer flipped.deinit(allocator);
+                sink.reset();
+                if (try decodeGrid(allocator, &flipped, dim, sink, info, confirmed)) return .ok;
+            }
+        }
+    }
+    return if (sampled) .corrupt else .not_found;
+}
+
 /// 二値画像 1 枚から 1 シンボルを取り出す。
+///
+/// まず厳しく（分離帯の判定つきで）探し、だめなら緩く探し直す。
 fn attemptDecode(
     allocator: std.mem.Allocator,
     bin: *const BitMatrix,
     sink: *Sink,
-    relaxed: bool,
     info: *Info,
+    confirmed: *bool,
 ) Error!AttemptResult {
-    const pats = try findFinderPatterns(allocator, bin, relaxed);
-    defer allocator.free(pats);
-    const idx = selectPatterns(pats, relaxed) orelse return .not_found;
-    const ordered = orderPatterns(pats[idx[0]], pats[idx[1]], pats[idx[2]]);
-    const tl = ordered[0];
-    const tr = ordered[1];
-    const bl = ordered[2];
-
-    const tl_pt = Point{ .x = tl.x, .y = tl.y };
-    const tr_pt = Point{ .x = tr.x, .y = tr.y };
-    const bl_pt = Point{ .x = bl.x, .y = bl.y };
-    const dist_h = distance(tl_pt, tr_pt);
-    const dist_v = distance(tl_pt, bl_pt);
-    if (dist_h < 10.0 or dist_v < 10.0) return .not_found;
-
-    // 方向ごとのモジュール長（回転していても正しい値になる測り方）。
-    const ux = (tr.x - tl.x) / dist_h;
-    const uy = (tr.y - tl.y) / dist_h;
-    const vx = (bl.x - tl.x) / dist_v;
-    const vy = (bl.y - tl.y) / dist_v;
-    const run_module = (tl.module + tr.module + bl.module) / 3.0;
-    // 位置検出パターンの暗ランは 7 モジュール分。相手との距離から上限を見積もる
-    // （いちばん短い辺でも 14 モジュールなので 0.35 倍あれば足りる）。
-    const walk_limit = @max(8.0, 0.35 * @min(dist_h, dist_v));
-    const m_h_tl = measureModuleAlong(bin, tl, ux, uy, run_module, walk_limit);
-    const m_h_tr = measureModuleAlong(bin, tr, ux, uy, run_module, walk_limit);
-    const m_v_tl = measureModuleAlong(bin, tl, vx, vy, run_module, walk_limit);
-    const m_v_bl = measureModuleAlong(bin, bl, vx, vy, run_module, walk_limit);
-    const m_h = (m_h_tl + m_h_tr) / 2.0;
-    const m_v = (m_v_tl + m_v_bl) / 2.0;
-    if (m_h < 1.0 or m_v < 1.0) return .not_found;
-
-    // モジュール座標系の基底（1 モジュール分の画素ベクトル）。
-    const dm_h = dist_h / m_h;
-    const dm_v = dist_v / m_v;
-    if (dm_h < 10.0 or dm_v < 10.0) return .not_found;
-    const ex = Point{ .x = (tr.x - tl.x) / dm_h, .y = (tr.y - tl.y) / dm_h };
-    const ey = Point{ .x = (bl.x - tl.x) / dm_v, .y = (bl.y - tl.y) / dm_v };
-
-    // 寸法の候補（優先順）。タイミングパターンの遷移数 → モジュール長 → ±1 段。
-    var dims: DimensionCandidates = .{};
-    const dim_timing_h = timingDimension(
-        bin,
-        tl_pt,
-        tr_pt,
-        .{ .x = ey.x * 3.0, .y = ey.y * 3.0 * (m_h_tr / @max(m_h_tl, 0.5)) },
-        m_h,
-    );
-    const dim_timing_v = timingDimension(
-        bin,
-        tl_pt,
-        bl_pt,
-        .{ .x = ex.x * 3.0 * (m_v_bl / @max(m_v_tl, 0.5)), .y = ex.y * 3.0 },
-        m_v,
-    );
-    const dim_runs = nearestDimension((dm_h + dm_v) / 2.0 + 7.0);
-    if (dim_timing_h) |t| {
-        if (nearestDimension(@floatFromInt(t))) |d| {
-            if (dim_timing_v) |tv| {
-                if (nearestDimension(@floatFromInt(tv))) |dv| {
-                    if (d == dv) {
-                        dims.push(d);
-                    } else {
-                        dims.push(d);
-                        dims.push(dv);
-                    }
-                } else dims.push(d);
-            } else dims.push(d);
-        }
-    } else if (dim_timing_v) |tv| {
-        if (nearestDimension(@floatFromInt(tv))) |dv| dims.push(dv);
+    var detected = false;
+    var relaxed = false;
+    while (true) {
+        const pats = try findFinderPatterns(allocator, bin, relaxed);
+        defer allocator.free(pats);
+        const result = try tryPatterns(allocator, bin, pats, relaxed, sink, info, confirmed);
+        if (result == .ok) return .ok;
+        if (result == .corrupt) detected = true;
+        if (relaxed) break;
+        relaxed = true;
     }
-    if (dim_runs) |d| dims.push(d);
-    if (dims.len > 0) {
-        const first = dims.dims[0];
-        if (first >= 25) {
-            dims.push(first - 4);
-            dims.push(first + 4);
-        }
-    }
-    if (dims.len == 0) return .not_found;
-
-    var sampled = false;
-    if (trace) {
-        std.debug.print("[att] tl=({d:.2},{d:.2}) tr=({d:.2},{d:.2}) bl=({d:.2},{d:.2}) mh={d:.3} mv={d:.3} dim_t_h={?} dim_t_v={?} dim_runs={?}\n", .{ tl.x, tl.y, tr.x, tr.y, bl.x, bl.y, m_h, m_v, dim_timing_h, dim_timing_v, dim_runs });
-        for (dims.dims[0..dims.len]) |d| std.debug.print("[att] dim cand {d}\n", .{d});
-    }
-    for (dims.dims[0..dims.len]) |dim| {
-        const df: f64 = @floatFromInt(dim);
-        // 4 点目は右下（アラインメント中心、無ければ平行四辺形の頂点）。
-        const br = Point{ .x = tr.x + bl.x - tl.x, .y = tr.y + bl.y - tl.y };
-        var transform = solveHomography(
-            .{ .{ .x = 3.5, .y = 3.5 }, .{ .x = df - 3.5, .y = 3.5 }, .{ .x = 3.5, .y = df - 3.5 }, .{ .x = df - 3.5, .y = df - 3.5 } },
-            .{ tl_pt, tr_pt, bl_pt, br },
-        ) orelse continue;
-
-        const module_px = (m_h + m_v) / 2.0;
-        if (dim >= 25) {
-            const expected = transform.map(df - 6.5, df - 6.5);
-            const search_modules = @max(4.0, df / 8.0);
-            if (trace) std.debug.print("[att] dim={d} align expected=({d:.1},{d:.1}) module={d:.2} search={d:.1}\n", .{ dim, expected.x, expected.y, module_px, search_modules });
-            if (try findAlignmentPattern(allocator, bin, &transform, expected, module_px, search_modules)) |center| {
-                if (trace) std.debug.print("[att] align found=({d:.2},{d:.2}) expected=({d:.1},{d:.1})\n", .{ center.x, center.y, expected.x, expected.y });
-                if (solveHomography(
-                    .{ .{ .x = 3.5, .y = 3.5 }, .{ .x = df - 3.5, .y = 3.5 }, .{ .x = 3.5, .y = df - 3.5 }, .{ .x = df - 6.5, .y = df - 6.5 } },
-                    .{ tl_pt, tr_pt, bl_pt, center },
-                )) |t2| {
-                    transform = t2;
-                }
-            }
-        }
-
-        var grid = try sampleGrid(allocator, bin, &transform, dim);
-        defer grid.deinit(allocator);
-        sampled = true;
-
-        sink.reset();
-        if (try decodeGrid(allocator, &grid, dim, sink, info)) return .ok;
-
-        // 鏡像（裏返し）で撮られた場合の保険として転置でも試す。
-        var flipped = try transposeGrid(allocator, &grid);
-        defer flipped.deinit(allocator);
-        sink.reset();
-        if (try decodeGrid(allocator, &flipped, dim, sink, info)) return .ok;
-    }
-    return if (sampled) .corrupt else .not_found;
+    return if (detected) .corrupt else .not_found;
 }
 
 /// 二値化の条件を変えながら復号を試す。
@@ -1971,23 +2177,33 @@ fn decodeInternal(
         .{ .adaptive = false },
         .{ .adaptive = false, .invert = true },
     };
+    // 「QR らしい格子が取れた」印。取れていないのに失敗した場合は
+    // 「シンボルが見つからない」として報告する。
+    var confirmed = false;
     var detected = false;
     for (plans) |plan| {
         binarize(&bin, image, plan, black_points);
-        var relaxed = false;
-        while (true) {
-            sink.reset();
-            const result = try attemptDecode(allocator, &bin, sink, relaxed, info);
-            switch (result) {
-                .ok => return,
-                .corrupt => detected = true,
-                .not_found => {},
+        if (trace and image.width > 300) {
+            var yy: usize = image.height - 26;
+            while (yy < image.height) : (yy += 1) {
+                var buf: [64]u8 = @splat('.');
+                var xx: usize = 0;
+                while (xx < 40) : (xx += 1) {
+                    if (bin.get(xx, yy)) buf[xx] = '#';
+                }
+                std.debug.print("BIN {s}\n", .{buf[0..40]});
             }
-            if (relaxed) break;
-            relaxed = true;
+        }
+        sink.reset();
+        const result = try attemptDecode(allocator, &bin, sink, info, &confirmed);
+        switch (result) {
+            .ok => return,
+            .corrupt => detected = true,
+            .not_found => {},
         }
     }
-    return if (detected) Error.TooManyErrors else Error.SymbolNotFound;
+    if (detected and confirmed) return Error.TooManyErrors;
+    return Error.SymbolNotFound;
 }
 
 // ---------------------------------------------------------------- テスト
