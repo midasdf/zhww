@@ -385,10 +385,15 @@ no specific product page could be verified - the specification above is what mat
 X/Y/Z/W channels (the fourth is the wideband one to sample), the 0x44 I2C address and the two
 STEMMA QT/Qwiic connectors are identical. Buy this one; the ¥650 difference buys nothing.
 
-One consequence to act on: this board is **25.4 x 17.78 mm**, and the enclosure's sensor bay is
-currently 16 mm. The bay has to grow to roughly 28 x 21 mm (the case is parametric, so this is a
-parameter change plus a re-render), and the printed light-guide sleeve has to line up with the
-sensor's aperture on the new board rather than the LM393 module's.
+Two consequences to act on, both now decided (see §2.11):
+
+- this board is **25.4 x 17.78 mm**, and the sensor goes **under the main board, looking down through the
+  floor** - so the v0.3/v0.4 side bay is removed rather than enlarged, and the case grows in thickness
+  instead of length;
+- the sensor's aperture is **at the centre of the board** (12.70, 8.89 mm), not near an edge: Adafruit's
+  published Eagle board file puts the OPT4048 package U1 exactly there and their top-down photo agrees.
+  That number is still tagged as an estimate in the .scad, because the emitting spot inside the package
+  is not published.
 
 Useful extras this board brings: it has breakout pads for I2C, the address pin and an interrupt output
 (so it can also be wired with jumpers if a Qwiic cable is ever impractical), and it carries a level

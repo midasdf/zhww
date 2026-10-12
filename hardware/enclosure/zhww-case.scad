@@ -1,8 +1,8 @@
 // zhww enclosure (OpenSCAD, parametric)
 //
 // Hardware: Waveshare RP2350-PiZero (65 × 30 mm) + **Adafruit Mini PiTFT 135x240
-//           (product 4393)** on the 40-pin header + a commodity **LM393 light-sensor
-//           module** behind a short opaque light-guide tube. USB power only (no battery).
+//           (product 4393)** on the 40-pin header + an **Adafruit OPT4048 breakout**
+//           (25.4 × 17.78 mm) behind a short opaque light-guide tube. USB power only.
 //
 // The case is two parts: a tray (floor, sensor bay, light-guide sleeve) and a lid (display
 // window, two button holes). The light window is in the tray's floor, so the device can be
@@ -35,8 +35,16 @@
 //     scaled by the socket's 2.54 mm pitch .................................. [P]
 //   - Display active area 24.4 × 13.7 mm — derived from a 1.14" 240×135 panel
 //     (0.1016 mm dot pitch). Adafruit does not publish the active area .......... [E]
-//   - LM393 module ~20 × 15 mm, light guide ~Φ5 mm × 8–15 mm — from the project brief,
-//     not measured .......................................................... [E]
+//   - OPT4048 breakout board 25.4 × 17.78 mm, 2.54 mm corner radius, four Φ2.5 plated
+//     mounting holes 2.54 mm in from every edge, the OPT4048 package in the middle of the
+//     board, one STEMMA QT connector on each short edge — Adafruit's published PCB files
+//     (adafruit/Adafruit-OPT4048-XYZ-Color-Sensor-PCB, the Eagle .brd) ................ [D]
+//   - **Where the light-sensitive area sits on that board** — the *package* is in the
+//     middle (the .brd says so and Adafruit's photo agrees), but the position of the
+//     sensing spot inside the 2.2 × 1.2 mm package is not published in a form we could
+//     verify. `opt_ap_from_left` / `opt_ap_from_front` are therefore ESTIMATES (±1–2 mm)
+//     and are the first thing to measure on the real board .......................... [E]
+//   - Light guide ~Φ5 mm bore × 8–15 mm — from the project brief, not measured ....... [E]
 //
 // ## License
 //
@@ -113,27 +121,62 @@ tft_btn_dy = [6.15, 14.90];  // [P] the two button centres (y, toward the front)
 tft_btn_hole_d = 4.6;   // [E] press-through hole (bigger than the 3.0 mm actuator)
 window_margin = 1.0;    // [E] lid window = active area + this on every side
 
-// ---------------------------------------------------------------- light sensor (LM393)
+// ---------------------------------------------------------------- light sensor (Adafruit OPT4048)
 
-light_window_d = 5.4;   // [E] optical opening in the floor (the brief asks Φ5–6)
-light_guide_id = 5.0;   // [E] light guide tube: ~5 mm inner diameter (from the brief)
-light_guide_od = 6.0;   // [E] tube outer diameter — the case only has to fit this
-light_guide_len = 10.0; // [E] tube length, 8–15 mm in the brief
-sleeve_od = 9.0;        // [E] printed sleeve around the tube
+// The breakout is 25.4 × 17.78 mm (1.00 × 0.70 in) with a 2.54 mm corner radius and four
+// Φ2.5 plated mounting holes 2.54 mm in from every edge — Adafruit's published PCB files.
+opt_w = 25.4;            // [D] board, the 25.4 mm edge runs along the case's x
+opt_d = 17.78;           // [D] board, the 17.78 mm edge runs along the case's y
+opt_t = 1.6;             // [E] PCB thickness
+opt_hole_inset = 2.54;   // [D] mounting-hole centre, from either edge
+opt_hole_pitch_x = 20.32;    // [D] mounting-hole spacing along x (25.4 - 2 × 2.54)
+opt_hole_pitch_y = 12.70;    // [D] mounting-hole spacing along y (17.78 - 2 × 2.54)
+opt_hole_d = 2.5;        // [D] Φ2.5 plated mounting holes
+
+// --- THE APERTURE IS AN ESTIMATE, NOT A MEASUREMENT -------------------------------------
+// Adafruit's PCB files put the sensor *package* in the middle of the board, and their
+// top-down photo agrees, so both defaults below are the board's centre (12.70, 8.89 of
+// 25.4 × 17.78). The light-sensitive spot *inside* that 2.2 × 1.2 mm package is not
+// published in a form we could verify, so the real aperture can be 1–2 mm away from these
+// numbers. **Measure it with calipers** — centre of the clear window, from the module's left
+// edge and its front edge — and change these two values: the collar, the floor window and
+// the layout drawing all follow them. Nothing here has been measured.
+opt_ap_from_left = 12.70;    // [E] *** ESTIMATE *** aperture centre, from the module's left edge
+opt_ap_from_front = 8.89;    // [E] *** ESTIMATE *** aperture centre, from the module's front edge
+opt_pkg_h = 1.0;         // [E] how far the sensor package hangs below the module's PCB
+
+// The module goes in **sensor side down** (the package and its window face the floor), its
+// 25.4 mm edge along the case's x, and its 6-pin-header edge (VIN/SCL/INT) towards the
+// case's REAR wall: turning the board over mirrors its own y axis, so "front edge" above is
+// the module's y = 17.78 edge — the "OPT4048 XYZ Color" silk edge in Adafruit's photo.
+// Four printed posts enter the board's own mounting holes, which fixes its position (and
+// therefore the aperture's) instead of leaving it to the eye.
+
+post_d = 3.6;            // [E] post shoulder, inside the Φ4.0 plated pad ring (the nearest
+                         //     part on the module's underside is the LED, 2.2 mm from a hole)
+post_spigot_d = 2.2;     // [E] spigot that enters the Φ2.5 hole (0.3 mm of play)
+post_spigot_h = 1.2;     // [E] spigot length (the PCB is opt_t thick)
+
+// The light guide (the user's part) and the printed collar around it. The collar is exactly
+// as tall as the guide and no taller: on this board the pull-up pack (2.9 mm from the
+// aperture), the bypass caps (1.7 / 2.4 / 4.1 mm) and the regulator (2.4 mm) all sit inside
+// the collar's 4.5 mm radius, so nothing may rise as far as the module's underside there.
+light_window_d = 5.4;    // [E] optical opening in the floor (the brief asks Φ5–6)
+light_guide_id = 5.0;    // [E] the tube's bore (from the brief)
+light_guide_od = 6.0;    // [E] the tube's outer diameter — set this to your real tube
+light_guide_len = 10.0;  // [E] the tube's length, 8–15 mm in the brief
+sleeve_od = 9.0;         // [E] the printed collar's outer diameter
 sleeve_bore = light_guide_od + 0.4;
-sensor_mod_x = 15.0;    // [E] LM393 module ~20 × 15 mm (from the brief, not measured);
-sensor_mod_y = 20.0;    //     drop it in with the 20 mm side front-to-back so it lands on
-                        //     both rails
-sensor_mod_t = 1.6;     // [E] module PCB thickness
-rails_gap = 13.0;       // [E] clear width between the two module support rails
-rail_t = 2.5;           // [E] rail thickness
+guide_to_pcb = 1.8;      // [E] the guide's top → the module's PCB underside: it has to clear
+                         //     the tallest part on the module's underside near the aperture
+                         //     (the SOT23-5 regulator, ≈1.45 mm) with a little room to spare
 
 // ---------------------------------------------------------------- case
 
 wall = 2.0;             // wall thickness
 clearance = 0.4;        // clearance between the board and the case
 floor_t = 3.0;          // base plate; also the thread depth for the three board screws
-                        // (a 2 mm floor would be too thin: the lid sits 16.5 mm above it)
+                        // (a 2 mm floor would be too thin: the lid sits 14.5 mm above it)
 screw_clear = 2.8;      // M2.5 clearance hole (lid)
 screw_pilot = 2.05;     // M2.5 self-tapping pilot (tray)
 screw_len = 18.0;       // M2.5 x 18 for all five screws (see README)
@@ -147,18 +190,36 @@ skirt_gap = 0.2;        // skirt-to-tray clearance
 screw_inset_bay = 3.5;  // bay screw bosses, from the bay's end wall
 screw_bay_y = 2.2;      // bay screw bosses, from the front/rear walls
 
-// Sensor bay: the interior is extended past the board's right edge so the light guide has
-// a floor to look through and the LM393 module has somewhere to live.
-bay_len = 16.0;         // [E] interior extension beyond the board's right edge
+// Sensor bay: the interior is extended past the board's right edge so the OPT4048 module has
+// somewhere to live, and two internal walls narrow that extension to a defined pocket — the
+// case's interior is 30.8 mm deep because of the Pi board, and the module only needs 22.
+bay_len = 30.0;         // [E] bay pocket, x: 25.4 (module) + 4.6 → 2.30 mm each side
+bay_depth = 22.0;       // [E] bay pocket, y: 17.78 (module) + 4.22 → 2.11 mm each side
 bay_x0 = board_w + clearance;
 bay_x1 = bay_x0 + bay_len;
-light_cx = (bay_x0 + bay_x1) / 2;   // light window, x (board coordinates)
-light_cy = board_d / 2;             // light window, y
 
 inner_w = board_w + clearance * 2 + bay_len;
 inner_d = board_d + clearance * 2;
 outer_w = inner_w + wall * 2;
 outer_d = inner_d + wall * 2;
+
+bay_y0 = board_d / 2 - bay_depth / 2;        // = 4.0, on the board's centreline
+bay_wall_t = (inner_d - bay_depth) / 2;      // = 4.4: solid wall at the bay's front and rear
+
+// The module sits in the middle of the pocket; its four mounting holes (and the posts that
+// go into them) are derived from the board's own hole pattern.
+sensor_cx = (bay_x0 + bay_x1) / 2;
+sensor_cy = board_d / 2;
+sensor_x0 = sensor_cx - opt_w / 2;
+sensor_y0 = sensor_cy - opt_d / 2;
+sensor_holes = [[sensor_x0 + opt_hole_inset, sensor_y0 + opt_hole_inset],
+                [sensor_x0 + opt_hole_inset + opt_hole_pitch_x, sensor_y0 + opt_hole_inset],
+                [sensor_x0 + opt_hole_inset, sensor_y0 + opt_hole_inset + opt_hole_pitch_y],
+                [sensor_x0 + opt_hole_inset + opt_hole_pitch_x,
+                 sensor_y0 + opt_hole_inset + opt_hole_pitch_y]];
+
+light_cx = sensor_x0 + opt_ap_from_left;     // the ***ESTIMATED*** aperture (see above)
+light_cy = sensor_y0 + opt_ap_from_front;
 
 // ---------------------------------------------------------------- screw positions
 // Nothing may stand inside the board's footprint above the floor: the board has to drop
@@ -180,9 +241,10 @@ tft_pcb_top = tft_pcb_z + tft_t;                          // = 13.7 module PCB t
 deck_z = tft_pcb_top + max(tft_glass_t, tft_btn_h) + lid_gap;   // = 16.5 lid underside
 inner_h = deck_z - floor_t;                               // interior height above the floor
 
-sensor_deck_z = floor_t + light_guide_len + 1.0;          // = 13.0 LM393 PCB underside
-// The tube reaches from the floor's top face up to just under the module, so the
-// photodiode ends up inside the tube/sleeve — that is what keeps room light out.
+sensor_deck_z = floor_t + light_guide_len + guide_to_pcb;  // = 14.8 module PCB underside
+// The guide's top is guide_to_pcb below the module's PCB, i.e. guide_to_pcb - opt_pkg_h
+// (0.8 mm) below the estimated window plane: the sensor package hangs into that gap, and the
+// collar around the guide stops at the guide's top (see the note with the sensor parameters).
 
 // ---------------------------------------------------------------- derived layout (board coords)
 
@@ -208,8 +270,8 @@ win_button_gap = win_x0 - btn_x1;                // material between window and 
 $fn = 48;
 
 // ---------------------------------------------------------------- self-check
-// Prints the numbers the display window and the button holes were placed with, and fails
-// the render if the two ever touch. Run with -D 'part="check"'.
+// Prints the numbers the display window, the button holes, the sensor bay and the aperture
+// were placed with, and fails the render if any of them stop fitting. Run with -D 'part="check"'.
 
 echo(str("zhww-case: display window x ", win_x0, "..", win_x1,
          "  y ", win_y0, "..", win_y1, "  (", win_w, " x ", win_h, " mm)"));
@@ -217,14 +279,41 @@ echo(str("zhww-case: button holes Φ", tft_btn_hole_d, " at ",
          btn_xy[0], " and ", btn_xy[1], "  (x ", btn_x0, "..", btn_x1, ")"));
 echo(str("zhww-case: window-to-button gap = ", win_button_gap, " mm",
          win_button_gap > 1.0 ? "  PASS" : "  FAIL (needs > 1.0 mm)"));
+echo(str("zhww-case: OPT4048 sensor bay ", bay_len, " x ", bay_depth,
+         " mm internal (x × y); module ", opt_w, " x ", opt_d, " mm → gap ",
+         bay_len - opt_w, " mm in x (", (bay_len - opt_w) / 2, " per side) and ",
+         bay_depth - opt_d, " mm in y (", (bay_depth - opt_d) / 2, " per side)"));
+echo(str("zhww-case: aperture *** ESTIMATE, NOT MEASURED *** ",
+         opt_ap_from_left, " mm from the module's left edge + ", opt_ap_from_front,
+         " mm from its front edge → case x ", light_cx, " y ", light_cy,
+         "  (from the other two edges: ", opt_w - opt_ap_from_left, " + ",
+         opt_d - opt_ap_from_front, " mm)"));
+echo(str("zhww-case: light guide top is ", guide_to_pcb - opt_pkg_h,
+         " mm below the estimated sensor window plane  (guide_to_pcb ", guide_to_pcb,
+         " - opt_pkg_h ", opt_pkg_h, ")"));
+
 assert(win_button_gap > 1.0, "display window intersects the button cut-outs");
 assert(win_x0 > tft_x0 && win_x1 < tft_x1 && win_y0 > tft_y0 && win_y1 < tft_y1,
        "display window falls outside the Mini PiTFT board");
 assert(btn_x0 > tft_x0, "button hole falls outside the Mini PiTFT board");
-assert(light_cx - sleeve_od / 2 > bay_x0 && light_cx + sleeve_od / 2 < bay_x1,
-       "light guide sleeve does not fit in the sensor bay");
-assert(sensor_mod_x + 1.0 <= bay_len && sensor_mod_y >= rails_gap + 2.0,
-       "LM393 module does not fit the sensor bay / the rails");
+assert(bay_len - opt_w > 1.0 && bay_depth - opt_d > 1.0,
+       "the OPT4048 module does not fit the sensor bay");
+assert(opt_hole_inset * 2 + opt_hole_pitch_x - opt_w < 0.001 &&
+       opt_hole_inset * 2 + opt_hole_pitch_y - opt_d < 0.001,
+       "the mounting holes do not match the module's board outline");
+assert(opt_ap_from_left > 0 && opt_ap_from_left < opt_w &&
+       opt_ap_from_front > 0 && opt_ap_from_front < opt_d,
+       "the estimated aperture falls off the module's board");
+assert(light_cx - sleeve_od / 2 > bay_x0 && light_cx + sleeve_od / 2 < bay_x1 &&
+       light_cy - sleeve_od / 2 > bay_y0 && light_cy + sleeve_od / 2 < bay_y0 + bay_depth,
+       "the light-guide collar does not fit the sensor bay (check the aperture estimate)");
+assert(min([for (p = sensor_holes) (p[0] - light_cx) * (p[0] - light_cx)
+                                + (p[1] - light_cy) * (p[1] - light_cy)])
+       > pow(sleeve_od / 2 + post_d / 2, 2),
+       "the light-guide collar reaches one of the module posts");
+assert(sensor_deck_z + opt_t + 0.2 < deck_z,
+       "the sensor module reaches the lid: shorten the light guide");
+assert(light_window_d < sleeve_bore, "the floor's light window is wider than the collar's bore");
 
 // ---------------------------------------------------------------- helpers
 
@@ -238,37 +327,69 @@ module rounded_box(w, d, h, r = 2) {
 // Screw anchors. The three board screws have **no** boss: anything standing inside the
 // board's footprint would stop the board from dropping into the tray, and the Mini PiTFT
 // covers the rear-left corner anyway. They pass through the board's own Φ3.00 holes and
-// bite into the 2 mm floor (blind pilot, so nothing shows on the underside). The sensor
-// bay has no board over it, so its two screws get proper bosses.
-module screw_anchors() {
-    for (p = screw_board)
-        translate([wall + clearance + p[0], wall + clearance + p[1], 0])
-            translate([0, 0, floor_t - floor_pilot_depth])
-                cylinder(d = screw_pilot, h = floor_pilot_depth + 1);
+// bite into the 3 mm floor (blind pilot, so nothing shows on the underside). The sensor
+// bay has no board over it, so its two screws get proper bosses — which stand inside the
+// cavity and are therefore added *after* the tray has been hollowed out, not before.
+module bay_bosses() {
     for (p = screw_bay)
         translate([wall + clearance + p[0], wall + clearance + p[1], 0])
-            difference() {
-                cylinder(d = boss_d, h = deck_z);
-                translate([0, 0, deck_z - screw_pilot_depth])
-                    cylinder(d = screw_pilot, h = screw_pilot_depth + 1);
-            }
+            cylinder(d = boss_d, h = deck_z);
 }
 
-// The two rails the LM393 module rests on (sensor side down, photodiode over the sleeve).
-module sensor_rails() {
-    for (y = [light_cy - rails_gap / 2 - rail_t, light_cy + rails_gap / 2])
-        translate([wall + clearance + bay_x0 + 1, wall + clearance + y, floor_t])
-            cube([bay_len - 2, rail_t, sensor_deck_z - floor_t]);
+// The five blind screw pilots, subtracted last: three in the floor (under the board's own
+// mounting holes) and two in the bay bosses. Without them the screws would have to bite into
+// solid plastic.
+module screw_pilots() {
+    for (p = screw_board)
+        translate([wall + clearance + p[0], wall + clearance + p[1],
+                   floor_t - floor_pilot_depth])
+            cylinder(d = screw_pilot, h = floor_pilot_depth + 1);
+    for (p = screw_bay)
+        translate([wall + clearance + p[0], wall + clearance + p[1],
+                   deck_z - screw_pilot_depth])
+            cylinder(d = screw_pilot, h = screw_pilot_depth + 1);
 }
 
-// Printed sleeve around the user's light guide tube: a Ø6.4 bore from the floor up to the
-// LM393 board, closed at the bottom by the Φ5.4 optical opening in the floor.
+// The four posts the OPT4048 module rests on: a shoulder under each plated pad ring and a
+// spigot that enters the board's own Φ2.5 mounting hole. Using the board's holes to locate
+// it is what keeps the aperture over the collar — the pocket is 2.11 mm wider than the board
+// on each side, so a module placed by eye could slide that far off the light guide.
+module sensor_posts() {
+    for (p = sensor_holes) {
+        translate([wall + clearance + p[0], wall + clearance + p[1], floor_t])
+            cylinder(d = post_d, h = sensor_deck_z - floor_t);
+        translate([wall + clearance + p[0], wall + clearance + p[1], sensor_deck_z])
+            cylinder(d = post_spigot_d, h = post_spigot_h);
+    }
+}
+
+// The two walls that narrow the bay's extension to the module's pocket (the case interior is
+// 30.8 mm deep because of the Pi board; the module needs 22).
+module bay_walls() {
+    for (y = [bay_y0 - bay_wall_t, bay_y0 + bay_depth])
+        translate([wall + clearance + bay_x0, wall + clearance + y, floor_t])
+            cube([bay_len, bay_wall_t, deck_z - floor_t]);
+}
+
+// Printed collar around the user's light guide tube: a bore from the floor up to the top of
+// the guide, closed at the bottom by the Φ5.4 optical opening in the floor. It stops at the
+// guide's top rather than at the module because the module's underside parts sit within
+// 4.5 mm of the aperture — see the note with the sensor parameters.
 module light_sleeve() {
     translate([wall + clearance + light_cx, wall + clearance + light_cy, floor_t])
         difference() {
-            cylinder(d = sleeve_od, h = sensor_deck_z - floor_t);
-            translate([0, 0, -1]) cylinder(d = sleeve_bore, h = sensor_deck_z);
+            cylinder(d = sleeve_od, h = light_guide_len);
+            translate([0, 0, -1]) cylinder(d = sleeve_bore, h = light_guide_len + 2);
         }
+}
+
+// Pad on the lid's underside that holds the sensor module down on its four posts (the posts
+// locate the board, they cannot retain it). Its height is whatever the stack leaves, so it
+// follows the light guide's length and the module's thickness.
+module module_hold_down() {
+    translate([wall + clearance + sensor_cx, wall + clearance + sensor_cy,
+               sensor_deck_z + opt_t])
+        cylinder(d = 8.0, h = max(0.2, deck_z - (sensor_deck_z + opt_t)));
 }
 
 // ---------------------------------------------------------------- parts
@@ -276,15 +397,20 @@ module light_sleeve() {
 module tray() {
     difference() {
         union() {
-            rounded_box(outer_w, outer_d, deck_z, corner_r);
-            screw_anchors();
-            sensor_rails();
+            // The shell is hollowed out **first**, and the features that stand inside the
+            // cavity are added afterwards. Cutting the cavity at the end (as v0.3 did) takes
+            // the collar, the posts, the bay walls and the bay screw bosses with it: they
+            // are all inside the cavity's own volume, so nothing of them survives.
+            difference() {
+                rounded_box(outer_w, outer_d, deck_z, corner_r);
+                translate([wall, wall, floor_t])
+                    rounded_box(inner_w, inner_d, deck_z, corner_r / 2);
+            }
+            bay_bosses();
+            bay_walls();
+            sensor_posts();
             light_sleeve();
         }
-
-        // Hollow out the inside
-        translate([wall, wall, floor_t])
-            rounded_box(inner_w, inner_d, deck_z, corner_r / 2);
 
         // Front long edge: mini HDMI / USB-C x2
         translate([wall + clearance + hdmi_x, -1, floor_t + 2.5])
@@ -301,6 +427,9 @@ module tray() {
         // Floor: the light window the sensor looks through
         translate([wall + clearance + light_cx, wall + clearance + light_cy, -1])
             cylinder(d = light_window_d, h = floor_t + 2);
+
+        // The five blind screw pilots
+        screw_pilots();
     }
 }
 
@@ -321,6 +450,8 @@ module lid() {
                         rounded_box(outer_w - skirt_gap * 2, outer_d - skirt_gap * 2,
                                     skirt_h + 2, corner_r);
                 }
+            // Pad that keeps the sensor module on its posts
+            module_hold_down();
         }
 
         // Display window (the module's board is 38.6 × 24.5; the window must stay smaller
@@ -373,12 +504,22 @@ module internals() {
         for (p = btn_xy)
             translate([wall + clearance + p[0], wall + clearance + p[1], tft_pcb_top])
                 cylinder(d = tft_btn_d, h = tft_btn_h);
-    // LM393 module resting on the rails, sensor side down
+    // Adafruit OPT4048 breakout on its posts, sensor side down (its window faces the floor)
     color("Purple")
-        translate([wall + clearance + light_cx - sensor_mod_x / 2,
-                   wall + clearance + light_cy - sensor_mod_y / 2, sensor_deck_z])
-            cube([sensor_mod_x, sensor_mod_y, sensor_mod_t]);
-    // Light guide tube (the user's part) inside the printed sleeve
+        translate([wall + clearance + sensor_x0, wall + clearance + sensor_y0, sensor_deck_z])
+            cube([opt_w, opt_d, opt_t]);
+    // its package, hanging below the board at the (estimated) aperture
+    color("Black")
+        translate([wall + clearance + light_cx - 1.1, wall + clearance + light_cy - 0.6,
+                   sensor_deck_z - opt_pkg_h])
+            cube([2.2, 1.2, opt_pkg_h]);
+    // the STEMMA QT connector on each short edge (the inner one takes the cable)
+    color("White")
+        for (x = [0.58, 19.92])
+            translate([wall + clearance + sensor_x0 + x, wall + clearance + sensor_y0 + 5.19,
+                       sensor_deck_z - 3.0])
+                cube([4.9, 7.4, 3.0]);
+    // Light guide tube (the user's part) inside the printed collar
     color("Gold")
         translate([wall + clearance + light_cx, wall + clearance + light_cy, floor_t])
             difference() {
@@ -421,10 +562,10 @@ module layout_check() {
     // microSD on the left short edge (the BAT connector is no longer cut out)
     color("DimGray") flat(0.3) translate([-4, sd_y0]) square([4, sd_len]);
 
-    // --- right panel: the Mini PiTFT (upper layer; drawn beside the board) ---
+    // --- right panel: the Mini PiTFT (upper layer; drawn beside the bay, not on top of it) ---
     // Everything in this panel is in the module's **own** coordinates: (0,0) is the
     // module board's left/rear corner, exactly as in Adafruit's top-down photo.
-    translate([board_w + 25, 0]) {
+    translate([bay_x1 + 5, 0]) {
         color("SteelBlue") flat(0.2) square([tft_w, tft_d]);
         // its 2x12 socket (pins 1–24), along the module's rear edge
         color("Green") flat(0.3)
@@ -444,9 +585,14 @@ module layout_check() {
                 translate([p[0] - tft_x0, p[1] - tft_y0]) circle(d = tft_btn_hole_d);
     }
 
-    // --- sensor bay, to the right of the board (shown in board coordinates) ---
-    color("DarkSlateGray") flat(0.2) translate([bay_x0, -0.4]) square([bay_len, board_d + 0.8]);
-    color("DarkOrange") flat(0.3) translate([light_cx, light_cy]) circle(d = sleeve_od);
+    // --- sensor bay, to the right of the board (shown in board coordinates): the pocket, the
+    //     OPT4048 board, the four mounting holes the posts go into, and the *estimated*
+    //     aperture (orange = collar, gold = floor window) ---
+    color("DarkSlateGray") flat(0.2) translate([bay_x0, bay_y0]) square([bay_len, bay_depth]);
+    color("Purple") flat(0.25) translate([sensor_x0, sensor_y0]) square([opt_w, opt_d]);
+    color("White") flat(0.3)
+        for (p = sensor_holes) translate([p[0], p[1]]) circle(d = opt_hole_d);
+    color("DarkOrange") flat(0.35) translate([light_cx, light_cy]) circle(d = sleeve_od);
     color("Gold") flat(0.4) translate([light_cx, light_cy]) circle(d = light_window_d);
 }
 
