@@ -128,11 +128,21 @@ Moving to an RP2350 board makes "rewriting the HAL + deciding how to handle came
 
 | Option | Size | Pros | Cons |
 |---|---|---|---|
-| A: Waveshare 1.3" LCD HAT (**default**) | 1.3" / 240×240 | Plugs directly into the Zero's 40-pin header. SeedSigner's track record and enclosure STL can be used as-is | Displaying EVM calldata requires paging |
+| A: Waveshare 1.3" LCD HAT (**default**) | 1.3" / 240×240 | Plugs directly into the Zero's 40-pin header. SeedSigner's track record and enclosure STL can be used as-is | Displaying EVM calldata requires paging. **It covers the whole board (65×30 mm), so every free GPIO is hidden** — no sensor or camera can be added (see [09-light-audio-input.md](09-light-audio-input.md) §7) |
 | B: 2.4–3.5" SPI panel (ILI9341 / ST7789) | 2.4–3.5" | Addresses and amounts are easier to take in at a glance | Not a HAT form factor, so jumper wiring is needed and the enclosure STL must be custom |
-| C: 1.3" HAT + confirmation on the host side | — | Minimal implementation | Requires trusting the host, which violates principle 2 (not recommended) |
+| **C: same 1.3" 240×240 panel as a module + separate buttons** | 1.3" / 240×240 | **The same panel and the same ST7789 driver**, so the screen design and the firmware's display layer are unchanged. A module with a 0.1" header is wired with jumpers (no soldering) and **leaves the rest of the 40-pin header reachable**, which is what a camera or light sensor needs. Cheaper than the HAT | The joystick is gone, so the UI simplifies to about three buttons; the enclosure must be redrawn around the module |
+| D: connectorised display (Grove / STEMMA QT) | 0.96–1.14" | One cable, no soldering at all | Small (128×64 or 135×240) and I²C refresh rate is a question mark for animated QR output |
+| E: 1.3" HAT + confirmation on the host side | — | Minimal implementation | Requires trusting the host, which violates principle 2 (not recommended) |
 
 Implement with A first, and move to B if the UX proves painful. Female-to-female jumpers can do the wiring, so B also requires no soldering.
+
+**Note on option C**: if a camera or a light sensor is wanted later, C is the cheapest way to make room for
+it. The concrete parts seen while looking into this: the [Waveshare Pico LCD 1.3](https://www.waveshare.net/shop/Pico-LCD-1.3.htm)
+module (240×240, SPI, the same panel as the HAT) and connectorised buttons such as
+[Grove – Button](https://www.taiwaniot.com.tw/product/grove-button-%e6%8c%89%e9%88%95%e6%8e%a7%e5%88%b6%e5%99%a8%e6%94%af%e6%8f%b4arduino%e8%88%87%e6%a8%b9%e8%8e%93%e6%b4%be/) with
+[Grove/STEMMA-to-jumper cables](https://media.distrelec.com/Web/Downloads/_t/ds/114992154_eng_tds.pdf).
+Exact pinouts and stock have to be confirmed against the vendor's wiki when ordering; nothing here has
+been bought or measured yet.
 
 ### 2.5 Camera
 
