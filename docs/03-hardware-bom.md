@@ -158,6 +158,49 @@ module (240×240, SPI, the same panel as the HAT) and connectorised buttons such
 Exact pinouts and stock have to be confirmed against the vendor's wiki when ordering; nothing here has
 been bought or measured yet.
 
+
+### 4c. Build recipes (pick one; "easy to assemble" comes first)
+
+The project's first promise is that a person can put this together in minutes without soldering.
+Three recipes keep that promise, in order of how little they add. They differ only in the display and
+in how extensions are attached; the firmware supports all of them (the screen layout handles both
+240x240 and 240x135).
+
+| | R1: minimal (default) | R2: extensible | R3: all plug-in (Grove) |
+|---|---|---|---|
+| Display | **Waveshare 1.3" LCD HAT** (plugs straight on) | Adafruit Mini PiTFT #4393 | **M5Stack Unit LCD** (135x240, Grove cable) |
+| Header | fully covered, **no extensions possible** | mostly free, **extensions possible** | all pins broken out as **female headers** |
+| Extension route | — | **Grove module + a Grove-to-jumper cable** onto the free pins | **Grove sockets on the shield** (plug in, nothing else) |
+| Assembly | plug the HAT on, insert the card: **~2 minutes** | plug the display on, one cable per sensor: **~3 minutes** | plug the shield on, two Grove cables: **~2 minutes** |
+| Soldering / loose jumpers | none / none | none / one cable per module | **none / none** |
+| Parts cost | $9.99 + $13.99 (~Y3,500) | ~Y3,500 + ~Y2,000 + modules | ~Y1,500 + ~Y3,500 + ~Y800 (~Y5,800) |
+| Where to buy | Waveshare, Amazon | Adafruit (import) + Grove from domestic shops | **all from domestic shops** |
+| Screen | 240x240 (native) | 240x135 | 240x135 (I2C) |
+| Known catch | extensions are impossible later | the display has to be imported | I2C is slower for full-screen updates (fine for partial ones; unmeasured), and the shield's female headers mean **it cannot be stacked with a HAT** |
+
+**R1 is the default.** It is the one that needs no decisions, no imports beyond the board itself, and
+it is the only recipe whose exchange path (microSD) is already implemented and verified in CI.
+
+**R2 is the middle ground** and is the one to choose if a sensor (a light receiver, extra buttons, a
+rotary encoder) is wanted later: the Grove ecosystem supplies the module with keyed connectors, and
+one Grove-to-jumper cable is all the wiring needed. Adafruit's STEMMA QT is the equivalent ecosystem
+and Grove-to-STEMMA adapter cables exist.
+
+**R3 is the "never touch a jumper wire" build.** Seeed's
+[Grove Shield for Pi Pico](https://www.seeedstudio.com/Grove-Shield-for-Pi-Pico-v1-0-p-4846.html)
+(available domestically at [Switch Science](https://www.switch-science.com/collections/seeed/products/7109))
+breaks out 2x I2C, 2x UART, 3x digital, 3x analog and 1x SPI as Grove sockets, so a Grove display and
+Grove buttons connect with cables only. It costs more and the display is I2C, which is the trade.
+
+**For a phone as the host**, the simplest answer in every recipe is a **USB-C SD card reader** (Y800-
+1,500): it reuses the microSD path that already works, and needs no sensor, no web page and no new
+firmware. A light receiver or camera is an optional extra, documented in
+[09-light-audio-input.md](09-light-audio-input.md), not part of the default build.
+
+**Unconfirmed**: prices are approximate, the M5Stack Unit LCD's real I2C update rate has not been
+measured, and whether the Grove shield's female headers can coexist with the chosen display has to be
+checked on the real boards.
+
 ### 2.5 Camera (deferred — the light receiver was chosen instead)
 
 The camera was the alternative **input** path. It is **not** being bought: it costs about $25 against
