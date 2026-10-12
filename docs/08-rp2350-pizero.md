@@ -217,7 +217,7 @@ It has been confirmed that a confirmation screen showing "destination, amount an
 ## 6. What does not need changing
 
 - `core/` and `apps/` (BIP39/BIP32, addresses, PSBT, signing, EVM, ERC-7730, UR) stay **as they are**
-- The 304 tests, including the official test vectors, continue to run on the host to prevent regressions
+- The 322 tests, including the official test vectors, continue to run on the host to prevent regressions
 - The development CLI stays as it is too (used for host-side verification and vector generation)
 
 ## 7. Open decision: how to handle QR
@@ -316,7 +316,7 @@ All are shown on screen with a red note that **nothing was signed**.
 
 ## 8. Verification plan
 
-1. **Host**: keep the existing 304 tests (regression detection)
+1. **Host**: keep the existing 322 tests (regression detection)
 2. **Target**: a self-test screen that runs part of the same vectors on the device (shows at boot whether "the BIP39/BIP32/PSBT vectors passed")
 3. **Signing speed**: measure the time per signature on the device (input for the usability decision)
 4. **Device**: send on signet and verify with Core / a block explorer

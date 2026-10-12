@@ -49,7 +49,7 @@ This project (zhww) is an **experimental research and development project**, not
 | Status | **experimental / work in progress**. Specifications, APIs and file layout change without notice |
 | Implemented scope | BIP39 / BIP32 / Base58 / Bech32 / Bech32m / RIPEMD-160 / BTC address generation, PSBT parsing and signing (single-signature, 2-of-3 multisig, Taproot), EVM signing (EIP-155 / EIP-1559 / EIP-191 / EIP-712), ABI decoding, ERC-7730 clear signing, BC-UR transport, FAT32 (microSD exchange), and a host-side screen UI. **Bitcoin Core accepts the signatures this code produces.** |
 | **Not implemented** | **on-device screen output, camera hardware support, and any run on real hardware. The firmware has never executed on the target board.** The screen UI exists only as a host-side preview, and the QR decoder (implemented and verified on the host against independent encoders) has never been fed a real camera image. |
-| Tests | 304 tests pass against official test vectors. But "the tests passed" ≠ "it is safe" |
+| Tests | 322 tests pass against official test vectors. But "the tests passed" ≠ "it is safe" |
 | Audit | **Not performed. None scheduled either** |
 | Track record | **No** record of signing or sending on real hardware |
 

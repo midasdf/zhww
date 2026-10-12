@@ -98,13 +98,13 @@ zhww/
 |---|---|
 | Design documents | Complete (requirements, architecture, BOM, chain support, threat model, roadmap, device setup, port plan) |
 | Firmware (Zig + libsecp256k1) | **Bitcoin**: BIP39 (incl. dice entropy) / BIP32 / Base58 / Bech32-Bech32m / RIPEMD-160 / ECDSA (RFC6979) / address generation / transaction parsing / legacy and BIP143 sighash / **BIP341 (Taproot) key-path signing** / PSBT parse-validate-serialize / **signing and finalization** / **2-of-3 multisig (P2WSH)** / fee and change detection / **BC-UR transport** / **screen UI layer** / **FAT32 (microSD exchange)**. **EVM**: RLP / EIP-55 / **EIP-155 and EIP-1559 signing** / EIP-191 / **EIP-712 typed data** / ABI decoding / **ERC-7730 clear signing** / transaction display |
-| Tests | **304 passing** (BTC: BIP143 signatures match byte-for-byte, 20 invalid / 27 valid BIP174 PSBTs, **Bitcoin Core accepts our single-sig, multisig and Taproot signatures**; EVM: official RLP vectors, EIP-155 example byte-for-byte, EIP-55, EIP-191, EIP-712, ABI via ethers.js, ERC-7730 using real registry descriptors; transport: BC-UR matches reference implementations; plus mutation/fuzz tests on untrusted input) |
+| Tests | **322 passing** (BTC: BIP143 signatures match byte-for-byte, 20 invalid / 27 valid BIP174 PSBTs, **Bitcoin Core accepts our single-sig, multisig and Taproot signatures**; EVM: official RLP vectors, EIP-155 example byte-for-byte, EIP-55, EIP-191, EIP-712, ABI via ethers.js, ERC-7730 using real registry descriptors; transport: BC-UR matches reference implementations; QR decoding matches independent encoders (segno, python-qrcode) on 124 cases and decodes this project's own rendered screens; plus mutation/fuzz tests on untrusted input) |
 | CI | GitHub Actions builds and tests on Linux (the same environment as the target) on every push, including a full microSD round-trip verified with `mtools` and `fsck.fat` |
 | Hardware | Linux build: **Raspberry Pi Zero 2 WH** (assembly [docs/03](docs/03-hardware-bom.md), setup [docs/07](docs/07-zero2w-setup.md)). Main v0.2 target: **[Waveshare RP2350-PiZero](docs/08-rp2350-pizero.md)** — Pi Zero footprint, 40-pin header, microSD, no wireless, no onboard battery |
 | Next | RP2350 HAL (SPI display, GPIO, TRNG, SD), signing-speed measurement on the board, enclosure cut-outs measured on real hardware |
 
 ```bash
-cd firmware && zig build test      # 304 tests
+cd firmware && zig build test      # 322 tests
 zig build pico                     # check the core compiles for RP2040 / RP2350
 ```
 
