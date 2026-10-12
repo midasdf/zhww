@@ -220,7 +220,6 @@ $OSCAD -o docs/images/layout-check.png    $C --camera=0,0,0,0,0,0,180   -D 'part
 cp docs/images/case-iso-v2.png docs/images/case-preview.png   # the name docs/03-hardware-bom.md uses
 ```
 
-`docs/images/case-section-front.png` is **not referenced by anything any more** and still shows the
 old LCD-HAT version; it is a candidate for deletion.
 
 **Fasteners**: five M2.5 × 18 mm self-tapping screws. Three pass through the board's own Φ3.00
@@ -239,7 +238,6 @@ is over it).
   LiPo version, which would need a new opening).
 - **No screw at the board's rear-left corner** — the Mini PiTFT's board is over it, and a boss there
   would make the case impossible to assemble (see below). Five screws hold the lid.
-- `docs/images/case-section-front.png` is stale and unreferenced (see above).
 
 ## Parameters to measure and fill in once the hardware is in hand
 
