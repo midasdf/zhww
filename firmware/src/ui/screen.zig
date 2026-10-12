@@ -166,12 +166,18 @@ fn wrapText(
     const per_line = @max(@as(usize, 1), usable / char_width);
 
     var y = y_start;
-    var index: usize = 0;
-    while (index < text.len) {
-        const end = @min(text.len, index + per_line);
-        _ = fb.drawText(x, y, text[index..end], color, null, scale);
+    var rest = text;
+    while (rest.len > 0) {
+        var take = @min(rest.len, per_line);
+        // 収まる範囲に空白があれば、そこで折る（単語の途中で切らない）
+        if (take < rest.len) {
+            if (std.mem.lastIndexOfScalar(u8, rest[0..take], ' ')) |at| {
+                if (at > 0) take = at;
+            }
+        }
+        _ = fb.drawText(x, y, rest[0..take], color, null, scale);
         y += 9 * scale;
-        index = end;
+        rest = std.mem.trimStart(u8, rest[take..], " ");
     }
     if (text.len == 0) y += 9 * scale;
     return y;

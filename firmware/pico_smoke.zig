@@ -55,6 +55,10 @@ export fn zhww_smoke_ui(pixels_ptr: [*]u16, count: usize, out: [*]u8, out_len: u
         .footer_right = "CANCEL",
     };
     screen.render(&fb);
+    const device = @import("src/app/device.zig");
+    const notice = device.noticeFor(.invalid_psbt);
+    if (notice.title.len == 0) return 0;
+
     const indicator = @import("src/ui/indicator.zig");
     if (indicator.backlightOn(.idle)) return 0;
     if (!indicator.patternFor(.busy).isOnAt(0)) return 0;

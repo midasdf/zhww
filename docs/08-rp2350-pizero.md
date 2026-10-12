@@ -248,35 +248,43 @@ PC / スマホ側のツールと取り決める仕様をここで固定する。
 
 ### 画面の流れ（PC 上で再現できる）
 
-実機が無くても、カードを挿してから結果を出すまでの画面を PNG で確認できる。
+実機が無くても、**すべての画面**を PNG で確認できる。状態と画面の対応は
+[src/app/device.zig](../firmware/src/app/device.zig) にあり、**実機の main ループと PC の確認が同じ関数を使う**。
 
 ```bash
-# FAT32 イメージを用意して IN.PSBT を置く（mtools）
+# カードを用意する（mtools）
 mkfs.fat -F 32 -C card.img 40000
 jq -r .unsigned_psbt_base64 firmware/tests/vectors/core_psbt.json > in.txt
 mcopy -i card.img in.txt ::/IN.PSBT
 
-# 実機の画面の流れを出力する
+# 全画面を出力する
 cd firmware && zig build
 ./zig-out/bin/zhww walkthrough --image ../card.img \
   --mnemonic "abandon … about" --out-dir ../docs/images
 ```
 
-| 画面 | 内容 |
-|---|---|
-| ![1](images/1-waiting.png) | **カード待ち**: `INSERT CARD` |
-| ![2](images/2-found.png) | **確認**: カード上のファイル一覧と `SIGN` / `CANCEL` |
-| ![3](images/3-signed.png) | **結果**: 署名数・手数料と、署名済み PSBT の UR を QR で表示（`NEXT PART` で次のパートへ） |
+| 画面 | いつ出るか | 出力 |
+|---|---|---|
+| ![待機](images/1-waiting.png) | カードが挿さっていない | `1-waiting.png` |
+| ![FAT32 でない](images/2-not-fat32.png) | カードは読めたが FAT32 でない | `2-not-fat32.png` |
+| ![IN.PSBT が無い](images/3-no-input.png) | `IN.PSBT` が無い | `3-no-input.png` |
+| ![大きすぎる](images/4-too-large.png) | 64KB を超えている | `4-too-large.png` |
+| ![PSBT が不正](images/5-invalid-psbt.png) | PSBT として解釈できない | `5-invalid-psbt.png` |
+| ![確認](images/6-confirm.png) | 署名前の確認（カード上のファイル一覧） | `6-confirm.png` |
+| ![結果](images/7-signed.png) | 署名完了（UR を QR で表示） | `7-signed.png` |
+
+**すべてのエラー画面に「署名は行っていない」ことを赤字で出す**（利用者に誤解させない）。
+エラーの対応づけは `problemForMountError` / `problemForSignError` にあり、テストで固定してある。
+
+**多パート QR**: 署名済み PSBT は UR の複数パートになる（上の例では 4 パート）。実機は
+`NEXT PART` で送り、PC では `--part 3` のように指定して確認できる。
 
 QR は独立した読み取り実装（OpenCV の QRCodeDetector）で `ur:crypto-psbt/…` として復号できることを確認済み。
 
 ### エラー時の表示（画面に出す）
 
-- カードが無い / 読めない → `NO CARD`
-- FAT32 ではない（FAT16 / exFAT）→ `NOT FAT32`（対応を広げる場合はここを変える）
-- `IN.PSBT` が無い → `NO IN.PSBT`
-- 64KB 超 → `FILE TOO LARGE`
-- PSBT として解釈できない → `INVALID PSBT`（理由は `OUT.LOG` に書かない。端末の画面に出す）
+上の表のとおり（`NO CARD` / `NOT FAT32` / `NO IN.PSBT` / `FILE TOO LARGE` / `INVALID PSBT`）。
+いずれも画面に出し、**署名していないこと**を赤字で添える。
 
 ## 8. 検証計画
 

@@ -54,6 +54,7 @@ const usage =
     \\  --mnemonic "..."           署名に使う mnemonic（必須）
     \\  --out-dir <ディレクトリ>    PNG の出力先（既定: カレント）
     \\  --scale <n>                1 ドットを n 倍（既定: 2）
+    \\  --part <n>                 結果の QR で表示するパート番号（既定: 1）
     \\
     \\card の使い方（--image <ファイル> が必須。カードの実物が無くても試せる）:
     \\  card list                    ファイル一覧
@@ -559,20 +560,18 @@ fn commandWalkthrough(
     const big = try allocator.alloc(u16, width * scale * height * scale);
 
     // --- 画面 1: カードを待っている ---
-    {
-        var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, width, height);
-        const screen = zhww.ui_screen.Screen{
-            .title = "ZHWW",
-            .lines = &.{
-                .{ .label = "", .value = "INSERT CARD", .kind = .strong },
-                .{ .label = "", .value = "Put a FAT32 microSD with IN.PSBT" },
-            },
-            .footer_left = "",
-            .footer_right = "POWER ON",
-        };
-        screen.render(&fb);
-        try writeScreenPng(allocator, io, out_dir, "1-waiting.png", pixels, big, width, height, scale);
-    }
+    try renderNotice(allocator, io, out_dir, "1-waiting.png",
+        zhww.app_device.noticeFor(.waiting_card), pixels, big, width, height, scale);
+
+    // --- 画面 2〜5: エラー（署名は行わないことを必ず画面に出す）---
+    try renderNotice(allocator, io, out_dir, "2-not-fat32.png",
+        zhww.app_device.noticeFor(.not_fat32), pixels, big, width, height, scale);
+    try renderNotice(allocator, io, out_dir, "3-no-input.png",
+        zhww.app_device.noticeFor(.no_input), pixels, big, width, height, scale);
+    try renderNotice(allocator, io, out_dir, "4-too-large.png",
+        zhww.app_device.noticeFor(.file_too_large), pixels, big, width, height, scale);
+    try renderNotice(allocator, io, out_dir, "5-invalid-psbt.png",
+        zhww.app_device.noticeFor(.invalid_psbt), pixels, big, width, height, scale);
 
     // --- 画面 2: カードの中身を確認 ---
     {
@@ -606,7 +605,7 @@ fn commandWalkthrough(
             .footer_right = if (has_input) "SIGN" else "",
         };
         screen.render(&fb);
-        try writeScreenPng(allocator, io, out_dir, "2-found.png", pixels, big, width, height, scale);
+        try writeScreenPng(allocator, io, out_dir, "6-confirm.png", pixels, big, width, height, scale);
     }
 
     // --- 画面 3: 結果を QR で出す（署名済み PSBT を UR にする）---
@@ -635,8 +634,17 @@ fn commandWalkthrough(
             zhww.ur.default_min_fragment_len,
             &scratch,
         );
+        // 全パートを作って、指定されたものを表示する（実機の NEXT PART と同じ）
+        var parts = std.ArrayList([]const u8).empty;
         var part_buffer: [1024]u8 = undefined;
-        const first_part = (try encoder.next(&part_buffer, .lower)) orelse "";
+        while (try encoder.next(&part_buffer, .lower)) |part| {
+            try parts.append(allocator, try allocator.dupe(u8, part));
+            if (parts.items.len > 64) break; // 念のため
+        }
+        const part_index_text = option(args, "--part") orelse "1";
+        const part_index = @max(@as(usize, 1), std.fmt.parseInt(usize, part_index_text, 10) catch 1);
+        const shown_index = @min(part_index, parts.items.len);
+        const first_part = if (parts.items.len > 0) parts.items[shown_index - 1] else "";
 
         var matrix = try zhww.ui_qr.encode(allocator, first_part, .m);
         defer matrix.deinit(allocator);
@@ -645,8 +653,13 @@ fn commandWalkthrough(
         const lines = [_]zhww.ui_screen.Line{
             .{ .label = "SCAN", .value = try std.fmt.allocPrint(
                 allocator,
-                "signed  {d}/{d} inputs",
+                "signed {d}/{d} inputs",
                 .{ outcome.result.partial_sigs.len, outcome.result.partial_sigs.len + outcome.result.unsigned_inputs.len },
+            ) },
+            .{ .label = "", .value = try std.fmt.allocPrint(
+                allocator,
+                "part {d}/{d}",
+                .{ shown_index, parts.items.len },
             ) },
             .{ .label = "", .value = try std.fmt.allocPrint(
                 allocator,
@@ -662,9 +675,30 @@ fn commandWalkthrough(
             .footer_right = "NEXT PART",
         };
         screen.render(&fb);
-        try writeScreenPng(allocator, io, out_dir, "3-signed.png", pixels, big, width, height, scale);
-        stderrPrint("QR（1 パート目）: {d} 文字 / v{d}\n", .{ first_part.len, matrix.version });
+        try writeScreenPng(allocator, io, out_dir, "7-signed.png", pixels, big, width, height, scale);
+        stderrPrint("QR: パート {d}/{d}・{d} 文字・v{d}\n", .{ shown_index, parts.items.len, first_part.len, matrix.version });
     }
+}
+
+/// 状況（Notice）を画面にして PNG に書く。
+fn renderNotice(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    out_dir: []const u8,
+    name: []const u8,
+    notice: zhww.app_device.Notice,
+    pixels: []u16,
+    big: []u16,
+    width: usize,
+    height: usize,
+    scale: usize,
+) !void {
+    var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, width, height);
+    var lines: [8]zhww.ui_screen.Line = undefined;
+    var warnings: [4][]const u8 = undefined;
+    const screen = zhww.app_device.screenFor(notice, &lines, &warnings);
+    screen.render(&fb);
+    try writeScreenPng(allocator, io, out_dir, name, pixels, big, width, height, scale);
 }
 
 /// フレームバッファを拡大して PNG としてファイルに書く。
