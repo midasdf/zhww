@@ -1,5 +1,24 @@
 # セキュリティポリシー
 
+---
+
+## Summary (English)
+
+This project is experimental and is not audited. Security reports are genuinely welcome — even
+for a hobby project, a wallet bug matters.
+
+- **How to report**: open a [GitHub security advisory](https://github.com/midasdf/zhww/security/advisories/new)
+  (private) or an issue if the matter is not sensitive.
+- **Please include**: what you found, how to reproduce it, and which commit you tested.
+- **Response**: best effort. This is a volunteer, experimental project with no guaranteed SLA.
+- **Most interesting classes**: signature or sighash mistakes, PSBT/FAT32 parsing that leads to
+  signing the wrong thing, key material leaking into flash or logs, anything that makes the device
+  display something different from what it signs.
+
+The full policy below is in Japanese. Corrections and translations are welcome.
+
+---
+
 - **最終更新**: 2026-10-12
 - **対象**: 本リポジトリのすべての成果物（ファームウェア・ドキュメント・ハードウェア構成）
 
