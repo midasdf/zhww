@@ -17,4 +17,5 @@ test {
     _ = @import("tests/core_interop_test.zig");
     _ = @import("tests/multisig_test.zig");
     _ = @import("tests/taproot_test.zig");
+    _ = @import("tests/fuzz_test.zig");
 }
