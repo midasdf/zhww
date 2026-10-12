@@ -230,7 +230,7 @@ whereas the camera's cost is money the user has to spend.
 - **Ambient light**: indoor lighting flickers at 100/120 Hz, the same order as the data rate. A light
   guide, Manchester encoding and an adaptive threshold are the mitigations (§6).
 
-The camera research stays in [03-hardware-bom.md](03-hardware-bom.md) §2.5 so it can be picked up later.
+The camera research stays in [03-hardware-bom.md](03-hardware-bom.md) §2.6 so it can be picked up later.
 
 ### What happens next
 
