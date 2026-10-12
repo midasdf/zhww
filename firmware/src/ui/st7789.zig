@@ -1,14 +1,14 @@
-//! ST7789（240×240 IPS LCD）のドライバ。
+//! Driver for the ST7789 (240x240 IPS LCD).
 //!
-//! Waveshare の 1.3inch LCD HAT（型番 SKU:14972）に載っているコントローラ。
+//! The controller mounted on Waveshare's 1.3inch LCD HAT (SKU:14972).
 //!
-//! **設計**: 実際の配線（SPI・DC・CS・RST・バックライト）は `Transport` として外から渡す。
-//! こうしておくと、実機が無くても**モックの転送層**でコマンド列を検証できる。
-//! RP2350 側の実装は `platform/rp2350/` に置く。
+//! **Design**: the actual wiring (SPI, DC, CS, RST, backlight) is passed in from outside as a `Transport`.
+//! That way the command sequence can be verified with a **mock transport** even without the real board.
+//! The RP2350-side implementation lives in `platform/rp2350/`.
 //!
-//! 初期化シーケンスは ST7789 の一般的な 240×240 向けの値を使っている。
-//! **実機ではパネル個別の調整が必要になる可能性がある**（ポーチングやガンマ）。
-//! 表示が乱れる場合は [docs/08-rp2350-pizero.md] の手順で 1 つずつ確認する。
+//! The initialization sequence uses the values commonly used for 240x240 ST7789 panels.
+//! **Panel-specific tuning may be needed on the real device** (porching and gamma).
+//! If the display is disturbed, check the settings one by one following [docs/08-rp2350-pizero.md].
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;
@@ -17,7 +17,7 @@ const framebuffer = @import("framebuffer.zig");
 pub const width = 240;
 pub const height = 240;
 
-// コマンド（ST7789 データシート）
+// Commands (ST7789 datasheet)
 pub const cmd_swreset: u8 = 0x01;
 pub const cmd_slpin: u8 = 0x10;
 pub const cmd_slpout: u8 = 0x11;
@@ -43,27 +43,27 @@ pub const cmd_pwctrl1: u8 = 0xD0;
 pub const cmd_pvgamctrl: u8 = 0xE0;
 pub const cmd_nvgamctrl: u8 = 0xE1;
 
-/// 画面の向き。
+/// Screen orientation.
 pub const Rotation = enum(u8) {
-    /// 0 度（左上が原点）
+    /// 0 degrees (origin at the top left)
     deg0 = 0x00,
-    /// 90 度
+    /// 90 degrees
     deg90 = 0x60,
-    /// 180 度
+    /// 180 degrees
     deg180 = 0xC0,
-    /// 270 度
+    /// 270 degrees
     deg270 = 0xA0,
 };
 
-/// 転送層。SPI と制御ピンをまとめたもの。
+/// Transport layer. SPI and the control pins grouped together.
 ///
-/// 実装側が用意する関数:
-/// - `writeAll(bytes)`: SPI へ送る
-/// - `setDataMode(is_data)`: DC ピン（false = コマンド、true = データ）
-/// - `setChipSelect(selected)`: CS ピン
-/// - `setReset(high)`: RST ピン
-/// - `setBacklight(on)`: バックライト
-/// - `delayMs(ms)`: 待つ
+/// Functions the implementation must provide:
+/// - `writeAll(bytes)`: send over SPI
+/// - `setDataMode(is_data)`: DC pin (false = command, true = data)
+/// - `setChipSelect(selected)`: CS pin
+/// - `setReset(high)`: RST pin
+/// - `setBacklight(on)`: backlight
+/// - `delayMs(ms)`: wait
 pub fn Driver(comptime Transport: type) type {
     return struct {
         transport: Transport,
@@ -72,12 +72,12 @@ pub fn Driver(comptime Transport: type) type {
 
         const Self = @This();
 
-        /// 画面を初期化する。
+        /// Initializes the display.
         pub fn init(self: *Self) !void {
             self.transport.setChipSelect(true);
             self.transport.setDataMode(true);
 
-            // ハードウェアリセット
+            // Hardware reset
             self.transport.setReset(false);
             self.transport.delayMs(10);
             self.transport.setReset(true);
@@ -89,11 +89,11 @@ pub fn Driver(comptime Transport: type) type {
             try self.command(cmd_slpout, &.{});
             self.transport.delayMs(120);
 
-            // 色の並びとフレームレート
-            try self.command(cmd_colmod, &[_]u8{0x55}); // 16bit/pixel（RGB565）
+            // Color order and frame rate
+            try self.command(cmd_colmod, &[_]u8{0x55}); // 16bit/pixel (RGB565)
             try self.command(cmd_madctl, &[_]u8{0x00});
 
-            // ポーチング・電源・ガンマ（一般的な 240×240 向けの値）
+            // Porching, power and gamma (values commonly used for 240x240)
             try self.command(cmd_porctrl, &[_]u8{ 0x0C, 0x0C, 0x00, 0x33, 0x33 });
             try self.command(cmd_gctrl, &[_]u8{0x35});
             try self.command(cmd_vcoms, &[_]u8{0x19});
@@ -118,7 +118,7 @@ pub fn Driver(comptime Transport: type) type {
             self.transport.setBacklight(true);
         }
 
-        /// 画面の向きを変える（表示領域も入れ替える）。
+        /// Changes the screen orientation (the display window is switched as well).
         pub fn setRotation(self: *Self, rotation: Rotation) !void {
             const value: u8 = switch (rotation) {
                 .deg0 => 0x00,
@@ -128,12 +128,12 @@ pub fn Driver(comptime Transport: type) type {
             };
             try self.command(cmd_madctl, &[_]u8{value});
 
-            // 240×240 なので 90/270 度でもオフセットは 0
+            // 240x240, so the offset is 0 even at 90/270 degrees
             self.x_offset = 0;
             self.y_offset = 0;
         }
 
-        /// 描画範囲を指定する（両端を含む）。
+        /// Sets the drawing window (both ends inclusive).
         pub fn setWindow(self: *Self, x0: u16, y0: u16, x1: u16, y1: u16) !void {
             if (x1 >= width or y1 >= height) return error.InvalidEncoding;
             if (x0 > x1 or y0 > y1) return error.InvalidEncoding;
@@ -153,7 +153,7 @@ pub fn Driver(comptime Transport: type) type {
             });
         }
 
-        /// ピクセルを書き込む（指定範囲の続きから）。RGB565 を上位バイト先で送る。
+        /// Writes pixels (continuing from the set window). RGB565 is sent high byte first.
         pub fn writePixels(self: *Self, pixels: []const u16) !void {
             try self.commandStart(cmd_ramwr);
             for (pixels) |pixel| {
@@ -163,14 +163,14 @@ pub fn Driver(comptime Transport: type) type {
             try self.commandEnd();
         }
 
-        /// フレームバッファ全体を送る。
+        /// Sends the whole framebuffer.
         pub fn drawFramebuffer(self: *Self, fb: *const framebuffer.Framebuffer) !void {
             if (fb.width != width or fb.height != height) return error.InvalidEncoding;
             try self.setWindow(0, 0, width - 1, height - 1);
             try self.writePixels(fb.pixels);
         }
 
-        /// 1 つのコマンドとデータを送る。
+        /// Sends one command together with its data.
         fn command(self: *Self, code: u8, data: []const u8) !void {
             try self.commandStart(code);
             if (data.len > 0) self.transport.writeAll(data);
@@ -190,13 +190,14 @@ pub fn Driver(comptime Transport: type) type {
     };
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-/// 送った内容を記録するモックの転送層。
+/// Mock transport that records everything sent.
 pub const MockTransport = struct {
-    /// 送った内容（コマンドは `!`、データはそのまま）を 1 本の列にしたもの。
+    /// Everything sent, as one sequence: each command or data byte, with `C` / `D` markers
+    /// where the data/command line changed (see `setDataMode`).
     log: [4096]u8 = @splat(0),
     log_len: usize = 0,
     data_mode: bool = true,
@@ -251,56 +252,56 @@ pub const MockTransport = struct {
     }
 };
 
-test "初期化で期待したコマンドが順に出る" {
+test "initialization emits the expected commands in order" {
     var transport = MockTransport{};
     var driver = Driver(MockTransport){ .transport = transport };
     try driver.init();
     transport = driver.transport;
 
-    // ソフトウェアリセット → スリープ解除 → 色形式（RGB565）→ 表示オン
+    // Software reset, sleep out, color format (RGB565), display on
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_swreset }));
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_slpout }));
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_colmod, 'D', 0x55 }));
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_dispon }));
 
-    // リセットは一度下げてから上げる
+    // Reset is pulled low once and then raised
     try testing.expect(transport.reset_high);
     try testing.expect(transport.backlight);
     try testing.expect(transport.delay_count >= 4);
 
-    // コマンドの後は必ずデータモードに戻る（最後の状態）
+    // Data mode is always restored after a command (the final state)
     try testing.expect(transport.data_mode);
 }
 
-test "ウィンドウ指定は 4 バイトずつ上位バイト先で出る" {
+test "window setup emits four bytes, high byte first" {
     var driver = Driver(MockTransport){ .transport = .{} };
     try driver.setWindow(10, 20, 30, 40);
     const transport = driver.transport;
 
-    // CASET（列）: 10 → 30
+    // CASET (columns): 10 to 30
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_caset, 'D', 0x00, 0x0A, 0x00, 0x1E }));
-    // RASET（行）: 20 → 40
+    // RASET (rows): 20 to 40
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_raset, 'D', 0x00, 0x14, 0x00, 0x28 }));
 }
 
-test "範囲外のウィンドウは拒否する" {
+test "out-of-range windows are rejected" {
     var driver = Driver(MockTransport){ .transport = .{} };
     try testing.expectError(error.InvalidEncoding, driver.setWindow(0, 0, 240, 239));
     try testing.expectError(error.InvalidEncoding, driver.setWindow(10, 10, 5, 20));
 }
 
-test "ピクセルは上位バイト先（RGB565）で送られる" {
+test "pixels are sent high byte first (RGB565)" {
     var driver = Driver(MockTransport){ .transport = .{} };
     try driver.writePixels(&[_]u16{ 0xF800, 0x07E0, 0x001F });
     const transport = driver.transport;
 
-    // RAMWR の後に 6 バイト
+    // Six bytes after RAMWR
     try testing.expect(transport.contains(&[_]u8{
         'C', cmd_ramwr, 'D', 0xF8, 0x00, 0x07, 0xE0, 0x00, 0x1F,
     }));
 }
 
-test "フレームバッファ全体を送ると 240×240 ピクセル分になる" {
+test "sending the whole framebuffer covers 240x240 pixels" {
     var storage: [width * height]u16 = @splat(0x1234);
     var fb = try framebuffer.Framebuffer.init(&storage, width, height);
     fb.setPixel(0, 0, 0xFFFF);
@@ -309,18 +310,18 @@ test "フレームバッファ全体を送ると 240×240 ピクセル分にな�
     try driver.drawFramebuffer(&fb);
     const transport = driver.transport;
 
-    // 先頭は (0,0) の白
+    // The start is white at (0,0)
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_ramwr, 'D', 0xFF, 0xFF }));
-    // ウィンドウは全画面
+    // The window is the full screen
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_caset, 'D', 0x00, 0x00, 0x00, 0xEF }));
 
-    // 大きさが違うフレームバッファは拒否する
+    // A framebuffer of a different size is rejected
     var small: [16]u16 = @splat(0);
     var small_fb = try framebuffer.Framebuffer.init(&small, 4, 4);
     try testing.expectError(error.InvalidEncoding, driver.drawFramebuffer(&small_fb));
 }
 
-test "向きを変えると MADCTL が更新される" {
+test "changing the orientation updates MADCTL" {
     var driver = Driver(MockTransport){ .transport = .{} };
     try driver.setRotation(.deg90);
     try testing.expect(driver.transport.contains(&[_]u8{ 'C', cmd_madctl, 'D', 0x60 }));

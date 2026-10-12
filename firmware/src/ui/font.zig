@@ -1,17 +1,17 @@
-//! 8×8 のビットマップフォント（ASCII 0x00〜0x7F）。
+//! 8x8 bitmap font (ASCII 0x00-0x7F).
 //!
-//! 出典: Daniel Hepper 氏の font8x8（**パブリックドメイン**）
+//! Source: font8x8 by Daniel Hepper (**public domain**)
 //!       https://github.com/dhepper/font8x8
-//!       同氏による Marcel Sondaar / IBM のパブリックドメイン VGA フォント由来。
-//! ライセンスはパブリックドメインのため、本リポジトリの GPL と両立する。
+//!       Derived by the same author from the public domain VGA font by Marcel Sondaar / IBM.
+//! The license is public domain, so it is compatible with this repository's GPL.
 //!
-//! 各グリフは 8 バイト。**下位ビットが左**（bit0 が一番左のドット）で、
-//! バイト列は上から下へ並ぶ。
+//! Each glyph is 8 bytes. **The low bit is on the left** (bit0 is the leftmost dot) and the
+//! byte sequence runs from top to bottom.
 
 pub const glyph_width = 8;
 pub const glyph_height = 8;
 
-/// ASCII 0x00〜0x7F のグリフ。
+/// Glyphs for ASCII 0x00-0x7F.
 pub const glyphs = [128][8]u8{
     .{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
     .{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
@@ -158,32 +158,32 @@ pub const glyphs = [128][8]u8{
     .{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
 };
 
-/// 表示可能な ASCII（0x20〜0x7E）のグリフを返す。範囲外は空白を返す。
+/// Returns the glyph for printable ASCII (0x20-0x7E). Out-of-range codes return a blank.
 pub fn glyph(code: u8) [8]u8 {
     if (code < 0x20 or code > 0x7e) return glyphs[0x20];
     return glyphs[code];
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "フォントの形（既知の字形で確認する）" {
-    // 'A'（0x41）は上から 0x0C, 0x1E, 0x33, 0x33, 0x3F, 0x33, 0x33, 0x00
+test "font shapes (verified with known glyphs)" {
+    // 'A' (0x41) is 0x0C, 0x1E, 0x33, 0x33, 0x3F, 0x33, 0x33, 0x00 from top to bottom
     const a = glyph('A');
     try testing.expectEqual(@as(u8, 0x0C), a[0]);
     try testing.expectEqual(@as(u8, 0x3F), a[4]);
     try testing.expectEqual(@as(u8, 0x00), a[7]);
 
-    // 空白（0x20）は全部 0
+    // Space (0x20) is all zeros
     for (glyph(' ')) |row| try testing.expectEqual(@as(u8, 0), row);
 
-    // 範囲外は空白になる（落ちない）
+    // Out-of-range codes become blank (no crash)
     for (glyph(0x00)) |row| try testing.expectEqual(@as(u8, 0), row);
     for (glyph(0xFF)) |row| try testing.expectEqual(@as(u8, 0), row);
 }
 
-test "全グリフが 8 バイトで、空白以外は何か描かれている" {
+test "every glyph is 8 bytes and everything except space draws something" {
     var drawn: usize = 0;
     for (glyphs, 0..) |g, code| {
         if (code < 0x21 or code > 0x7e) continue;
@@ -193,7 +193,7 @@ test "全グリフが 8 バイトで、空白以外は何か描かれている" 
         }
         if (nonzero) drawn += 1;
     }
-    // 表示可能な ASCII は 94 文字。すべてに字形があるはず
+    // There are 94 printable ASCII characters; all of them should have a glyph
     try testing.expectEqual(@as(usize, 94), drawn);
 }
 

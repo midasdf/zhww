@@ -1,52 +1,53 @@
-//! 端末が「今どの画面を出すか」を決める層。
+//! The layer that decides which screen the device shows right now.
 //!
-//! ハードウェアにもチェーンにも依存しない（画面の材料だけを組み立てる）。
-//! 実機の main ループも、PC 上の確認（CLI の walkthrough）も、**同じ関数**を使う。
+//! It depends on neither the hardware nor the chain (it only assembles the material for the screen).
+//! Both the firmware main loop and the host-side check (the CLI walkthrough) use the
+//! **same functions**.
 //!
-//! 方針（プロジェクトの原則「表示できないものには署名しない」）:
-//! - エラーは**必ず画面に出す**（黙って止まらない）
-//! - 何に署名するのか（ファイル名・送金先・金額・手数料）を署名前に出す
-//! - 分からないことは「分からない」と出す（推測で埋めない）
+//! Policy (the project principle "do not sign anything that cannot be displayed"):
+//! - Errors are **always shown on screen** (never stop silently)
+//! - Show what is being signed (file name, destination, amount, fee) before signing
+//! - Say "unknown" for what is unknown (never fill it in by guessing)
 
 const std = @import("std");
 const ui_screen = @import("../ui/screen.zig");
 
-/// 端末が利用者に見せるべき状況。
+/// The situation the device should show the user.
 pub const Problem = enum {
-    /// カードが挿さっていない
+    /// No card is inserted
     waiting_card,
-    /// カードは読めたが FAT32 ではない（FAT16 / exFAT など）
+    /// The card was read but is not FAT32 (FAT16 / exFAT, etc.)
     not_fat32,
-    /// カードを読めない（接触不良・未フォーマットなど）
+    /// The card cannot be read (poor contact, unformatted, etc.)
     card_unreadable,
-    /// IN.PSBT が無い
+    /// There is no IN.PSBT
     no_input,
-    /// ファイルが大きすぎる（上限 64KB）
+    /// The file is too large (limit 64KB)
     file_too_large,
-    /// PSBT として解釈できない
+    /// It cannot be interpreted as a PSBT
     invalid_psbt,
-    /// 署名できる鍵が無い
+    /// There is no key that can sign
     no_matching_key,
-    /// 対応していない署名方式（SIGHASH_NONE / SINGLE など）
+    /// An unsupported signature scheme (SIGHASH_NONE / SINGLE, etc.)
     unsupported_sighash,
-    /// 署名以外の想定外の失敗
+    /// An unexpected failure other than signing
     failure,
 };
 
-/// 画面に出す内容（文字列は静的。アロケータを使わない）。
+/// The content to show on screen (strings are static; no allocator is used).
 pub const Notice = struct {
     title: []const u8,
-    /// 本文（1 行 1 項目）。
+    /// Body (one item per line).
     lines: []const []const u8,
-    /// 警告（赤で出る）。
+    /// Warnings (shown in red).
     warnings: []const []const u8 = &.{},
     footer_left: []const u8 = "",
     footer_right: []const u8 = "",
-    /// 操作を促す画面か（待機・確認）どうか。
+    /// Whether this screen prompts an action (waiting / confirmation).
     actionable: bool = false,
 };
 
-/// 状況に対応する画面の内容を返す。
+/// Returns the screen content for a situation.
 pub fn noticeFor(problem: Problem) Notice {
     return switch (problem) {
         .waiting_card => .{
@@ -137,7 +138,7 @@ pub fn noticeFor(problem: Problem) Notice {
     };
 }
 
-/// FAT32 のマウント失敗を画面の状況に対応づける。
+/// Maps a FAT32 mount failure to a screen situation.
 pub fn problemForMountError(err: anyerror) Problem {
     return switch (err) {
         error.UnsupportedFatType, error.NotFat32 => .not_fat32,
@@ -146,7 +147,7 @@ pub fn problemForMountError(err: anyerror) Problem {
     };
 }
 
-/// 署名の失敗を画面の状況に対応づける。
+/// Maps a signing failure to a screen situation.
 pub fn problemForSignError(err: anyerror) Problem {
     return switch (err) {
         error.InvalidPsbt, error.Truncated, error.InvalidEncoding, error.ChecksumMismatch => .invalid_psbt,
@@ -157,13 +158,13 @@ pub fn problemForSignError(err: anyerror) Problem {
     };
 }
 
-/// ファイルの大きさから状況を決める（上限を超えていれば画面に出す）。
+/// Decides the situation from the file size (shown on screen when the limit is exceeded).
 pub fn problemForFileSize(size: usize, limit: usize) ?Problem {
     if (size > limit) return .file_too_large;
     return null;
 }
 
-/// 画面の内容を `ui_screen.Screen` に変換する。
+/// Converts the screen content into a `ui_screen.Screen`.
 pub fn screenFor(notice: Notice, lines_buffer: []ui_screen.Line, warnings_buffer: [][]const u8) ui_screen.Screen {
     var count: usize = 0;
     for (notice.lines) |line| {
@@ -186,11 +187,11 @@ pub fn screenFor(notice: Notice, lines_buffer: []ui_screen.Line, warnings_buffer
     };
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "すべての状況に画面の内容がある（タイトルが空でない）" {
+test "every situation has screen content (the title is not empty)" {
     const problems = [_]Problem{
         .waiting_card,   .not_fat32,  .card_unreadable, .no_input,
         .file_too_large, .invalid_psbt, .no_matching_key, .unsupported_sighash,
@@ -199,7 +200,8 @@ test "すべての状況に画面の内容がある（タイトルが空でな�
     for (problems) |problem| {
         const notice = noticeFor(problem);
         try testing.expect(notice.title.len > 0);
-        // 待機以外は「署名していない」ことを必ず伝える（誤解させない）
+        // Anything other than waiting must always report that no signing was performed
+        // (do not mislead the user).
         if (problem != .waiting_card) {
             try testing.expect(notice.warnings.len > 0);
             try testing.expect(notice.lines.len > 0);
@@ -207,7 +209,7 @@ test "すべての状況に画面の内容がある（タイトルが空でな�
     }
 }
 
-test "エラーの対応づけ（FAT32 と署名）" {
+test "error mapping (FAT32 and signing)" {
     try testing.expectEqual(Problem.not_fat32, problemForMountError(error.UnsupportedFatType));
     try testing.expectEqual(Problem.not_fat32, problemForMountError(error.NotFat32));
     try testing.expectEqual(Problem.card_unreadable, problemForMountError(error.DeviceFailure));
@@ -218,13 +220,13 @@ test "エラーの対応づけ（FAT32 と署名）" {
     try testing.expectEqual(Problem.failure, problemForSignError(error.SomethingElse));
 }
 
-test "大きさの上限（64KB）" {
+test "size limit (64KB)" {
     try testing.expectEqual(@as(?Problem, null), problemForFileSize(64 * 1024, 64 * 1024));
     try testing.expectEqual(Problem.file_too_large, problemForFileSize(64 * 1024 + 1, 64 * 1024));
     try testing.expectEqual(@as(?Problem, null), problemForFileSize(100, 64 * 1024));
 }
 
-test "画面への変換（行と警告が入る）" {
+test "conversion to a screen (lines and warnings are filled in)" {
     var lines: [8]ui_screen.Line = undefined;
     var warnings: [4][]const u8 = undefined;
     const screen = screenFor(noticeFor(.invalid_psbt), &lines, &warnings);
@@ -234,7 +236,7 @@ test "画面への変換（行と警告が入る）" {
     try testing.expectEqualStrings("BACK", screen.footer_left);
 }
 
-test "画面が小さいバッファでも落ちない（切り詰められる）" {
+test "a small screen buffer does not crash (content is truncated)" {
     var lines: [1]ui_screen.Line = undefined;
     var warnings: [0][]const u8 = undefined;
     const screen = screenFor(noticeFor(.no_input), &lines, &warnings);

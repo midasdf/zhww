@@ -1,31 +1,31 @@
-//! ERC-7730 の記述子（clear signing の表示定義）の解析と、人間可読な表示項目の生成。
+//! Parsing of ERC-7730 descriptors (display definitions for clear signing) and generation of human-readable display items.
 //!
-//! 参考: https://eips.ethereum.org/EIPS/eip-7730
+//! References: https://eips.ethereum.org/EIPS/eip-7730
 //!       https://github.com/ethereum/clear-signing-erc7730-registry
 //!
-//! **設計方針（推測で表示しない）**
-//! - 記述子は `context.contract.deployments` の **chainId と address が両方一致**したときだけ使う。
-//!   デプロイ情報を持たない記述子（`ercs/` の汎用テンプレートなど）は、セレクタが一致しても
-//!   **使わない**（任意のコントラクトに汎用の意味づけを与えないため）。
-//! - 一致しない呼び出しは内容を推測せず、「未知のコントラクト」として警告し、
-//!   calldata の Keccak-256 ハッシュだけを提示する。
-//! - 値が不明なとき・表示形式が未対応のときは、**生の値に理由を添えて** `warning = true` に
-//!   する（例: `1000 (トークン情報が不明)`）。値を捏造しない。
-//! - 危険な操作（無制限の `approve`、`setApprovalForAll`、`permit`）の警告は記述子に依存せず
-//!   calldata から直接判定する（記述子が無くても警告できる）。警告項目は一覧の先頭に置く。
+//! **Design policy (never display a guess)**
+//! - A descriptor is used only when **both the chainId and the address** in `context.contract.deployments` match.
+//!   A descriptor without deployment information (such as the generic templates under `ercs/`) is
+//!   **not used** even if the selector matches (so that no generic meaning is attached to an arbitrary contract).
+//! - A call that does not match is not guessed at: it is warned about as an "unknown contract" and
+//!   only the Keccak-256 hash of the calldata is presented.
+//! - When a value is unknown or a display format is unsupported, the **raw value is annotated with a reason** and
+//!   `warning = true` is set (e.g. `1000 (unknown token info)`). Values are never fabricated.
+//! - Warnings for dangerous operations (unlimited `approve`, `setApprovalForAll`, `permit`) do not depend on
+//!   the descriptor; they are determined directly from the calldata (so they work without a descriptor). Warning items go at the top of the list.
 //!
-//! **未対応（その旨を警告する）**
-//! - `includes` による他の記述子の取り込み（レジストリ利用側での解決が必要）
-//! - tuple（構造体）のフィールド、`calldata`（入れ子の呼び出し）、`nftName`、`unit`、
-//!   `interoperableAddressName` の表示形式
-//! - `interpolatedIntent`、`path` の `[]`・添字・スライス以外の記法、`params` の配列添字対応、
-//!   `encryption`、`visible` の複合ルール、`$.` パス内の配列添字
-//! - `render` が受け取るコンテナは `to` と `chainId` のみ（`from` / `value` を使う記述子は
-//!   「不明」として警告する。完全なコンテナが必要なら `renderTransaction` を使う）
-//! - 名前解決（ENS など）は行わない。`addressName` は仕様どおり ERC-55 表記にフォールバックする
+//! **Unsupported (warned about as such)**
+//! - Pulling in other descriptors via `includes` (requires resolution on the registry consumer side)
+//! - The display formats for tuple (struct) fields, `calldata` (nested calls), `nftName`, `unit` and
+//!   `interoperableAddressName`
+//! - `interpolatedIntent`; notations for `path` other than `[]`, subscripts and slices; array subscript support for `params`;
+//!   `encryption`; compound rules for `visible`; array subscripts inside `$.` paths
+//! - The container `render` receives has only `to` and `chainId` (descriptors that use `from` / `value`
+//!   are warned about as "unknown". Use `renderTransaction` when a complete container is needed)
+//! - No name resolution (ENS etc.) is performed. `addressName` falls back to ERC-55 notation as the spec requires
 //!
-//! テストではレジストリの実記述子（stETH / Ekubo Ve33 / ERC-20 汎用テンプレート）を
-//! そのまま埋め込んで検証する。
+//! The tests embed real registry descriptors (stETH / Ekubo Ve33 / ERC-20 generic template)
+//! verbatim and verify against them.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -34,77 +34,77 @@ const hashes = @import("../../core/crypto/hashes.zig");
 const abi = @import("abi.zig");
 const evm_address = @import("address.zig");
 
-/// 表示項目。`label` は項目名、`value` は整形済みの値。
+/// A display item. `label` is the item name, `value` is the formatted value.
 pub const DisplayItem = struct {
     label: []const u8,
     value: []const u8,
-    /// 不明・危険・未対応など、利用者に注意を促す項目。
+    /// An item that draws the user's attention: unknown, dangerous, unsupported, and so on.
     warning: bool,
 };
 
-/// トークンの表示に使うメタデータ（コントラクトから取得したもの、または既知の一覧）。
+/// Metadata used to display a token (obtained from the contract, or from a known list).
 pub const TokenMetadata = struct {
     address: [20]u8,
     ticker: []const u8,
     decimals: u8,
 };
 
-/// 記述子が対象とするコントラクトのデプロイ先。
+/// A deployment target of the contract the descriptor applies to.
 pub const Deployment = struct {
     chain_id: u64,
     address: [20]u8,
 };
 
-/// トランザクションのコンテナ（ERC-7730 の `@.` が指す値）。
+/// The transaction container (the value ERC-7730's `@.` refers to).
 pub const Container = struct {
     chain_id: u64,
     to: [20]u8,
-    /// 送信元（`@.from`）。不明なら null。
+    /// Sender (`@.from`). null if unknown.
     from: ?[20]u8 = null,
-    /// ネイティブ通貨の値（`@.value`）。不明なら null。
+    /// Native currency value (`@.value`). null if unknown.
     value: ?u256 = null,
 };
 
-/// 記述子のフィールド（表示項目の定義）。
+/// A descriptor field (the definition of a display item).
 ///
-/// `$ref`（`display.definitions` への参照）は解析時に解決し、ローカルの指定で上書きする。
+/// `$ref` (a reference to `display.definitions`) is resolved at parse time and overridden by a local entry.
 pub const Field = struct {
-    /// デコード済みの引数を指すパス。
+    /// Path pointing at a decoded argument.
     path: ?[]const u8,
-    /// 記述子内の定数を指すパス、またはリテラル。
+    /// Path pointing at a constant inside the descriptor, or a literal.
     value: ?[]const u8,
     label: ?[]const u8,
     format: ?[]const u8,
     params: ?std.json.Value,
-    /// `visible` の生の値（文字列、または複合ルールのオブジェクト）。
+    /// The raw value of `visible` (a string, or a compound rule object).
     visible: ?std.json.Value,
 
     fn labelText(self: Field) []const u8 {
-        return self.label orelse self.path orelse self.value orelse "項目";
+        return self.label orelse self.path orelse self.value orelse "Item";
     }
 };
 
-/// 1 つの関数（`display.formats` の 1 エントリ）。
+/// One function (one entry of `display.formats`).
 pub const Format = struct {
-    /// `display.formats` のキー（例 `transfer(address _recipient, uint256 _amount)`）。
+    /// The key of `display.formats` (e.g. `transfer(address _recipient, uint256 _amount)`).
     key: []const u8,
-    /// 型のみの正準シグネチャ（例 `transfer(address,uint256)`）。
+    /// Types-only canonical signature (e.g. `transfer(address,uint256)`).
     signature: []const u8,
     selector: [4]u8,
     intent: []const u8,
     fields: []const Field,
-    /// 引数の型。tuple を含む場合は null（デコード不可）。
+    /// Argument types. null if a tuple is included (not decodable).
     types: ?[]const abi.AbiType,
-    /// トップレベルの引数名。名前が無い引数は空文字列。
+    /// Top-level argument names. An argument without a name is the empty string.
     names: []const []const u8,
 };
 
-/// ERC-7730 記述子。
+/// An ERC-7730 descriptor.
 pub const Descriptor = struct {
     parsed: std.json.Parsed(std.json.Value),
     allocator: std.mem.Allocator,
 
-    /// JSON 文字列を解析する。数値は文字列として保持する（`uint256` を正確に扱うため）。
+    /// Parse a JSON string. Numbers are kept as strings (to handle `uint256` exactly).
     pub fn parse(allocator: std.mem.Allocator, json: []const u8) Error!Descriptor {
         const parsed = std.json.parseFromSlice(
             std.json.Value,
@@ -120,24 +120,24 @@ pub const Descriptor = struct {
         self.parsed.deinit();
     }
 
-    /// `context.$id`（記述子の識別子）。
+    /// `context.$id` (the descriptor identifier).
     pub fn contextId(self: Descriptor) ?[]const u8 {
         const context = self.parsed.value.object.get("context") orelse return null;
         if (context != .object) return null;
         return stringOf(context.object.get("$id"));
     }
 
-    /// `metadata.owner`。
+    /// `metadata.owner`.
     pub fn owner(self: Descriptor) ?[]const u8 {
         return self.metadataString("owner");
     }
 
-    /// `metadata.contractName`。
+    /// `metadata.contractName`.
     pub fn contractName(self: Descriptor) ?[]const u8 {
         return self.metadataString("contractName");
     }
 
-    /// `metadata.info.url`。
+    /// `metadata.info.url`.
     pub fn infoUrl(self: Descriptor) ?[]const u8 {
         const metadata_object = self.metadata() orelse return null;
         const info = metadata_object.get("info") orelse return null;
@@ -145,7 +145,7 @@ pub const Descriptor = struct {
         return stringOf(info.object.get("url"));
     }
 
-    /// `context.contract.deployments`。無い場合は空。
+    /// `context.contract.deployments`. Empty if absent.
     pub fn deployments(self: Descriptor) Error![]Deployment {
         const context = self.parsed.value.object.get("context") orelse return &.{};
         if (context != .object) return error.InvalidEncoding;
@@ -166,7 +166,7 @@ pub const Descriptor = struct {
         return out;
     }
 
-    /// `metadata.token`（記述子自身が持つ ERC-20 メタデータ）。
+    /// `metadata.token` (ERC-20 metadata carried by the descriptor itself).
     pub fn ownToken(self: Descriptor) ?TokenInfo {
         const metadata_object = self.metadata() orelse return null;
         const token = metadata_object.get("token") orelse return null;
@@ -188,7 +188,7 @@ pub const Descriptor = struct {
         return stringOf(metadata_object.get(key));
     }
 
-    /// `display.formats` のオブジェクト。無い場合（`includes` のみの記述子など）は null。
+    /// The `display.formats` object. null if absent (e.g. a descriptor with only `includes`).
     fn formatsObject(self: Descriptor) ?std.json.ObjectMap {
         const display = self.parsed.value.object.get("display") orelse return null;
         if (display != .object) return null;
@@ -197,7 +197,7 @@ pub const Descriptor = struct {
         return formats.object;
     }
 
-    /// `$.` で始まる内部パスを解決する（オブジェクトのキーのみ。配列添字は未対応）。
+    /// Resolve an internal path starting with `$.` (object keys only; array subscripts unsupported).
     fn resolveInternalPath(self: Descriptor, path: []const u8) ?std.json.Value {
         var rest = path;
         if (std.mem.startsWith(u8, rest, "$.")) {
@@ -220,28 +220,28 @@ pub const Descriptor = struct {
     }
 };
 
-/// 記述子内のトークン情報。
+/// Token information inside a descriptor.
 pub const TokenInfo = struct {
     ticker: []const u8,
     decimals: u8,
 };
 
-// ---------------------------------------------------------------- 記述子の照合
+// ---------------------------------------------------------------- descriptor lookup
 
-/// 照合の結果。重複定義（不正な記述子）を「見つからない」と区別するために使う。
+/// The lookup result. Used to distinguish duplicate definitions (an invalid descriptor) from "not found".
 const Lookup = union(enum) {
     none,
-    /// 同じセレクタの定義が複数ある（仕様上は不正な記述子）。
+    /// Multiple definitions share the same selector (an invalid descriptor per the spec).
     duplicate,
     found: Format,
 };
 
-/// `chainId` とコントラクトアドレスの両方が一致し、かつセレクタが一致する表示定義を返す。
+/// Return the display definition whose `chainId` and contract address both match and whose selector matches.
 ///
-/// - デプロイ情報が無い記述子は対象外（`null`）。
-/// - 同じセレクタの定義が複数ある記述子は不正として `null`。
+/// - Descriptors without deployment information are not eligible (`null`).
+/// - A descriptor with multiple definitions for the same selector is treated as invalid and gives `null`.
 ///
-/// 記述子のキーの解析結果は `descriptor` のアロケータに確保される。
+/// Key parse results are allocated on `descriptor`'s allocator.
 pub fn findFormat(
     descriptor: Descriptor,
     chain_id: u64,
@@ -255,7 +255,7 @@ pub fn findFormat(
 }
 
 fn lookupFormat(descriptor: Descriptor, chain_id: u64, to: [20]u8, selector: [4]u8) Lookup {
-    // デプロイ情報が一致しない（または記述子が壊れている）場合は使わない。
+    // If the deployment information does not match (or the descriptor is broken), do not use it.
     if (!(deploymentMatches(descriptor, chain_id, to) catch false)) return .none;
 
     const formats = descriptor.formatsObject() orelse return .none;
@@ -269,7 +269,7 @@ fn lookupFormat(descriptor: Descriptor, chain_id: u64, to: [20]u8, selector: [4]
         const fragment = abi.parseFragment(descriptor.allocator, key) catch continue;
         const computed = abi.computeSelector(fragment.signature);
         if (!std.mem.eql(u8, &computed, &selector)) continue;
-        // 同じセレクタの定義が複数ある記述子は不正（仕様: MUST treat as invalid）。
+        // A descriptor with multiple definitions for the same selector is invalid (spec: MUST treat as invalid).
         if (found != null) return .duplicate;
         found = parseFormat(descriptor, key, value, fragment) catch continue;
     }
@@ -277,10 +277,10 @@ fn lookupFormat(descriptor: Descriptor, chain_id: u64, to: [20]u8, selector: [4]
     return .none;
 }
 
-/// 記述子のデプロイ先に `chain_id` / `to` の組があるか。
+/// Whether the descriptor's deployment targets contain the `chain_id` / `to` pair.
 ///
-/// **デプロイ情報が無い記述子は一致しない**（汎用テンプレートを任意のコントラクトに
-/// 適用しないため）。
+/// **A descriptor without deployment information never matches** (so that generic templates are
+/// not applied to arbitrary contracts).
 fn deploymentMatches(descriptor: Descriptor, chain_id: u64, to: [20]u8) Error!bool {
     const list = try descriptor.deployments();
     for (list) |deployment| {
@@ -300,7 +300,7 @@ fn parseFormat(
     const intent = if (stringOf(raw_intent)) |text|
         text
     else
-        // `intent` は「人間可読な文字列」または「ラベルと値の組」のどちらでもよい。
+        // `intent` may be either a "human-readable string" or a "set of label and value pairs".
         try flattenIntent(allocator, raw_intent);
 
     return .{
@@ -314,7 +314,7 @@ fn parseFormat(
     };
 }
 
-/// `intent` がオブジェクトの場合は「ラベル: 値」を並べた文字列にする（画面表示用）。
+/// When `intent` is an object, join the "label: value" pairs into a string (for on-screen display).
 fn flattenIntent(allocator: std.mem.Allocator, intent: std.json.Value) Error![]const u8 {
     if (intent != .object) return error.InvalidEncoding;
     var out = std.ArrayList(u8).empty;
@@ -334,7 +334,7 @@ fn flattenIntent(allocator: std.mem.Allocator, intent: std.json.Value) Error![]c
     return out.toOwnedSlice(allocator);
 }
 
-/// `display.formats.<key>.fields` を解析する。`$ref` はここで解決する。
+/// Parse `display.formats.<key>.fields`. `$ref` is resolved here.
 fn fieldsOf(descriptor: Descriptor, format: std.json.Value) Error![]Field {
     const fields = format.object.get("fields") orelse return &.{};
     if (fields != .array) return error.InvalidEncoding;
@@ -344,7 +344,7 @@ fn fieldsOf(descriptor: Descriptor, format: std.json.Value) Error![]Field {
     for (fields.array.items, 0..) |item, i| {
         if (item != .object) return error.InvalidEncoding;
 
-        // `$ref`（`$.display.definitions.X`）の定義。ローカルの指定が優先される。
+        // The definition of `$ref` (`$.display.definitions.X`). A local entry takes precedence.
         var definition: ?std.json.ObjectMap = null;
         if (item.object.get("$ref")) |reference| {
             if (reference != .string) return error.InvalidEncoding;
@@ -377,13 +377,13 @@ fn pickValue(local: std.json.ObjectMap, definition: ?std.json.ObjectMap, key: []
     return null;
 }
 
-// ---------------------------------------------------------------- 表示
+// ---------------------------------------------------------------- display
 
-/// 表示項目を生成する。
+/// Generate display items.
 ///
-/// `token_metadata` は既知のトークン（コントラクトから取得した値など）。空でもよい。
-/// `allocator` は `descriptor` と同じ `ArenaAllocator` を渡すのが素直（戻り値と内部の
-/// スライスはすべてそこから確保される）。
+/// `token_metadata` is known tokens (values obtained from contracts, etc.). It may be empty.
+/// It is natural to pass the same `ArenaAllocator` as for `descriptor` to `allocator` (the return value and
+/// all internal slices are allocated from it).
 pub fn render(
     allocator: std.mem.Allocator,
     descriptor: Descriptor,
@@ -401,7 +401,7 @@ pub fn render(
     );
 }
 
-/// コンテナの情報を明示して表示項目を生成する（`from` / `value` を使う記述子向け）。
+/// Generate display items with explicit container information (for descriptors that use `from` / `value`).
 pub fn renderTransaction(
     allocator: std.mem.Allocator,
     descriptor: Descriptor,
@@ -415,40 +415,40 @@ pub fn renderTransaction(
     const selector = abi.selector(calldata) orelse {
         try items.append(allocator, .{
             .label = "calldata",
-            .value = "関数呼び出しとして短すぎる（4 バイト未満）",
+            .value = "not a function call (< 4 bytes)",
             .warning = true,
         });
         return items.toOwnedSlice(allocator);
     };
 
-    // 記述子に依存しない危険操作の警告を先頭に置く。
+    // Put warnings for dangerous operations that do not depend on the descriptor first.
     try appendRiskWarnings(allocator, &items, selector, calldata);
 
     switch (lookupFormat(descriptor, container.chain_id, container.to, selector)) {
         .none => {
             try items.append(allocator, .{
-                .label = "宛先",
+                .label = "To",
                 .value = try checksumAddress(allocator, container.to),
                 .warning = false,
             });
             try items.append(allocator, .{
-                .label = "警告",
-                .value = "未知のコントラクト（一致する ERC-7730 記述子が無い）。内容を表示できない",
+                .label = "WARNING",
+                .value = "unknown contract (no matching descriptor): contents not shown",
                 .warning = true,
             });
             try appendCalldataSummary(allocator, &items, calldata, selector);
         },
         .duplicate => {
             try items.append(allocator, .{
-                .label = "警告",
-                .value = "記述子が不正（同じセレクタの定義が重複）。内容を表示できない",
+                .label = "WARNING",
+                .value = "invalid descriptor (duplicate selector definition): contents not shown",
                 .warning = true,
             });
             try appendCalldataSummary(allocator, &items, calldata, selector);
         },
         .found => |format| {
             try items.append(allocator, .{
-                .label = "操作",
+                .label = "Action",
                 .value = format.intent,
                 .warning = false,
             });
@@ -470,8 +470,8 @@ fn renderFormat(
 ) Error!void {
     const types = format.types orelse {
         try items.append(allocator, .{
-            .label = "警告",
-            .value = "記述子の引数に tuple（構造体）などの未対応の型があるため、引数を表示できない",
+            .label = "WARNING",
+            .value = "unsupported argument type (tuple/struct): cannot show arguments",
             .warning = true,
         });
         try appendCalldataSummary(allocator, items, calldata, format.selector);
@@ -481,8 +481,8 @@ fn renderFormat(
     const values = try allocator.alloc(abi.Value, types.len);
     abi.decodeParameters(allocator, types, calldata[abi.selector_len..], values) catch {
         try items.append(allocator, .{
-            .label = "警告",
-            .value = "calldata が ABI の正準形ではないため、引数を表示できない",
+            .label = "WARNING",
+            .value = "calldata is not the canonical ABI form: cannot show arguments",
             .warning = true,
         });
         try appendCalldataSummary(allocator, items, calldata, format.selector);
@@ -511,7 +511,7 @@ fn renderFormat(
             if (visibility.note) |note| {
                 try items.append(allocator, .{
                     .label = field.labelText(),
-                    .value = try withNote(allocator, "（非表示）", note),
+                    .value = try withNote(allocator, "hidden", note),
                     .warning = true,
                 });
             }
@@ -522,7 +522,7 @@ fn renderFormat(
             .missing => |reason| {
                 try items.append(allocator, .{
                     .label = field.labelText(),
-                    .value = try std.fmt.allocPrint(allocator, "不明: {s}", .{reason}),
+                    .value = try std.fmt.allocPrint(allocator, "unknown: {s}", .{reason}),
                     .warning = true,
                 });
             },
@@ -546,7 +546,7 @@ fn renderFormat(
     }
 }
 
-/// セレクタと calldata のハッシュ（推測できないときの最後の拠り所）。
+/// The selector and the calldata hash (the last resort when nothing can be inferred).
 fn appendCalldataSummary(
     allocator: std.mem.Allocator,
     items: *std.ArrayList(DisplayItem),
@@ -556,7 +556,7 @@ fn appendCalldataSummary(
     var selector_hex: [8]u8 = undefined;
     _ = std.fmt.bufPrint(&selector_hex, "{x}", .{&selector}) catch return error.BufferTooSmall;
     try items.append(allocator, .{
-        .label = "関数セレクタ",
+        .label = "Function selector",
         .value = try std.fmt.allocPrint(allocator, "0x{s}", .{selector_hex}),
         .warning = true,
     });
@@ -565,15 +565,15 @@ fn appendCalldataSummary(
     hashes.Keccak256.hash(calldata, &digest, .{});
     const hex = std.fmt.bytesToHex(digest, .lower);
     try items.append(allocator, .{
-        .label = "calldata ハッシュ",
+        .label = "calldata hash",
         .value = try std.fmt.allocPrint(allocator, "0x{s}", .{&hex}),
         .warning = true,
     });
 }
 
-// ---------------------------------------------------------------- 危険操作の警告
+// ---------------------------------------------------------------- dangerous operation warnings
 
-/// 記述子に依存せず calldata から危険な操作を判定し、警告項目を追加する。
+/// Determine dangerous operations from the calldata without depending on the descriptor, and add warning items.
 fn appendRiskWarnings(
     allocator: std.mem.Allocator,
     items: *std.ArrayList(DisplayItem),
@@ -582,7 +582,7 @@ fn appendRiskWarnings(
 ) Error!void {
     const known = abi.knownFunction(selector) orelse return;
 
-    // 引数のデコード（正準形でなければ警告できないので何もしない）。
+    // Decode the arguments (nothing can be warned about unless the calldata is canonical).
     const values = try allocator.alloc(abi.Value, known.types.len);
     abi.decodeParameters(allocator, known.types, calldata[abi.selector_len..], values) catch return;
 
@@ -591,10 +591,10 @@ fn appendRiskWarnings(
         const amount = values[1].uint;
         if (amount == std.math.maxInt(u256)) {
             try items.append(allocator, .{
-                .label = "警告",
+                .label = "WARNING",
                 .value = try std.fmt.allocPrint(
                     allocator,
-                    "無制限の承認（2^256-1）。{s} が残高をすべて移動できる",
+                    "Unlimited approval (2^256-1): {s} can move the whole balance",
                     .{try checksumAddress(allocator, spender)},
                 ),
                 .warning = true,
@@ -604,17 +604,17 @@ fn appendRiskWarnings(
         const operator = values[0].address;
         const approved = values[1].boolean;
         try items.append(allocator, .{
-            .label = "警告",
+            .label = "WARNING",
             .value = if (approved)
                 try std.fmt.allocPrint(
                     allocator,
-                    "すべてのトークンの操作権限を {s} に付与する",
+                    "Grants {s} operator rights over all tokens",
                     .{try checksumAddress(allocator, operator)},
                 )
             else
                 try std.fmt.allocPrint(
                     allocator,
-                    "すべてのトークンの操作権限を {s} から剥奪する",
+                    "Revokes {s} operator rights over all tokens",
                     .{try checksumAddress(allocator, operator)},
                 ),
             .warning = true,
@@ -623,10 +623,10 @@ fn appendRiskWarnings(
         const owner = values[0].address;
         const spender = values[1].address;
         try items.append(allocator, .{
-            .label = "警告",
+            .label = "WARNING",
             .value = try std.fmt.allocPrint(
                 allocator,
-                "EIP-2612 permit: {s} が {s} の残高を（期限まで）移動できるようになる",
+                "EIP-2612 permit: {s} can move the balance of {s} until expiry",
                 .{ try checksumAddress(allocator, spender), try checksumAddress(allocator, owner) },
             ),
             .warning = true,
@@ -634,7 +634,7 @@ fn appendRiskWarnings(
     }
 }
 
-// ---------------------------------------------------------------- パスの解決
+// ---------------------------------------------------------------- path resolution
 
 const RenderContext = struct {
     allocator: std.mem.Allocator,
@@ -650,7 +650,7 @@ const RenderContext = struct {
                 return .{ .ticker = token.ticker, .decimals = token.decimals };
             }
         }
-        // 記述子自身が `metadata.token` を持つ場合は、対象コントラクトのメタデータを使う。
+        // If the descriptor itself has `metadata.token`, use the metadata of the target contract.
         if (std.mem.eql(u8, &address, &self.container.to)) {
             if (self.descriptor.ownToken()) |own| return own;
         }
@@ -658,20 +658,20 @@ const RenderContext = struct {
     }
 };
 
-/// パスの解決結果。
+/// The result of resolving a path.
 const Resolved = union(enum) {
-    /// calldata からデコードした値。
+    /// A value decoded from the calldata.
     value: abi.Value,
-    /// 記述子内の定数（文字列・数値）。
+    /// A constant inside the descriptor (string or number).
     text: []const u8,
-    /// 解決できない。文字列は理由（画面に「不明: 〜」として出す）。
+    /// Could not be resolved. The string is the reason (displayed on screen as "unknown: ...").
     missing: []const u8,
 };
 
-/// フィールドのパスを解決する。
+/// Resolve a field path.
 ///
-/// 対応する記法: `name` / `name[3]` / `name[-1]` / `name[0:20]` / `name.[]`、
-/// `@.to` `@.from` `@.value` `@.chainId`、`$.metadata.constants.X`（オブジェクトのキーのみ）。
+/// Supported notations: `name` / `name[3]` / `name[-1]` / `name[0:20]` / `name.[]`,
+/// `@.to` `@.from` `@.value` `@.chainId`, `$.metadata.constants.X` (object keys only).
 fn resolveFieldPath(context: *const RenderContext, path: []const u8) Error!Resolved {
     if (std.mem.startsWith(u8, path, "@.")) return resolveContainer(context, path[2..]);
     if (std.mem.startsWith(u8, path, "$")) return resolveConstant(context, path);
@@ -679,10 +679,10 @@ fn resolveFieldPath(context: *const RenderContext, path: []const u8) Error!Resol
     var rest = path;
     if (std.mem.startsWith(u8, rest, "#.")) rest = rest[2..];
 
-    // 先頭の引数名。
+    // The leading argument name.
     var end: usize = 0;
     while (end < rest.len and (std.ascii.isAlphanumeric(rest[end]) or rest[end] == '_')) end += 1;
-    if (end == 0) return .{ .missing = "パスの記法が未対応" };
+    if (end == 0) return .{ .missing = "unsupported path notation" };
     const name = rest[0..end];
 
     var position: ?usize = null;
@@ -693,13 +693,13 @@ fn resolveFieldPath(context: *const RenderContext, path: []const u8) Error!Resol
         }
     }
     const index = position orelse
-        return .{ .missing = "記述子の引数名と一致しない（引数名の無い定義か未対応の型）" };
+        return .{ .missing = "argument name not in descriptor (unnamed or unsupported type)" };
 
     var value = context.values[index];
     rest = rest[end..];
     while (rest.len != 0) {
-        if (rest[0] != '[') return .{ .missing = "パスの記法が未対応" };
-        const close = std.mem.indexOfScalar(u8, rest, ']') orelse return .{ .missing = "パスの記法が未対応" };
+        if (rest[0] != '[') return .{ .missing = "unsupported path notation" };
+        const close = std.mem.indexOfScalar(u8, rest, ']') orelse return .{ .missing = "unsupported path notation" };
         const next = applySelector(value, rest[1..close]);
         value = switch (next) {
             .value => |resolved| resolved,
@@ -710,37 +710,37 @@ fn resolveFieldPath(context: *const RenderContext, path: []const u8) Error!Resol
     return .{ .value = value };
 }
 
-/// `[i]` / `[-i]` / `[a:b]` / `[]` を適用する。
+/// Apply `[i]` / `[-i]` / `[a:b]` / `[]`.
 ///
-/// 解決できない場合は「不明」を返す（記述子の書き間違いで画面全体を空にしないため）。
+/// Returns "unknown" when it cannot be resolved (so that a typo in a descriptor does not blank the whole screen).
 fn applySelector(value: abi.Value, selector_text: []const u8) Resolved {
-    if (selector_text.len == 0) return .{ .value = value }; // `.[]` は配列全体
+    if (selector_text.len == 0) return .{ .value = value }; // `.[]` is the whole array
 
     if (std.mem.indexOfScalar(u8, selector_text, ':')) |colon| {
         const elements = switch (value) {
             .bytes => |bytes| bytes,
             .string => |bytes| bytes,
-            else => return .{ .missing = "スライスは bytes / string のみ対応" },
+            else => return .{ .missing = "slices support bytes / string only" },
         };
         const start = sliceIndex(elements.len, selector_text[0..colon], 0) orelse
-            return .{ .missing = "スライスの開始位置が不正" };
+            return .{ .missing = "invalid slice start" };
         const end = sliceIndex(elements.len, selector_text[colon + 1 ..], elements.len) orelse
-            return .{ .missing = "スライスの終了位置が不正" };
-        if (start > end) return .{ .missing = "スライスの範囲が逆転している" };
+            return .{ .missing = "invalid slice end" };
+        if (start > end) return .{ .missing = "slice range is reversed" };
         return .{ .value = .{ .bytes = elements[start..end] } };
     }
 
     const elements = switch (value) {
         .array => |items| items,
         .fixed_array => |items| items,
-        else => return .{ .missing = "添字は配列のみ対応" },
+        else => return .{ .missing = "subscripts support arrays only" },
     };
     const at = elementIndex(elements.len, selector_text) orelse
-        return .{ .missing = "配列の添字が範囲外（記述子か calldata が不正）" };
+        return .{ .missing = "array subscript out of range (invalid descriptor or calldata)" };
     return .{ .value = elements[at] };
 }
 
-/// スライスの境界。`len` 自体を許す（終端は排他）。
+/// Slice bounds. `len` itself is allowed (the end is exclusive).
 fn sliceIndex(len: usize, text: []const u8, fallback: usize) ?usize {
     if (text.len == 0) return fallback;
     const raw = parseIndex(digitsOf(text)) orelse return null;
@@ -752,7 +752,7 @@ fn sliceIndex(len: usize, text: []const u8, fallback: usize) ?usize {
     return raw;
 }
 
-/// 配列の添字。`[-1]` は末尾からの位置。
+/// Array subscript. `[-1]` means a position from the end.
 fn elementIndex(len: usize, text: []const u8) ?usize {
     if (text.len == 0) return null;
     const raw = parseIndex(digitsOf(text)) orelse return null;
@@ -773,68 +773,68 @@ fn parseIndex(digits: []const u8) ?usize {
     return std.fmt.parseInt(usize, digits, 10) catch null;
 }
 
-/// `@.` のコンテナ値を解決する。
+/// Resolve an `@.` container value.
 fn resolveContainer(context: *const RenderContext, name: []const u8) Error!Resolved {
     if (std.mem.eql(u8, name, "to")) return .{ .value = .{ .address = context.container.to } };
     if (std.mem.eql(u8, name, "chainId")) return .{ .value = .{ .uint = context.container.chain_id } };
     if (std.mem.eql(u8, name, "from")) {
         const from = context.container.from orelse
-            return .{ .missing = "送信元（from）が取得できない" };
+            return .{ .missing = "sender (from) not available" };
         return .{ .value = .{ .address = from } };
     }
     if (std.mem.eql(u8, name, "value")) {
         const value = context.container.value orelse
-            return .{ .missing = "送信額（value）が取得できない" };
+            return .{ .missing = "amount (value) not available" };
         return .{ .value = .{ .uint = value } };
     }
-    return .{ .missing = "コンテナの未対応の値" };
+    return .{ .missing = "unsupported container field" };
 }
 
-/// `$` で始まる記述子内の定数を解決する。
+/// Resolve a constant inside the descriptor starting with `$`.
 fn resolveConstant(context: *const RenderContext, path: []const u8) Error!Resolved {
-    // `$` で始まらなければリテラル（`value` は定数の直値でもよい）。
+    // If it does not start with `$`, it is a literal (`value` may also be a direct constant).
     if (!std.mem.startsWith(u8, path, "$")) return .{ .text = path };
 
     const target = context.descriptor.resolveInternalPath(path) orelse
-        return .{ .missing = "記述子内の定数が見つからない" };
+        return .{ .missing = "constant not found in descriptor" };
     switch (target) {
         .string => |text| return .{ .text = text },
         .number_string => |text| return .{ .text = text },
         .integer => |number| return .{ .text = try std.fmt.allocPrint(context.allocator, "{d}", .{number}) },
         .bool => |flag| return .{ .text = if (flag) "true" else "false" },
-        else => return .{ .missing = "記述子内の定数の型が未対応（配列・オブジェクトなど）" },
+        else => return .{ .missing = "unsupported constant type (array, object, etc.)" },
     }
 }
 
-// ---------------------------------------------------------------- 表示条件
+// ---------------------------------------------------------------- visibility
 
 const Visibility = struct { show: bool, note: ?[]const u8 = null };
 
 fn checkVisibility(field: Field) Visibility {
     const raw = field.visible orelse return .{ .show = true };
     if (raw != .string) {
-        // `ifNotIn` / `mustMatch` などの複合ルールは未対応。安全側で非表示にする。
-        return .{ .show = false, .note = "visible の複合ルールが未対応のため、この項目は表示しない" };
+        // Compound rules such as `ifNotIn` / `mustMatch` are unsupported. Hide the field on the safe side.
+        return .{ .show = false, .note = "unsupported visible rule" };
     }
     const rule = raw.string;
     if (std.mem.eql(u8, rule, "always")) return .{ .show = true };
     if (std.mem.eql(u8, rule, "never")) return .{ .show = false };
-    if (std.mem.eql(u8, rule, "optional")) return .{ .show = true }; // 仕様上は表示してよい（MAY）
-    return .{ .show = false, .note = "visible の値が未知のため、この項目は表示しない" };
+    if (std.mem.eql(u8, rule, "optional")) return .{ .show = true }; // the spec allows displaying it (MAY)
+    return .{ .show = false, .note = "unknown visible value" };
 }
 
-// ---------------------------------------------------------------- 表示形式
+// ---------------------------------------------------------------- display formats
 
 const Rendered = struct {
     value: []const u8,
     warning: bool,
 };
 
-/// フィールドの値を表示形式に従って整形する。
+/// Format a field value according to its display format.
 fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Error!Rendered {
     const allocator = context.allocator;
 
-    // 配列は要素ごとに同じ書式で整形して連結する（`params` の添字対応は未対応）。
+    // Arrays are formatted element by element with the same format and joined (`params` array subscript support is unsupported).
     if (value == .array or value == .fixed_array) {
         const elements = switch (value) {
             .array => |items| items,
@@ -857,9 +857,9 @@ fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Er
     }
 
     const identifier = field.format orelse {
-        // 表示形式の指定が無い場合は、生の値にその旨を添える（意味づけを推測しない）。
+        // With no display format specified, annotate the raw value with that fact (do not guess a meaning).
         return .{
-            .value = try withNote(allocator, try rawText(allocator, value), "表示形式が未指定"),
+            .value = try withNote(allocator, try rawText(allocator, value), "no display format specified"),
             .warning = true,
         };
     };
@@ -867,7 +867,7 @@ fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Er
     if (std.mem.eql(u8, identifier, "raw")) {
         if (value == .string and !std.unicode.utf8ValidateSlice(value.string)) {
             return .{
-                .value = try withNote(allocator, try rawText(allocator, value), "UTF-8 として不正"),
+                .value = try withNote(allocator, try rawText(allocator, value), "invalid UTF-8"),
                 .warning = true,
             };
         }
@@ -875,11 +875,11 @@ fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Er
     }
 
     if (std.mem.eql(u8, identifier, "amount")) {
-        const integer = uintOf(value) orelse return unsupportedValue(allocator, value, "整数ではない");
+        const integer = uintOf(value) orelse return unsupportedValue(allocator, value, "not an integer");
         if (try thresholdMessage(field, integer, "All")) |message| return message;
         const ticker = nativeTicker(context.container.chain_id) orelse {
             return .{
-                .value = try withNote(allocator, try decimal(allocator, integer), "ネイティブ通貨が不明"),
+                .value = try withNote(allocator, try decimal(allocator, integer), "native currency unknown"),
                 .warning = true,
             };
         };
@@ -893,9 +893,9 @@ fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Er
     }
 
     if (std.mem.eql(u8, identifier, "tokenAmount")) {
-        const integer = uintOf(value) orelse return unsupportedValue(allocator, value, "整数ではない");
+        const integer = uintOf(value) orelse return unsupportedValue(allocator, value, "not an integer");
 
-        // `tokenPath` / `token`（定数）からトークンのアドレスを決める。
+        // Determine the token address from `tokenPath` / `token` (a constant).
         var token: ?[20]u8 = null;
         if (paramText(field, "tokenPath")) |path| {
             switch (try resolveFieldPath(context, path)) {
@@ -916,11 +916,11 @@ fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Er
         }
 
         if (token) |address| {
-            // ネイティブ通貨として扱う指定（`nativeCurrencyAddress`）。
+            // Specification to treat it as the native currency (`nativeCurrencyAddress`).
             if (isNativeCurrency(field, address)) {
                 const ticker = nativeTicker(context.container.chain_id) orelse {
                     return .{
-                        .value = try withNote(allocator, try decimal(allocator, integer), "ネイティブ通貨が不明"),
+                        .value = try withNote(allocator, try decimal(allocator, integer), "native currency unknown"),
                         .warning = true,
                     };
                 };
@@ -935,7 +935,7 @@ fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Er
             if (context.lookupToken(address)) |metadata| {
                 if (metadata.decimals > 36) {
                     return .{
-                        .value = try withNote(allocator, try decimal(allocator, integer), "トークンの decimals が不正"),
+                        .value = try withNote(allocator, try decimal(allocator, integer), "invalid token decimals"),
                         .warning = true,
                     };
                 }
@@ -956,18 +956,18 @@ fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Er
         }
 
         return .{
-            .value = try withNote(allocator, try decimal(allocator, integer), "トークン情報が不明"),
+            .value = try withNote(allocator, try decimal(allocator, integer), "unknown token info"),
             .warning = true,
         };
     }
 
     if (std.mem.eql(u8, identifier, "addressName")) {
-        const address = addressOf(value) orelse return unsupportedValue(allocator, value, "アドレスではない");
-        // 名前解決（ENS など）は端末内では行わないため、仕様どおり ERC-55 表記にする。
+        const address = addressOf(value) orelse return unsupportedValue(allocator, value, "not an address");
+        // Name resolution (ENS etc.) is not performed on the device, so use ERC-55 notation as the spec requires.
         if (addressListContains(field, "senderAddress", address)) {
             const from = context.container.from orelse {
                 return .{
-                    .value = try withNote(allocator, try checksumAddress(allocator, address), "送信元（from）が不明"),
+                    .value = try withNote(allocator, try checksumAddress(allocator, address), "sender (from) unknown"),
                     .warning = true,
                 };
             };
@@ -977,23 +977,23 @@ fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Er
     }
 
     if (std.mem.eql(u8, identifier, "date")) {
-        const seconds = uintOf(value) orelse return unsupportedValue(allocator, value, "整数ではない");
+        const seconds = uintOf(value) orelse return unsupportedValue(allocator, value, "not an integer");
         const encoding = paramText(field, "encoding") orelse "timestamp";
         if (!std.mem.eql(u8, encoding, "timestamp")) {
             return .{
-                .value = try withNote(allocator, try decimal(allocator, seconds), "date の encoding が未対応"),
+                .value = try withNote(allocator, try decimal(allocator, seconds), "unsupported date encoding"),
                 .warning = true,
             };
         }
         if (seconds > std.math.maxInt(i64)) {
             return .{
-                .value = try withNote(allocator, try decimal(allocator, seconds), "日付の範囲外"),
+                .value = try withNote(allocator, try decimal(allocator, seconds), "date out of range"),
                 .warning = true,
             };
         }
         const text = formatDate(allocator, @intCast(seconds)) catch {
             return .{
-                .value = try withNote(allocator, try decimal(allocator, seconds), "日付の範囲外"),
+                .value = try withNote(allocator, try decimal(allocator, seconds), "date out of range"),
                 .warning = true,
             };
         };
@@ -1001,59 +1001,59 @@ fn formatField(context: *const RenderContext, field: Field, value: abi.Value) Er
     }
 
     if (std.mem.eql(u8, identifier, "duration")) {
-        const seconds = uintOf(value) orelse return unsupportedValue(allocator, value, "整数ではない");
+        const seconds = uintOf(value) orelse return unsupportedValue(allocator, value, "not an integer");
         return .{ .value = try formatDuration(allocator, seconds), .warning = false };
     }
 
     if (std.mem.eql(u8, identifier, "enum")) {
         const reference = paramText(field, "$ref") orelse
-            return unsupportedValue(allocator, value, "enum の $ref が無い");
+            return unsupportedValue(allocator, value, "enum has no $ref");
         const table = context.descriptor.resolveInternalPath(reference) orelse
-            return unsupportedValue(allocator, value, "enum の定義が見つからない");
-        if (table != .object) return unsupportedValue(allocator, value, "enum の定義が不正");
+            return unsupportedValue(allocator, value, "enum definition not found");
+        if (table != .object) return unsupportedValue(allocator, value, "invalid enum definition");
         if (try enumText(allocator, table.object, value)) |text| {
             return .{ .value = text, .warning = false };
         }
         return .{
-            .value = try withNote(allocator, try rawText(allocator, value), "enum の定義に無い値"),
+            .value = try withNote(allocator, try rawText(allocator, value), "value not in enum definition"),
             .warning = true,
         };
     }
 
     if (std.mem.eql(u8, identifier, "chainId")) {
-        const id = uintOf(value) orelse return unsupportedValue(allocator, value, "整数ではない");
+        const id = uintOf(value) orelse return unsupportedValue(allocator, value, "not an integer");
         if (id <= std.math.maxInt(u64)) {
             if (chainName(@intCast(id))) |name| return .{ .value = name, .warning = false };
         }
         return .{
-            .value = try withNote(allocator, try decimal(allocator, id), "チェーン名が不明"),
+            .value = try withNote(allocator, try decimal(allocator, id), "unknown chain name"),
             .warning = true,
         };
     }
 
     if (std.mem.eql(u8, identifier, "tokenTicker")) {
-        const address = addressOf(value) orelse return unsupportedValue(allocator, value, "アドレスではない");
+        const address = addressOf(value) orelse return unsupportedValue(allocator, value, "not an address");
         if (context.lookupToken(address)) |metadata| {
             return .{ .value = metadata.ticker, .warning = false };
         }
         return .{
-            .value = try withNote(allocator, try checksumAddress(allocator, address), "トークン情報が不明"),
+            .value = try withNote(allocator, try checksumAddress(allocator, address), "unknown token info"),
             .warning = true,
         };
     }
 
-    // `calldata`（入れ子の呼び出し）・`nftName`・`unit`・`interoperableAddressName` など。
+    // `calldata` (nested calls), `nftName`, `unit`, `interoperableAddressName`, and so on.
     return .{
         .value = try withNote(allocator, try rawText(allocator, value), try std.fmt.allocPrint(
             allocator,
-            "表示形式 \"{s}\" は未対応",
+            "unsupported display format \"{s}\"",
             .{identifier},
         )),
         .warning = true,
     };
 }
 
-/// 整数でない値に表示形式を適用しようとしたときの応答（生の値＋理由）。
+/// The response when a display format is applied to a non-integer value (raw value + reason).
 fn unsupportedValue(allocator: std.mem.Allocator, value: abi.Value, reason: []const u8) Error!Rendered {
     return .{
         .value = try withNote(allocator, try rawText(allocator, value), reason),
@@ -1061,7 +1061,7 @@ fn unsupportedValue(allocator: std.mem.Allocator, value: abi.Value, reason: []co
     };
 }
 
-/// しきい値以上ならメッセージを返す（`threshold` / `message`）。
+/// Return a message when the value is at or above the threshold (`threshold` / `message`).
 fn thresholdMessage(field: Field, value: u256, default_message: []const u8) Error!?Rendered {
     const threshold_text = paramText(field, "threshold") orelse return null;
     const threshold = parseU256(threshold_text) orelse return null;
@@ -1070,7 +1070,7 @@ fn thresholdMessage(field: Field, value: u256, default_message: []const u8) Erro
     return .{ .value = message, .warning = false };
 }
 
-/// `metadata.enums.X` の対応表から表示文字列を引く。
+/// Look up the display string in the `metadata.enums.X` mapping table.
 fn enumText(
     allocator: std.mem.Allocator,
     table: std.json.ObjectMap,
@@ -1102,9 +1102,9 @@ fn enumText(
     return null;
 }
 
-// ---------------------------------------------------------------- 値の文字列化
+// ---------------------------------------------------------------- value to string
 
-/// 生の値を文字列にする（`uint` は十進、アドレスは ERC-55 表記、バイト列は 16 進）。
+/// Turn a raw value into a string (`uint` in decimal, addresses in ERC-55 notation, byte sequences in hex).
 fn rawText(allocator: std.mem.Allocator, value: abi.Value) Error![]const u8 {
     return switch (value) {
         .uint => |number| try decimal(allocator, number),
@@ -1113,7 +1113,7 @@ fn rawText(allocator: std.mem.Allocator, value: abi.Value) Error![]const u8 {
         .boolean => |flag| if (flag) "true" else "false",
         .bytes => |bytes| try hexWithPrefix(allocator, bytes),
         .string => |text| text,
-        .array, .fixed_array => |items| try std.fmt.allocPrint(allocator, "{d} 件の配列", .{items.len}),
+        .array, .fixed_array => |items| try std.fmt.allocPrint(allocator, "array of {d} items", .{items.len}),
     };
 }
 
@@ -1143,7 +1143,7 @@ fn withNote(allocator: std.mem.Allocator, text: []const u8, note: []const u8) Er
     return std.fmt.allocPrint(allocator, "{s} ({s})", .{ text, note });
 }
 
-/// 整数を `decimals` 桁の小数として表す（末尾の 0 は落とす）。
+/// Render an integer as a decimal with `decimals` digits (trailing zeros are dropped).
 fn formatUnits(allocator: std.mem.Allocator, value: u256, decimals: u8) Error![]const u8 {
     if (decimals == 0) return decimal(allocator, value);
     if (decimals > 36) return error.InvalidEncoding;
@@ -1170,9 +1170,9 @@ fn formatUnits(allocator: std.mem.Allocator, value: u256, decimals: u8) Error![]
     return std.fmt.allocPrint(allocator, "{d}.{s}", .{ whole, padded[0..end] });
 }
 
-/// UNIX 時刻（秒）を RFC 3339 風の UTC 表記（`2024-02-29T07:27:12Z`）にする。
+/// Render a UNIX time (seconds) as an RFC 3339-style UTC string (`2024-02-29T07:27:12Z`).
 ///
-/// アルゴリズムは civil_from_days（Howard Hinnant）。うるう年もこの式で扱える。
+/// The algorithm is civil_from_days (Howard Hinnant). Leap years are handled by this formula too.
 fn formatDate(allocator: std.mem.Allocator, seconds: i64) Error![]const u8 {
     const days = @divFloor(seconds, 86_400);
     const remainder = seconds - days * 86_400;
@@ -1192,7 +1192,7 @@ fn formatDate(allocator: std.mem.Allocator, seconds: i64) Error![]const u8 {
     if (month <= 2) year += 1;
 
     if (year < 0 or year > 9999) return error.InvalidEncoding;
-    // 符号付きのまま整形すると "+2024" になるため、非負を確認してから符号なしにする。
+    // Formatting it while signed would produce "+2024", so check that it is non-negative before making it unsigned.
     return std.fmt.allocPrint(allocator, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
         @as(u32, @intCast(year)),
         @as(u32, @intCast(month)),
@@ -1203,7 +1203,7 @@ fn formatDate(allocator: std.mem.Allocator, seconds: i64) Error![]const u8 {
     });
 }
 
-/// 秒数を `HH:MM:SS` にする（24 時間を超える時間もそのまま時として表す）。
+/// Render seconds as `HH:MM:SS` (durations beyond 24 hours are still shown as hours).
 fn formatDuration(allocator: std.mem.Allocator, seconds: u256) Error![]const u8 {
     const hours = seconds / 3_600;
     const minutes = (seconds % 3_600) / 60;
@@ -1223,7 +1223,7 @@ fn separatorWithIndex(allocator: std.mem.Allocator, separator: []const u8, index
     return separator;
 }
 
-// ---------------------------------------------------------------- パラメータ
+// ---------------------------------------------------------------- parameters
 
 fn paramValue(field: Field, name: []const u8) ?std.json.Value {
     const params = field.params orelse return null;
@@ -1235,7 +1235,7 @@ fn paramText(field: Field, name: []const u8) ?[]const u8 {
     return stringOf(paramValue(field, name));
 }
 
-/// `nativeCurrencyAddress`（文字列または配列）にアドレスが含まれるか。
+/// Whether `nativeCurrencyAddress` (a string or an array) contains the address.
 fn isNativeCurrency(field: Field, address: [20]u8) bool {
     return addressListContains(field, "nativeCurrencyAddress", address);
 }
@@ -1259,10 +1259,10 @@ fn addressListContains(field: Field, name: []const u8, address: [20]u8) bool {
     }
 }
 
-// ---------------------------------------------------------------- チェーン表
+// ---------------------------------------------------------------- chain table
 //
-// 端末内に持てるのはごく一部のチェーンだけである。表に無いチェーンは推測せず
-// 「不明」として警告する。
+// Only a small subset of chains can be kept on the device. A chain not in the table is not guessed at;
+// it is warned about as "unknown".
 
 fn nativeTicker(chain_id: u64) ?[]const u8 {
     return switch (chain_id) {
@@ -1291,7 +1291,7 @@ fn chainName(chain_id: u64) ?[]const u8 {
     };
 }
 
-// ---------------------------------------------------------------- 小物
+// ---------------------------------------------------------------- helpers
 
 fn stringOf(value: ?std.json.Value) ?[]const u8 {
     const item = value orelse return null;
@@ -1309,7 +1309,7 @@ fn jsonU64(value: std.json.Value) ?u64 {
     return std.fmt.parseInt(u64, text, 10) catch null;
 }
 
-/// `0x` 付き 40 桁の 16 進表記をアドレスにする。
+/// Turn a 0x-prefixed 40-digit hex string into an address.
 fn parseAddress(text: []const u8) ?[20]u8 {
     if (text.len != 42) return null;
     if (!std.mem.startsWith(u8, text, "0x") and !std.mem.startsWith(u8, text, "0X")) return null;
@@ -1318,7 +1318,7 @@ fn parseAddress(text: []const u8) ?[20]u8 {
     return address;
 }
 
-/// 十進または `0x` 付き十六進の文字列を `u256` にする。
+/// Turn a decimal or 0x-prefixed hex string into a `u256`.
 fn parseU256(text: []const u8) ?u256 {
     if (std.mem.startsWith(u8, text, "0x") or std.mem.startsWith(u8, text, "0X")) {
         return std.fmt.parseInt(u256, text[2..], 16) catch null;
@@ -1333,10 +1333,10 @@ fn uintOf(value: abi.Value) ?u256 {
     };
 }
 
-/// 値をアドレスとして解釈する。
+/// Interpret a value as an address.
 ///
-/// `bytes` の先頭 20 バイトも受け付ける（仕様の `path` スライス
-/// `params.path.[0:20]` をアドレスとして扱うため）。
+/// The first 20 bytes of `bytes` are also accepted (so that the spec's `path` slice
+/// `params.path.[0:20]` is treated as an address).
 fn addressOf(value: abi.Value) ?[20]u8 {
     return switch (value) {
         .address => |address| address,
@@ -1345,7 +1345,7 @@ fn addressOf(value: abi.Value) ?[20]u8 {
     };
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -1355,14 +1355,14 @@ fn hexToBytes(comptime n: usize, hex: []const u8) [n]u8 {
     return out;
 }
 
-/// 32 バイト語にする（テスト用の calldata 構築）。
+/// Turn a value into a 32-byte word (test calldata construction).
 fn word(value: u256) [32]u8 {
     var out: [32]u8 = undefined;
     std.mem.writeInt(u256, &out, value, .big);
     return out;
 }
 
-/// セレクタ＋引数の語から calldata を組み立てる（テスト用）。
+/// Build calldata from a selector plus argument words (for tests).
 fn buildCalldata(
     allocator: std.mem.Allocator,
     signature: []const u8,
@@ -1376,10 +1376,10 @@ fn buildCalldata(
     return out.toOwnedSlice(allocator);
 }
 
-/// Lido stETH の記述子。レジストリの実ファイルをそのまま埋め込む。
+/// The Lido stETH descriptor. The real registry file is embedded verbatim.
 ///
-/// 出典: https://github.com/ethereum/clear-signing-erc7730-registry/blob/master/registry/lido/calldata-stETH.json
-///       （ERC-7730 v2 スキーマ。context.contract.deployments が chainId 1 の stETH を指す）
+/// Source: https://github.com/ethereum/clear-signing-erc7730-registry/blob/master/registry/lido/calldata-stETH.json
+///       (ERC-7730 v2 schema. context.contract.deployments points at stETH on chainId 1)
 const steth_descriptor =
     \\{
     \\  "$schema": "../../specs/erc7730-v2.schema.json",
@@ -1449,10 +1449,10 @@ const steth_descriptor =
     \\}
 ;
 
-/// Ekubo Ve33 の記述子。レジストリの実ファイルをそのまま埋め込む。
+/// The Ekubo Ve33 descriptor. The real registry file is embedded verbatim.
 ///
-/// 出典: https://github.com/ethereum/clear-signing-erc7730-registry/blob/master/registry/ekubo/calldata-Ve33Periphery.json
-///       （`date` / `calldata` / `@.from` を含む例）
+/// Source: https://github.com/ethereum/clear-signing-erc7730-registry/blob/master/registry/ekubo/calldata-Ve33Periphery.json
+///       (an example containing `date` / `calldata` / `@.from`)
 const ekubo_descriptor =
     \\{
     \\  "$schema": "../../specs/erc7730-v2.schema.json",
@@ -1504,9 +1504,9 @@ const ekubo_descriptor =
     \\}
 ;
 
-/// ERC-20 の汎用テンプレート（`ercs/` 配下）。**デプロイ情報を持たない**。
+/// The ERC-20 generic template (under `ercs/`). **It carries no deployment information**.
 ///
-/// 出典: https://github.com/ethereum/clear-signing-erc7730-registry/blob/master/ercs/calldata-erc20-tokens.json
+/// Source: https://github.com/ethereum/clear-signing-erc7730-registry/blob/master/ercs/calldata-erc20-tokens.json
 const erc20_template_descriptor =
     \\{
     \\  "$schema": "../specs/erc7730-v2.schema.json",
@@ -1554,14 +1554,14 @@ const steth_address = hexToBytes(20, "ae7ab96520de3a18e5e111b5eaab095312d7fe84")
 const zero_address = hexToBytes(20, "0000000000000000000000000000000000000000");
 const recipient_address = hexToBytes(20, "5aaeb6053f3e94c9b9a09f33669435e7ef1beaed");
 
-/// アドレスを 32 バイト語にする。
+/// Turn an address into a 32-byte word.
 fn addressWord(address: [20]u8) [32]u8 {
     var out: [32]u8 = @splat(0);
     @memcpy(out[12..32], &address);
     return out;
 }
 
-test "stETH の記述子を解析する（実レジストリのファイル）" {
+test "parses the stETH descriptor (a real registry file)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1581,7 +1581,7 @@ test "stETH の記述子を解析する（実レジストリのファイル）" 
     descriptor.deinit();
 }
 
-test "findFormat は chainId とアドレスの両方が一致するときだけ返す" {
+test "findFormat returns a format only when both chainId and address match" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1598,24 +1598,24 @@ test "findFormat は chainId とアドレスの両方が一致するときだけ
     try testing.expectEqualStrings("_amount", format.names[1]);
     try testing.expect(format.types != null);
 
-    // チェーンが違う → 使わない
+    // different chain → not used
     try testing.expect(findFormat(descriptor, 10, steth_address, transfer_selector) == null);
-    // アドレスが違う → 使わない
+    // different address → not used
     try testing.expect(findFormat(descriptor, 1, zero_address, transfer_selector) == null);
-    // セレクタが違う → 使わない
+    // different selector → not used
     try testing.expect(findFormat(descriptor, 1, steth_address, hexToBytes(4, "deadbeef")) == null);
 
     descriptor.deinit();
 }
 
-test "stETH transfer を実データで表示する（ERC-55 表記とトークン量）" {
+test "displays an stETH transfer from real data (ERC-55 notation and token amount)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var descriptor = try Descriptor.parse(allocator, steth_descriptor);
 
-    // transfer(0x5aAe…eAed, 1.5e18) — アドレスは EIP-55 の公式テスト用例。
+    // transfer(0x5aAe…eAed, 1.5e18) — the address is the official EIP-55 test case.
     const calldata = try buildCalldata(allocator, "transfer(address,uint256)", &.{
         addressWord(recipient_address),
         word(1_500_000_000_000_000_000),
@@ -1627,7 +1627,7 @@ test "stETH transfer を実データで表示する（ERC-55 表記とトーク�
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &tokens);
 
     try testing.expectEqual(@as(usize, 3), items.len);
-    try testing.expectEqualStrings("操作", items[0].label);
+    try testing.expectEqualStrings("Action", items[0].label);
     try testing.expectEqualStrings("Transfer stETH", items[0].value);
     try testing.expect(!items[0].warning);
     try testing.expectEqualStrings("Recipient", items[1].label);
@@ -1640,7 +1640,7 @@ test "stETH transfer を実データで表示する（ERC-55 表記とトーク�
     descriptor.deinit();
 }
 
-test "トークン情報が無い場合は生の値に警告を付ける" {
+test "annotates the raw value with a warning when token information is missing" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1653,13 +1653,13 @@ test "トークン情報が無い場合は生の値に警告を付ける" {
 
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &.{});
     try testing.expectEqual(@as(usize, 3), items.len);
-    try testing.expectEqualStrings("1000 (トークン情報が不明)", items[2].value);
+    try testing.expectEqualStrings("1000 (unknown token info)", items[2].value);
     try testing.expect(items[2].warning);
 
     descriptor.deinit();
 }
 
-test "無制限の approve は警告付きで表示する" {
+test "displays an unlimited approve with a warning" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1675,16 +1675,16 @@ test "無制限の approve は警告付きで表示する" {
     };
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &tokens);
 
-    // 警告が先頭に来る（記述子に依存しない危険判定）。
+    // The warning comes first (danger detection independent of the descriptor).
     try testing.expectEqual(@as(usize, 4), items.len);
-    try testing.expectEqualStrings("警告", items[0].label);
-    try testing.expect(std.mem.indexOf(u8, items[0].value, "無制限の承認") != null);
+    try testing.expectEqualStrings("WARNING", items[0].label);
+    try testing.expect(std.mem.indexOf(u8, items[0].value, "Unlimited approval") != null);
     try testing.expect(items[0].warning);
-    try testing.expectEqualStrings("操作", items[1].label);
+    try testing.expectEqualStrings("Action", items[1].label);
     try testing.expectEqualStrings("Approve stETH", items[1].value);
     try testing.expectEqualStrings("Spender", items[2].label);
     try testing.expectEqualStrings("0x1111111111111111111111111111111111111111", items[2].value);
-    // `threshold` 以上なのでメッセージ（既定 "Unlimited"）＋ティッカー
+    // At or above `threshold`, so the message (default "Unlimited") + ticker
     try testing.expectEqualStrings("Amount", items[3].label);
     try testing.expectEqualStrings("Unlimited stETH", items[3].value);
     try testing.expect(!items[3].warning);
@@ -1692,7 +1692,7 @@ test "無制限の approve は警告付きで表示する" {
     descriptor.deinit();
 }
 
-test "取得できないコンテナ値（@.value）は不明として警告する" {
+test "warns about an unavailable container value (@.value) as unknown" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1702,19 +1702,19 @@ test "取得できないコンテナ値（@.value）は不明として警告す�
         addressWord(zero_address),
     });
 
-    // `render` は value を持たない。
+    // `render` has no value.
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &.{});
     try testing.expectEqual(@as(usize, 2), items.len);
     try testing.expectEqualStrings("Stake ETH", items[0].value);
     try testing.expectEqualStrings("Amount", items[1].label);
-    try testing.expect(std.mem.indexOf(u8, items[1].value, "不明") != null);
+    try testing.expect(std.mem.indexOf(u8, items[1].value, "unknown") != null);
     try testing.expect(items[1].warning);
-    // `visible: "never"` の Referral は表示しない。
+    // Referral with `visible: "never"` is not displayed.
     for (items) |item| {
         try testing.expect(!std.mem.eql(u8, item.label, "Referral"));
     }
 
-    // value を渡せばネイティブ通貨として表示する。
+    // Passing value displays it as the native currency.
     const container = Container{ .chain_id = 1, .to = steth_address, .value = 500_000_000_000_000_000 };
     const with_value = try renderTransaction(allocator, descriptor, container, calldata, &.{});
     try testing.expectEqualStrings("0.5 ETH", with_value[1].value);
@@ -1723,14 +1723,14 @@ test "取得できないコンテナ値（@.value）は不明として警告す�
     descriptor.deinit();
 }
 
-test "記述子に無い呼び出しは未知のコントラクトとして警告しハッシュを返す" {
+test "warns about a call missing from the descriptor as an unknown contract and returns the hash" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var descriptor = try Descriptor.parse(allocator, steth_descriptor);
 
-    // stETH だが記述子に無い関数（セレクタ deadbeef）。
+    // An stETH function missing from the descriptor (selector deadbeef).
     const calldata = try buildCalldata(allocator, "unknownFunction()", &.{
         word(1),
     });
@@ -1739,16 +1739,16 @@ test "記述子に無い呼び出しは未知のコントラクトとして警�
 
     const items = try render(allocator, descriptor, 1, steth_address, patched, &.{});
     try testing.expectEqual(@as(usize, 4), items.len);
-    try testing.expectEqualStrings("宛先", items[0].label);
+    try testing.expectEqualStrings("To", items[0].label);
     try testing.expectEqualStrings("0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84", items[0].value);
-    try testing.expectEqualStrings("警告", items[1].label);
-    try testing.expect(std.mem.indexOf(u8, items[1].value, "未知のコントラクト") != null);
+    try testing.expectEqualStrings("WARNING", items[1].label);
+    try testing.expect(std.mem.indexOf(u8, items[1].value, "unknown contract") != null);
     try testing.expect(items[1].warning);
-    try testing.expectEqualStrings("関数セレクタ", items[2].label);
+    try testing.expectEqualStrings("Function selector", items[2].label);
     try testing.expectEqualStrings("0xdeadbeef", items[2].value);
-    try testing.expectEqualStrings("calldata ハッシュ", items[3].label);
+    try testing.expectEqualStrings("calldata hash", items[3].label);
 
-    // ハッシュは Keccak-256(calldata) である。
+    // The hash is Keccak-256(calldata).
     var digest: [32]u8 = undefined;
     hashes.Keccak256.hash(patched, &digest, .{});
     const expected = std.fmt.bytesToHex(digest, .lower);
@@ -1760,13 +1760,13 @@ test "記述子に無い呼び出しは未知のコントラクトとして警�
     descriptor.deinit();
 }
 
-test "デプロイ情報を持たない汎用記述子は使わない（安全側）" {
+test "does not use a generic descriptor without deployment information (safe side)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var descriptor = try Descriptor.parse(allocator, erc20_template_descriptor);
-    // ERC-20 の `transfer(address,uint256)` が定義されているが context.contract は空。
+    // ERC-20 `transfer(address,uint256)` is defined, but context.contract is empty.
     try testing.expect(findFormat(descriptor, 1, steth_address, hexToBytes(4, "a9059cbb")) == null);
 
     const calldata = try buildCalldata(allocator, "transfer(address,uint256)", &.{
@@ -1774,15 +1774,15 @@ test "デプロイ情報を持たない汎用記述子は使わない（安全�
         word(1000),
     });
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &.{});
-    try testing.expectEqualStrings("宛先", items[0].label);
-    try testing.expect(std.mem.indexOf(u8, items[1].value, "無い") != null);
+    try testing.expectEqualStrings("To", items[0].label);
+    try testing.expect(std.mem.indexOf(u8, items[1].value, "no matching") != null);
     try testing.expect(items[1].warning);
-    try testing.expectEqualStrings("calldata ハッシュ", items[3].label);
+    try testing.expectEqualStrings("calldata hash", items[3].label);
 
     descriptor.deinit();
 }
 
-test "同じセレクタの定義が重複する記述子は不正として扱う" {
+test "treats a descriptor with duplicate definitions for the same selector as invalid" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1804,13 +1804,13 @@ test "同じセレクタの定義が重複する記述子は不正として扱�
         word(1000),
     });
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &.{});
-    try testing.expectEqualStrings("警告", items[0].label);
-    try testing.expect(std.mem.indexOf(u8, items[0].value, "重複") != null);
+    try testing.expectEqualStrings("WARNING", items[0].label);
+    try testing.expect(std.mem.indexOf(u8, items[0].value, "duplicate selector definition") != null);
 
     descriptor.deinit();
 }
 
-test "Ekubo: 日付・raw を実データで表示する（実レジストリのファイル）" {
+test "Ekubo: displays dates and raw values from real data (a real registry file)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1837,15 +1837,15 @@ test "Ekubo: 日付・raw を実データで表示する（実レジストリの
     try testing.expectEqualStrings("1461501637330902918203684832716283019655932542975", items[3].value);
     try testing.expect(!items[3].warning);
 
-    // 2 つ目のデプロイ先（chainId 46630）でも一致する。
+    // It also matches the second deployment target (chainId 46630).
     try testing.expect(findFormat(descriptor, 46630, ve33, abi.computeSelector("refundNativeToken()")) != null);
-    // 別チェーンでは使わない。
+    // Not used on another chain.
     try testing.expect(findFormat(descriptor, 1, ve33, abi.computeSelector("refundNativeToken()")) == null);
 
     descriptor.deinit();
 }
 
-test "Ekubo: 未対応の表示形式と取得できないコンテナ値は警告する" {
+test "Ekubo: warns about unsupported display formats and unavailable container values" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1854,45 +1854,45 @@ test "Ekubo: 未対応の表示形式と取得できないコンテナ値は警�
     const ve33 = hexToBytes(20, "1d834b70c33facebdb05af3c9c78da396f5d0e26");
     const refund_selector = abi.computeSelector("refundNativeToken()");
 
-    // refundNativeToken() — `@.from` は `render` では取得できない。
+    // refundNativeToken() — `@.from` cannot be obtained by `render`.
     const items = try render(allocator, descriptor, 4663, ve33, &refund_selector, &.{});
     try testing.expectEqual(@as(usize, 2), items.len);
     try testing.expectEqualStrings("Refund unused native token", items[0].value);
     try testing.expectEqualStrings("Recipient", items[1].label);
-    try testing.expect(std.mem.indexOf(u8, items[1].value, "不明") != null);
+    try testing.expect(std.mem.indexOf(u8, items[1].value, "unknown") != null);
     try testing.expect(items[1].warning);
 
-    // from を渡せば送信元のアドレス（ERC-55 表記）になる。
+    // Passing from yields the sender address (ERC-55 notation).
     const container = Container{ .chain_id = 4663, .to = ve33, .from = steth_address };
     const with_from = try renderTransaction(allocator, descriptor, container, &refund_selector, &.{});
     try testing.expectEqualStrings("0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84", with_from[1].value);
     try testing.expect(!with_from[1].warning);
 
-    // multicall(bytes[]) — `calldata` 形式は未対応（生の値を警告付きで出す）。
+    // multicall(bytes[]) — the `calldata` format is unsupported (the raw value is shown with a warning).
     const multicall_selector = abi.computeSelector("multicall(bytes[])");
     var multicall = std.ArrayList(u8).empty;
     try multicall.appendSlice(allocator, &multicall_selector);
-    try multicall.appendSlice(allocator, &word(0x20)); // 配列データへのオフセット
-    try multicall.appendSlice(allocator, &word(1)); // 要素数 1
-    try multicall.appendSlice(allocator, &word(0x20)); // 要素 0 へのオフセット
-    try multicall.appendSlice(allocator, &word(4)); // 要素（bytes）の長さ 4
+    try multicall.appendSlice(allocator, &word(0x20)); // offset to the array data
+    try multicall.appendSlice(allocator, &word(1)); // 1 element
+    try multicall.appendSlice(allocator, &word(0x20)); // offset to element 0
+    try multicall.appendSlice(allocator, &word(4)); // length of the element (bytes): 4
     try multicall.appendSlice(allocator, &hexToBytes(32, "deadbeef00000000000000000000000000000000000000000000000000000000"));
 
     const multicall_items = try render(allocator, descriptor, 4663, ve33, multicall.items, &.{});
     try testing.expectEqual(@as(usize, 2), multicall_items.len);
     try testing.expectEqualStrings("Action", multicall_items[1].label);
-    try testing.expect(std.mem.indexOf(u8, multicall_items[1].value, "未対応") != null);
+    try testing.expect(std.mem.indexOf(u8, multicall_items[1].value, "unsupported") != null);
     try testing.expect(multicall_items[1].warning);
 
     descriptor.deinit();
 }
 
-test "setApprovalForAll と permit は記述子が無くても警告する" {
+test "setApprovalForAll and permit warn even without a descriptor" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 記述子を持たない（未知のコントラクト）ケースでも警告できることを確認する。
+    // Confirm that a warning is still produced in the no-descriptor (unknown contract) case.
     var descriptor = try Descriptor.parse(allocator, "{\"context\":{\"contract\":{}}}");
 
     const set_approval = try buildCalldata(allocator, "setApprovalForAll(address,bool)", &.{
@@ -1900,38 +1900,38 @@ test "setApprovalForAll と permit は記述子が無くても警告する" {
         word(1),
     });
     const items = try render(allocator, descriptor, 1, steth_address, set_approval, &.{});
-    try testing.expectEqualStrings("警告", items[0].label);
-    try testing.expect(std.mem.indexOf(u8, items[0].value, "すべてのトークンの操作権限") != null);
+    try testing.expectEqualStrings("WARNING", items[0].label);
+    try testing.expect(std.mem.indexOf(u8, items[0].value, "operator rights over all tokens") != null);
     try testing.expect(items[0].warning);
 
-    // permit(...) — 7 引数（セレクタ + 224 バイト）。
+    // permit(...) — 7 arguments (selector + 224 bytes).
     var permit = std.ArrayList(u8).empty;
     try permit.appendSlice(allocator, &hexToBytes(4, "d505accf"));
     for (0..7) |_| try permit.appendSlice(allocator, &word(0));
     const permit_items = try render(allocator, descriptor, 1, steth_address, permit.items, &.{});
-    try testing.expectEqualStrings("警告", permit_items[0].label);
+    try testing.expectEqualStrings("WARNING", permit_items[0].label);
     try testing.expect(std.mem.indexOf(u8, permit_items[0].value, "permit") != null);
     try testing.expect(permit_items[0].warning);
 
-    // 無制限でない approve には警告を出さない。
+    // No warning for a non-unlimited approve.
     const approve = try buildCalldata(allocator, "approve(address,uint256)", &.{
         addressWord(zero_address),
         word(1000),
     });
     const approve_items = try render(allocator, descriptor, 1, steth_address, approve, &.{});
-    try testing.expectEqualStrings("宛先", approve_items[0].label);
+    try testing.expectEqualStrings("To", approve_items[0].label);
 
     descriptor.deinit();
 }
 
-test "非正準な calldata は値を捏造せず拒否する" {
+test "rejects non-canonical calldata without fabricating values" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var descriptor = try Descriptor.parse(allocator, steth_descriptor);
 
-    // transfer の calldata に余分な語を足したもの（正準形ではない）。
+    // transfer calldata with an extra word appended (not the canonical form).
     const calldata = try buildCalldata(allocator, "transfer(address,uint256)", &.{
         addressWord(recipient_address),
         word(1000),
@@ -1941,14 +1941,14 @@ test "非正準な calldata は値を捏造せず拒否する" {
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &.{});
     try testing.expectEqual(@as(usize, 4), items.len);
     try testing.expectEqualStrings("Transfer stETH", items[0].value);
-    try testing.expectEqualStrings("警告", items[1].label);
-    try testing.expect(std.mem.indexOf(u8, items[1].value, "正準形ではない") != null);
+    try testing.expectEqualStrings("WARNING", items[1].label);
+    try testing.expect(std.mem.indexOf(u8, items[1].value, "not the canonical ABI form") != null);
     try testing.expect(items[1].warning);
 
     descriptor.deinit();
 }
 
-test "tuple を含む記述子はセレクタ照合だけ行い引数は表示しない" {
+test "a descriptor containing a tuple only matches selectors and does not display arguments" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1979,19 +1979,19 @@ test "tuple を含む記述子はセレクタ照合だけ行い引数は表示�
     const items = try render(allocator, descriptor, 1, steth_address, calldata, &.{});
     try testing.expectEqual(@as(usize, 4), items.len);
     try testing.expectEqualStrings("Submit order", items[0].value);
-    try testing.expect(std.mem.indexOf(u8, items[1].value, "未対応の型") != null);
+    try testing.expect(std.mem.indexOf(u8, items[1].value, "unsupported argument type") != null);
     try testing.expect(items[1].warning);
 
     descriptor.deinit();
 }
 
-test "パスのスライス（bytes[0:20]）をアドレスとして扱う（自前の最小記述子）" {
+test "treats a path slice (bytes[0:20]) as an address (a minimal hand-written descriptor)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 実レジストリのファイルではない（パスのスライスだけを確認するための最小記述子）。
-    // 仕様では `tokenPath: "params.path.[0:20]"` のように使われる。
+    // Not a real registry file (a minimal descriptor to check path slicing only).
+    // The spec uses it as `tokenPath: "params.path.[0:20]"`.
     const json =
         \\{
         \\  "context": { "contract": { "deployments": [{ "chainId": 1, "address": "0x0000000000000000000000000000000000000002" }] } },
@@ -2026,20 +2026,20 @@ test "パスのスライス（bytes[0:20]）をアドレスとして扱う（自
     try testing.expect(!items[1].warning);
     try testing.expectEqualStrings("Prefix", items[2].label);
     try testing.expectEqualStrings("0xae7ab965", items[2].value);
-    // 範囲外のスライスは推測せず「不明」として警告する（画面全体は失敗させない）。
+    // An out-of-range slice is not guessed at but warned about as "unknown" (the whole screen is not failed).
     try testing.expectEqualStrings("Out of range", items[3].label);
-    try testing.expect(std.mem.indexOf(u8, items[3].value, "不明") != null);
+    try testing.expect(std.mem.indexOf(u8, items[3].value, "unknown") != null);
     try testing.expect(items[3].warning);
 
     descriptor.deinit();
 }
 
-test "date・duration・enum・chainId の表示形式（自前の最小記述子）" {
+test "display formats date, duration, enum and chainId (a minimal hand-written descriptor)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 実レジストリのファイルではない（個々の表示形式だけを確認するための最小記述子）。
+    // Not a real registry file (a minimal descriptor to check individual display formats only).
     const json =
         \\{
         \\  "context": { "contract": { "deployments": [{ "chainId": 1, "address": "0x0000000000000000000000000000000000000001" }] } },

@@ -1,50 +1,51 @@
-//! Bytewords（BCR-2020-012）: バイナリデータを 4 文字の英単語列に符号化する。
+//! Bytewords (BCR-2020-012): encodes binary data as a sequence of four-letter English words.
 //!
-//! **設計方針**
-//! - 語彙は仕様どおりの 256 語。各語は 4 文字で、先頭+末尾・先頭 3 文字・末尾 3 文字の
-//!   いずれでも一意に区別できる（テストで検証している）。
-//! - チェックサムは本体の CRC-32 を **ビッグエンディアン（ネットワーク順）4 バイト**として
-//!   末尾に付ける。検証せずに本体を返す API は用意しない。
-//! - 大文字小文字は区別しない（QR コードでは大文字、URI・画面表示では小文字を使う）。
-//! - 秘密情報を扱わないため、メモリ確保は行わない（出力先は呼び出し側が用意する）。
-//! - 壊れた入力（語彙にない語・奇数長・チェックサム不一致・長さ不足）はすべて error で拒否する。
+//! **Design policy**
+//! - The vocabulary is the 256 words from the spec. Every word is four letters and is uniquely
+//!   distinguishable by first+last, first three, or last three letters (verified by tests).
+//! - The checksum is the body's CRC-32 appended at the end as **four big-endian (network order)
+//!   bytes**. No API returns the body without verifying it.
+//! - Case-insensitive (QR codes use uppercase; URIs and screen output use lowercase).
+//! - No memory allocation, because no secrets are handled (the caller provides the output).
+//! - Every malformed input (word outside the vocabulary, odd length, checksum mismatch, too short)
+//!   is rejected with an error.
 //!
-//! 参考: https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-012-bytewords.md
+//! Reference: https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-012-bytewords.md
 //!
-//! テストベクタの出典（いずれも第三者による公開ベクタをそのまま使用）:
-//!   - BCR-2020-012 §Example/Test Vector（16 バイトの seed）と §Brutal Encoding
-//!   - bc-ur（C++ リファレンス実装）test/test.cpp の
+//! Test vector sources (all are third-party public vectors, used as-is):
+//!   - BCR-2020-012 §Example/Test Vector (a 16-byte seed) and §Brutal Encoding
+//!   - the bc-ur (C++ reference implementation) test/test.cpp,
 //!     test_crc32 / test_bytewords_1 / test_bytewords_2
 //!     https://github.com/BlockchainCommons/bc-ur/blob/master/test/test.cpp
-//!   - bc-ur-rust src/ur.rs の test_ur（"ur:test/lsadaoaxjygonesw"）
+//!   - test_ur in bc-ur-rust src/ur.rs ("ur:test/lsadaoaxjygonesw")
 //!     https://github.com/BlockchainCommons/bc-ur-rust/blob/master/src/ur.rs
-//!   - BCR-2024-001（MUR）§CRC-32 Checksum のテストベクタ
+//!   - the BCR-2024-001 (MUR) §CRC-32 Checksum test vector
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;
 
-/// 符号化スタイル。
+/// Encoding style.
 pub const Style = enum {
-    /// 単語を空白で区切る（人が読む・金属に刻む用途）。
+    /// Words separated by spaces (for humans to read, or to stamp into metal).
     standard,
-    /// 単語をハイフンで区切る（URI に埋め込める）。
+    /// Words separated by hyphens (embeddable in a URI).
     uri,
-    /// 各語の先頭と末尾の 2 文字だけを連結する（QR コード用。16 進数と同じ長さ）。
+    /// Only the first and last letter of each word, concatenated (for QR codes; same length as hex).
     minimal,
 };
 
-/// 語彙の数（1 バイト = 1 語）。
+/// Number of words in the vocabulary (one byte = one word).
 pub const alphabet_size = 256;
-/// 語の文字数（全語 4 文字）。
+/// Letters per word (all words are four letters).
 pub const word_len = 4;
-/// 最小表現の文字数（先頭 + 末尾）。
+/// Letters in the minimal representation (first + last).
 pub const minimal_len = 2;
-/// チェックサムのバイト数（CRC-32）。
+/// Checksum length in bytes (CRC-32).
 pub const checksum_len = 4;
 
-/// BCR-2020-012 の語彙（アルファベット順、全 256 語）。
-/// 行頭のコメントは仕様書と同じ「その行の先頭バイト値」を表す。
+/// The BCR-2020-012 vocabulary (alphabetical, all 256 words).
+/// As in the spec, the comment at the start of each line gives the first byte value of that line.
 pub const words: [alphabet_size][]const u8 = .{
     "able", "acid", "also", "apex", "aqua", "arch", "atom", "aunt", // 0x00
     "away", "axis", "back", "bald", "barn", "belt", "beta", "bias", // 0x08
@@ -80,18 +81,18 @@ pub const words: [alphabet_size][]const u8 = .{
     "yoga", "yurt", "zaps", "zero", "zest", "zinc", "zone", "zoom", // 0xf8
 };
 
-/// バイト値に対応する 4 文字の語。
+/// The four-letter word for a byte value.
 pub fn wordFor(byte: u8) []const u8 {
     return words[byte];
 }
 
-/// バイト値に対応する最小表現（語の先頭 1 文字 + 末尾 1 文字）。
+/// The minimal representation for a byte value (first letter of the word + last letter).
 pub fn minimalFor(byte: u8) [minimal_len]u8 {
     const word = words[byte];
     return .{ word[0], word[word_len - 1] };
 }
 
-/// CRC-32 の増分計算（初期値は 0xFFFFFFFF を渡し、最後に反転すること）。
+/// Incremental CRC-32 update (pass 0xFFFFFFFF as the initial value and invert at the end).
 fn crc32Update(state: u32, data: []const u8) u32 {
     var crc = state;
     for (data) |byte| {
@@ -107,25 +108,25 @@ fn crc32Update(state: u32, data: []const u8) u32 {
     return crc;
 }
 
-/// CRC-32（IEEE 802.3 / zlib）。
+/// CRC-32 (IEEE 802.3 / zlib).
 ///
-/// 反射多項式 0xEDB88320、初期値 0xFFFFFFFF、最後に全ビット反転する。
-/// BCR-2020-012 は「MSDN: 32-Bit CRC Algorithm」を参照している。
+/// Reflected polynomial 0xEDB88320, initial value 0xFFFFFFFF, all bits inverted at the end.
+/// BCR-2020-012 refers to "MSDN: 32-Bit CRC Algorithm".
 ///
-/// 既知の値（bc-ur test/test.cpp の test_crc32 と BCR-2024-001）:
-///   "Wolf" → 0x598c84dc、"Hello, world!" → 0xebe6c6e6
+/// Known values (test_crc32 in bc-ur test/test.cpp and BCR-2024-001):
+///   "Wolf" → 0x598c84dc, "Hello, world!" → 0xebe6c6e6
 pub fn crc32(data: []const u8) u32 {
     return ~crc32Update(0xFFFFFFFF, data);
 }
 
-/// CRC-32 をビッグエンディアン（ネットワーク順）4 バイトにする。
+/// The CRC-32 as four big-endian (network order) bytes.
 fn checksumBytes(checksum: u32) [checksum_len]u8 {
     var out: [checksum_len]u8 = undefined;
     std.mem.writeInt(u32, &out, checksum, .big);
     return out;
 }
 
-/// `data_len` バイトを符号化した本体（チェックサムを除く）の文字列長。
+/// String length of `data_len` bytes encoded as a body (checksum excluded).
 fn bodyLength(data_len: usize, style: Style) usize {
     const len: usize = switch (style) {
         .minimal => data_len * minimal_len,
@@ -134,15 +135,15 @@ fn bodyLength(data_len: usize, style: Style) usize {
     return len;
 }
 
-/// `data_len` バイトをチェックサム付きで符号化した文字列長。
+/// String length of `data_len` bytes encoded with a checksum.
 ///
-/// 出力バッファの大きさを決めるのに使う。
+/// Used to size the output buffer.
 pub fn encodedLength(data_len: usize, style: Style) usize {
     return bodyLength(data_len + checksum_len, style);
 }
 
-/// 語（または最小表現）を 1 つ書き出す。`pos` は書き込み位置。
-/// 呼び出し側が `encodedLength` でバッファ長を確認していることを前提とする。
+/// Writes one word (or minimal representation). `pos` is the write position.
+/// Assumes the caller has checked the buffer length with `encodedLength`.
 fn appendWord(out: []u8, pos: *usize, byte: u8, style: Style, first: bool) void {
     switch (style) {
         .minimal => {
@@ -162,9 +163,9 @@ fn appendWord(out: []u8, pos: *usize, byte: u8, style: Style, first: bool) void 
     }
 }
 
-/// チェックサムを付けずに符号化する。
+/// Encodes without a checksum.
 ///
-/// 語彙の対応表を確かめるとき以外は `encodeWithChecksum` を使うこと。
+/// Use `encodeWithChecksum` except when checking the vocabulary table.
 pub fn encode(out: []u8, data: []const u8, style: Style) Error![]u8 {
     if (out.len < bodyLength(data.len, style)) return error.BufferTooSmall;
 
@@ -173,16 +174,16 @@ pub fn encode(out: []u8, data: []const u8, style: Style) Error![]u8 {
     return out[0..pos];
 }
 
-/// 本体の CRC-32（4 バイト、ビッグエンディアン）を末尾に付けて符号化する。
+/// Encodes with the body's CRC-32 (four bytes, big-endian) appended at the end.
 ///
-/// BCR-2020-012 の Bytewords 本体はこちら。UR の `<message>` 部分もこれで作る。
+/// This is the BCR-2020-012 Bytewords body. The UR `<message>` part is built with it too.
 pub fn encodeWithChecksum(out: []u8, data: []const u8, style: Style) Error![]u8 {
     return encodeWithChecksumParts(out, &.{data}, style);
 }
 
-/// 複数のバイト列を連結したものとして符号化する（間にコピーを作らない）。
+/// Encodes several byte strings as if concatenated (no intermediate copy is made).
 ///
-/// CBOR のヘッダと本体を別々に持っている場合（`ur.zig` の `encodeSingleByteString`）に使う。
+/// Used when the CBOR header and body are held separately (`encodeSingleByteString` in `ur.zig`).
 pub fn encodeWithChecksumParts(out: []u8, parts: []const []const u8, style: Style) Error![]u8 {
     var total: usize = 0;
     for (parts) |part| total += part.len;
@@ -204,10 +205,10 @@ pub fn encodeWithChecksumParts(out: []u8, parts: []const []const u8, style: Styl
     return out[0..pos];
 }
 
-/// デコードの作業状態。
+/// Decoding work state.
 ///
-/// 末尾 4 バイトはチェックサムなので、`out` に書くのは「チェックサムでは
-/// ないと確定したバイト」だけにする（本体用バッファに 4 バイトの余裕を要求しない）。
+/// The last four bytes are the checksum, so only bytes that are certainly not part of the
+/// checksum are written to `out` (no four bytes of slack are required in the body buffer).
 const DecoderState = struct {
     out: []u8,
     body_len: usize = 0,
@@ -230,7 +231,7 @@ const DecoderState = struct {
     }
 
     fn finish(self: *DecoderState) Error![]u8 {
-        // チェックサム 4 バイト + 本体 1 バイト以上を要求する。
+        // Require four checksum bytes plus at least one body byte.
         if (self.total < checksum_len + 1) return error.Truncated;
         var expected: [checksum_len]u8 = undefined;
         std.mem.writeInt(u32, &expected, crc32(self.out[0..self.body_len]), .big);
@@ -247,7 +248,7 @@ fn sameLetters(a: []const u8, b: []const u8) bool {
     return true;
 }
 
-/// 4 文字の語をバイト値に変換する。語彙になければ error.InvalidEncoding。
+/// Converts a four-letter word to a byte value. error.InvalidEncoding if it is not in the vocabulary.
 fn lookupWord(token: []const u8) Error!u8 {
     if (token.len != word_len) return error.InvalidEncoding;
     for (words, 0..) |word, i| {
@@ -256,7 +257,7 @@ fn lookupWord(token: []const u8) Error!u8 {
     return error.InvalidEncoding;
 }
 
-/// 2 文字の最小表現（先頭 + 末尾）をバイト値に変換する。
+/// Converts a two-letter minimal representation (first + last) to a byte value.
 fn lookupMinimal(token: []const u8) Error!u8 {
     if (token.len != minimal_len) return error.InvalidEncoding;
     const first = std.ascii.toLower(token[0]);
@@ -267,10 +268,10 @@ fn lookupMinimal(token: []const u8) Error!u8 {
     return error.InvalidEncoding;
 }
 
-/// 3 文字（先頭 3 文字 or 末尾 3 文字）をバイト値に変換する。
+/// Converts three letters (first three or last three) to a byte value.
 ///
-/// 先頭 3 文字の集合と末尾 3 文字の集合は重なりうる（例: "ice" は iced の先頭 3 文字
-/// でも dice の末尾 3 文字でもある）。**迷ったら推測せず** error.InvalidEncoding を返す。
+/// The first-three and last-three sets can overlap ("ice" is both the first three letters of
+/// iced and the last three of dice). **When in doubt, do not guess**: return error.InvalidEncoding.
 fn lookupTriple(token: []const u8) Error!u8 {
     if (token.len != 3) return error.InvalidEncoding;
     var found: ?u8 = null;
@@ -287,11 +288,11 @@ fn lookupTriple(token: []const u8) Error!u8 {
     return found orelse error.InvalidEncoding;
 }
 
-/// チェックサムを検証し、取り除いた本体を `out` に書き出して返す。
+/// Verifies the checksum and writes the body, with the checksum removed, to `out`.
 ///
-/// - standard / uri: 区切り（空白 / ハイフン）で語に分ける。連続する区切りは無視する。
-/// - minimal: 2 文字ずつに分ける（奇数長は error.InvalidEncoding）。
-/// - 語彙にない語・長さ不足・チェックサム不一致はすべて error で拒否する。
+/// - standard / uri: split into words on the separator (space / hyphen); runs of separators are ignored.
+/// - minimal: split into pairs of letters (odd length is error.InvalidEncoding).
+/// - Words outside the vocabulary, too-short input, and checksum mismatches are all rejected with an error.
 pub fn decode(out: []u8, text: []const u8, style: Style) Error![]u8 {
     var state = DecoderState{ .out = out };
 
@@ -314,12 +315,12 @@ pub fn decode(out: []u8, text: []const u8, style: Style) Error![]u8 {
     return state.finish();
 }
 
-/// 人が書き写した語や OCR した語をバイト値に正規化する。
+/// Normalizes a word copied by hand or read by OCR into a byte value.
 ///
-/// 語彙の条件（BCR-2020-012 §Word selection criteria）により、語は
-/// 語そのもの（4 文字）と先頭+末尾（2 文字）で一意に特定できる。
-/// 3 文字（先頭 3 文字 / 末尾 3 文字）も受け付けるが、両者が衝突する場合は
-/// 推測せず error.InvalidEncoding を返す。
+/// Thanks to the vocabulary criteria (BCR-2020-012 §Word selection criteria), a word can be
+/// identified uniquely by the word itself (four letters) or by first+last (two letters).
+/// Three letters (first three / last three) are accepted as well, but if the two collide,
+/// error.InvalidEncoding is returned instead of guessing.
 pub fn canonicalize(token: []const u8) Error!u8 {
     return switch (token.len) {
         minimal_len => lookupMinimal(token),
@@ -329,11 +330,11 @@ pub fn canonicalize(token: []const u8) Error!u8 {
     };
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-/// BCR-2020-012 §Example/Test Vector: 16 バイトの seed をタグ付き CBOR にした本体（27 バイト）。
+/// BCR-2020-012 §Example/Test Vector: the 16-byte seed as a tagged-CBOR body (27 bytes).
 const spec_body_hex = "d99d6ca20150c7098580125e2ab0981253468b2dbc5202c11947da";
 
 fn decodeHex(buf: []u8, hex: []const u8) []u8 {
@@ -344,17 +345,17 @@ fn decodeHex(buf: []u8, hex: []const u8) []u8 {
     return buf[0 .. hex.len / 2];
 }
 
-test "語彙は BCR-2020-012 の条件を満たす" {
+test "the vocabulary satisfies the BCR-2020-012 criteria" {
     try testing.expectEqual(@as(usize, 256), words.len);
 
-    // すべて 4 文字の英小文字で、アルファベット順に並んでいる。
+    // All are four lowercase ASCII letters, in alphabetical order.
     for (words, 0..) |word, i| {
         try testing.expectEqual(@as(usize, word_len), word.len);
         for (word) |c| try testing.expect(c >= 'a' and c <= 'z');
         if (i > 0) try testing.expect(std.mem.order(u8, words[i - 1], word) == .lt);
     }
 
-    // 先頭+末尾・先頭 3 文字・末尾 3 文字がすべて一意。
+    // First+last, first three letters, and last three letters are all unique.
     for (words, 0..) |a, i| {
         for (words[i + 1 ..]) |b| {
             try testing.expect(!(a[0] == b[0] and a[3] == b[3]));
@@ -364,27 +365,27 @@ test "語彙は BCR-2020-012 の条件を満たす" {
     }
 }
 
-test "CRC-32 の既知の値と一致する" {
+test "matches known CRC-32 values" {
     // bc-ur test/test.cpp test_crc32
     try testing.expectEqual(@as(u32, 0xebe6c6e6), crc32("Hello, world!"));
-    // BCR-2024-001 §CRC-32 Checksum（Swift リファレンス実装のテストベクタ）
+    // BCR-2024-001 §CRC-32 Checksum (test vector from the Swift reference implementation)
     try testing.expectEqual(@as(u32, 0x598c84dc), crc32("Wolf"));
 
-    // BCR-2020-012 §Example/Test Vector の本体とチェックサム
+    // Body and checksum from BCR-2020-012 §Example/Test Vector
     var buf: [64]u8 = undefined;
     try testing.expectEqual(@as(u32, 0xc904f40b), crc32(decodeHex(&buf, spec_body_hex)));
 
-    // BCR-2020-012 §Brutal Encoding のペイロードとチェックサム
+    // Payload and checksum from BCR-2020-012 §Brutal Encoding
     try testing.expectEqual(
         @as(u32, 0xfeac0dea),
         crc32(decodeHex(&buf, "c7098580125e2ab0981253468b2dbc52")),
     );
 
-    // bc-ur-rust test_ur の CBOR [1, 2, 3]（"ur:test/lsadaoaxjygonesw" の末尾 4 バイト）
+    // CBOR [1, 2, 3] from bc-ur-rust test_ur (the last four bytes of "ur:test/lsadaoaxjygonesw")
     try testing.expectEqual(@as(u32, 0x74559fc6), crc32(decodeHex(&buf, "83010203")));
 }
 
-test "BCR-2020-012 の例と一致する（standard / uri / minimal）" {
+test "matches the BCR-2020-012 examples (standard / uri / minimal)" {
     var body_buf: [64]u8 = undefined;
     const body = decodeHex(&body_buf, spec_body_hex);
 
@@ -402,7 +403,7 @@ test "BCR-2020-012 の例と一致する（standard / uri / minimal）" {
     try testing.expectEqualStrings(expected_uri, try encodeWithChecksum(&out, body, .uri));
     try testing.expectEqualStrings(expected_minimal, try encodeWithChecksum(&out, body, .minimal));
 
-    // ラウンドトリップ（本体 27 バイト、チェックサムは取り除かれる）
+    // Round trip (27-byte body; the checksum is stripped)
     var decoded: [64]u8 = undefined;
     try testing.expectEqual(@as(usize, 27), (try decode(&decoded, expected_standard, .standard)).len);
     try testing.expectEqualStrings(body, try decode(&decoded, expected_standard, .standard));
@@ -410,7 +411,7 @@ test "BCR-2020-012 の例と一致する（standard / uri / minimal）" {
     try testing.expectEqualStrings(body, try decode(&decoded, expected_minimal, .minimal));
 }
 
-test "BCR-2020-012 の brutal 例と一致する" {
+test "matches the BCR-2020-012 brutal example" {
     var body_buf: [64]u8 = undefined;
     const payload = decodeHex(&body_buf, "c7098580125e2ab0981253468b2dbc52");
 
@@ -429,7 +430,7 @@ test "BCR-2020-012 の brutal 例と一致する" {
     try testing.expectEqualStrings(payload, try decode(&decoded, "staslplabghydrpfmkbggufgludprfgmzepsbtwd", .minimal));
 }
 
-test "bc-ur の Bytewords テストベクタ 1" {
+test "bc-ur Bytewords test vector 1" {
     // bc-ur test/test.cpp test_bytewords_1
     const input = [_]u8{ 0, 1, 2, 128, 255 };
 
@@ -452,7 +453,7 @@ test "bc-ur の Bytewords テストベクタ 1" {
     try testing.expectEqualStrings(&input, try decode(&decoded, "able-acid-also-lava-zoom-jade-need-echo-taxi", .uri));
     try testing.expectEqualStrings(&input, try decode(&decoded, "aeadaolazmjendeoti", .minimal));
 
-    // チェックサムだけが違う入力（zoom taxi → zero wolf）。
+    // Input differing only in the checksum (zoom taxi -> zero wolf).
     try testing.expectError(
         error.ChecksumMismatch,
         decode(&decoded, "able acid also lava zero jade need echo wolf", .standard),
@@ -466,13 +467,13 @@ test "bc-ur の Bytewords テストベクタ 1" {
         decode(&decoded, "aeadaolazojendeowf", .minimal),
     );
 
-    // 語が 1 つしかない入力は本体が空になるので拒否する。
+    // Input with a single word leaves the body empty, so it is rejected.
     try testing.expectError(error.Truncated, decode(&decoded, "wolf", .standard));
     try testing.expectError(error.Truncated, decode(&decoded, "", .standard));
     try testing.expectError(error.Truncated, decode(&decoded, "", .minimal));
 }
 
-test "bc-ur の Bytewords テストベクタ 2（100 バイト）" {
+test "bc-ur Bytewords test vector 2 (100 bytes)" {
     // bc-ur test/test.cpp test_bytewords_2
     const input = [100]u8{
         0xf5, 0xd7, 0x14, 0xc6, 0xf1, 0xeb, 0x45, 0x3b, 0xd1, 0xcd, 0xa5, 0x12, 0x96, 0x9e, 0x74, 0x87,
@@ -505,8 +506,8 @@ test "bc-ur の Bytewords テストベクタ 2（100 バイト）" {
     try testing.expectEqualStrings(&input, try decode(&decoded, expected_minimal, .minimal));
 }
 
-test "bc-ur-rust の UR テストベクタ（minimal）" {
-    // bc-ur-rust src/ur.rs test_ur: CBOR [1, 2, 3] の minimal Bytewords。
+test "bc-ur-rust UR test vector (minimal)" {
+    // bc-ur-rust src/ur.rs test_ur: minimal Bytewords for CBOR [1, 2, 3].
     var decoded: [8]u8 = undefined;
     const body = try decode(&decoded, "lsadaoaxjygonesw", .minimal);
     var expected: [4]u8 = undefined;
@@ -517,7 +518,7 @@ test "bc-ur-rust の UR テストベクタ（minimal）" {
     try testing.expectEqualStrings("lsadaoaxjygonesw", try encodeWithChecksum(&out, &input, .minimal));
 }
 
-test "全バイト値のラウンドトリップ" {
+test "round trip over every byte value" {
     var input: [256]u8 = undefined;
     for (&input, 0..) |*b, i| b.* = @intCast(i);
 
@@ -530,7 +531,7 @@ test "全バイト値のラウンドトリップ" {
         try testing.expectEqualStrings(&input, try decode(&decoded, text, style));
     }
 
-    // 1 バイトずつ（チェックサムがあるので本体 1 バイトでも成立する）。
+    // One byte at a time (the checksum makes even a one-byte body valid).
     for (0..256) |i| {
         const one = [_]u8{@intCast(i)};
         const text = try encodeWithChecksum(&encoded, &one, .minimal);
@@ -539,7 +540,7 @@ test "全バイト値のラウンドトリップ" {
     }
 }
 
-test "大文字の入力を受理する（QR コード用）" {
+test "accepts uppercase input (for QR codes)" {
     var input: [32]u8 = undefined;
     for (&input, 0..) |*b, i| b.* = @intCast((i * 7 + 3) % 256);
 
@@ -553,7 +554,7 @@ test "大文字の入力を受理する（QR コード用）" {
     var decoded: [64]u8 = undefined;
     try testing.expectEqualStrings(&input, try decode(&decoded, upper_text, .minimal));
 
-    // standard / uri でも大文字を受け付ける。
+    // standard / uri accept uppercase as well.
     const standard = try encodeWithChecksum(&encoded, &input, .standard);
     var upper_standard: [256]u8 = undefined;
     for (standard, 0..) |c, i| upper_standard[i] = std.ascii.toUpper(c);
@@ -563,59 +564,59 @@ test "大文字の入力を受理する（QR コード用）" {
     );
 }
 
-test "壊れた入力を拒否する" {
+test "rejects malformed input" {
     var out: [128]u8 = undefined;
 
-    // 語彙にない語・語の長さが違う（standard / uri）
+    // Words outside the vocabulary, words of the wrong length (standard / uri)
     try testing.expectError(error.InvalidEncoding, decode(&out, "able acid also lava zoom jade need echo xxxx", .standard));
     try testing.expectError(error.InvalidEncoding, decode(&out, "able acid also lava zoom jade need echo taxi extra", .standard));
     try testing.expectError(error.InvalidEncoding, decode(&out, "ableacid also lava zoom jade need echo taxi", .standard));
     try testing.expectError(error.InvalidEncoding, decode(&out, "able-acid-also-lava-zoom-jade-need-echo-tax", .uri));
-    // 区切り文字の取り違え（uri を standard として読む / その逆）
+    // Swapped separators (reading uri as standard, and the other way round)
     try testing.expectError(error.InvalidEncoding, decode(&out, "able-acid-also-lava-zoom-jade-need-echo-taxi", .standard));
     try testing.expectError(error.InvalidEncoding, decode(&out, "able acid also lava zoom jade need echo taxi", .uri));
 
-    // minimal: 語彙にない 2 文字・奇数長
+    // minimal: two letters outside the vocabulary, odd length
     try testing.expectError(error.InvalidEncoding, decode(&out, "aeadaolazmjendeotx", .minimal));
     try testing.expectError(error.InvalidEncoding, decode(&out, "aeadaolazmjendeoti0", .minimal));
 
-    // 長さ不足（チェックサム 4 バイトにも満たない）
+    // Too short (not even the four checksum bytes)
     try testing.expectError(error.Truncated, decode(&out, "aeadao", .minimal));
     try testing.expectError(error.Truncated, decode(&out, "able acid also", .standard));
 
-    // チェックサム不一致（本体ではなく末尾 4 バイトが違う）
+    // Checksum mismatch (the last four bytes differ, not the body)
     try testing.expectError(error.ChecksumMismatch, decode(&out, "aeadaolazmjendeotl", .minimal));
 }
 
-test "本体を書き出すバッファが足りない場合は BufferTooSmall" {
+test "BufferTooSmall when the body buffer is too small" {
     const input = [_]u8{ 0, 1, 2, 128, 255 };
     var encoded: [128]u8 = undefined;
     const text = try encodeWithChecksum(&encoded, &input, .minimal);
 
-    // 符号化: 出力が 1 バイト足りない
+    // Encoding: one byte short in the output
     try testing.expectError(error.BufferTooSmall, encodeWithChecksum(encoded[0 .. encodedLength(input.len, .minimal) - 1], &input, .minimal));
     try testing.expectError(error.BufferTooSmall, encode(encoded[0 .. input.len * minimal_len - 1], &input, .minimal));
 
-    // デコード: 本体 5 バイトを入れる場所がない
+    // Decoding: no room for the five body bytes
     var small: [4]u8 = undefined;
     try testing.expectError(error.BufferTooSmall, decode(&small, text, .minimal));
     var exact: [5]u8 = undefined;
     try testing.expectEqualStrings(&input, try decode(&exact, text, .minimal));
 }
 
-test "canonicalize は 2 / 3 / 4 文字を受け付ける" {
-    try testing.expectEqual(@as(u8, 0x00), try canonicalize("ae")); // able の先頭+末尾
-    try testing.expectEqual(@as(u8, 0x00), try canonicalize("abl")); // able の先頭 3 文字
-    try testing.expectEqual(@as(u8, 0x00), try canonicalize("ble")); // able の末尾 3 文字
+test "canonicalize accepts 2 / 3 / 4 letters" {
+    try testing.expectEqual(@as(u8, 0x00), try canonicalize("ae")); // able's first+last
+    try testing.expectEqual(@as(u8, 0x00), try canonicalize("abl")); // able's first three letters
+    try testing.expectEqual(@as(u8, 0x00), try canonicalize("ble")); // able's last three letters
     try testing.expectEqual(@as(u8, 0x00), try canonicalize("able"));
     try testing.expectEqual(@as(u8, 0x00), try canonicalize("ABLE"));
 
     for (words, 0..) |word, i| {
-        // 語そのものと先頭+末尾は常に一意。
+        // The word itself and first+last are always unique.
         try testing.expectEqual(@as(u8, @intCast(i)), try canonicalize(word));
         try testing.expectEqual(@as(u8, @intCast(i)), try canonicalize(&minimalFor(@intCast(i))));
 
-        // 3 文字は「正しい語を返す」か「曖昧として拒否する」のどちらかでなければならない。
+        // Three letters must either "return the right word" or "reject as ambiguous".
         for ([_][]const u8{ word[0..3], word[1..4] }) |triple| {
             if (canonicalize(triple)) |byte| {
                 try testing.expectEqual(@as(u8, @intCast(i)), byte);
@@ -625,7 +626,7 @@ test "canonicalize は 2 / 3 / 4 文字を受け付ける" {
         }
     }
 
-    // 実際に曖昧になる例: "ice" は iced の先頭 3 文字であり dice の末尾 3 文字でもある。
+    // A real ambiguity: "ice" is the first three letters of iced and the last three of dice.
     try testing.expectError(error.InvalidEncoding, canonicalize("ice"));
     try testing.expectError(error.InvalidEncoding, canonicalize("axi")); // axis / taxi
 

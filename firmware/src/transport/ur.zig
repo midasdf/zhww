@@ -1,36 +1,38 @@
-//! UR（Uniform Resource）: バイナリデータを `ur:<type>/<bytewords>` の形で
-//! QR コードや URI に載せて運ぶ符号化。
+//! UR (Uniform Resource): an encoding that carries binary data in the form
+//! `ur:<type>/<bytewords>` on QR codes and URIs.
 //!
-//! **対応する範囲**
-//! - 単一パート: `ur:<type>/<bytewords>`（BCR-2020-005 §UR Encoding）。
-//! - マルチパート: `ur:<type>/<seqNum>-<seqLen>/<bytewords>`。
-//!   `bytewords` はパートの CBOR `[seqNum, seqLen, messageLen, checksum, data]` を符号化したもの。
-//! - **逐次パート（seqNum = 1..seqLen）のみ対応**。ファウンテン符号の冗長パート
-//!   （seqNum > seqLen、複数のフラグメントを XOR で混ぜたもの）は **生成しない**。
-//!   デコーダは冗長パートを構造としては受理するが、復元には使わない
-//!   （`Status.fountain_unsupported` を返す）。BCR-2024-001 の MUR 完全対応は未実装。
-//! - 型名（`bytes` / `crypto-psbt` など）は文字列として扱うだけで、中身は解釈しない。
+//! **Scope**
+//! - Single part: `ur:<type>/<bytewords>` (BCR-2020-005 §UR Encoding).
+//! - Multipart: `ur:<type>/<seqNum>-<seqLen>/<bytewords>`.
+//!   `bytewords` encodes the part CBOR `[seqNum, seqLen, messageLen, checksum, data]`.
+//! - **Only sequential parts (seqNum = 1..seqLen) are supported**. Fountain-code redundant parts
+//!   (seqNum > seqLen, several fragments XORed together) are **never generated**.
+//!   The decoder accepts a redundant part structurally but does not use it for recovery
+//!   (it returns `Status.fountain_unsupported`). Full MUR support from BCR-2024-001 is not implemented.
+//! - Type names (`bytes` / `crypto-psbt` etc.) are just strings; their contents are not interpreted.
 //!
-//! **設計方針**
-//! - パート番号は仕様どおり **1 始まり**。フラグメントの 0 始まり添字は `seqNum - 1`。
-//! - デコーダは順不同・重複ありの入力を受け付け、`seqLen` 個そろったときだけ CRC-32 を
-//!   検証して完成とする。そろわないうちは `Status.need_more` を返し、**完成扱いしない**。
-//! - 最初に受理したパートが「メッセージ長・分割数・チェックサム・フラグメント長」を決める。
-//!   以降のパートがこれらと食い違う場合（別のメッセージのパートを混ぜた場合など）は
-//!   error.InvalidEncoding で拒否する（リファレンス実装は黙って捨てるが、こちらは厳格に拒否する）。
-//! - UR は大文字小文字を区別しない。QR コード（英数字モード）向けに大文字で出力できる。
-//! - メッセージ全体は dCBOR でなければならないため、完成時に CBOR としての構造検査も行う。
-//! - 秘密情報を扱わないため、メモリ確保は行わない（作業領域は呼び出し側が用意する）。
+//! **Design policy**
+//! - Part numbers are **one-based**, as the spec requires. The zero-based fragment index is `seqNum - 1`.
+//! - The decoder accepts out-of-order and duplicate input, and verifies the CRC-32 and completes
+//!   only when all `seqLen` parts are present. Until then it returns `Status.need_more` and
+//!   **does not treat the message as complete**.
+//! - The first accepted part fixes "message length, part count, checksum and fragment length".
+//!   If a later part disagrees with them (for example, a part of another message was mixed in),
+//!   it is rejected with error.InvalidEncoding (the reference implementation silently drops it,
+//!   but this implementation rejects it strictly).
+//! - UR is case-insensitive. It can be output in uppercase for QR codes (alphanumeric mode).
+//! - The whole message must be dCBOR, so completion also checks its structure as CBOR.
+//! - No memory allocation, because no secrets are handled (the caller provides the work area).
 //!
-//! 参考: https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-005-ur.md
-//!       https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2024-001-multipart-ur.md
-//! テストベクタの出典:
-//!   - BCR-2020-005 §UR CBOR Tags の seed の例（ur:seed/oyad...）
-//!   - bc-ur（C++ リファレンス実装）test/test.cpp の test_single_part_ur / test_ur_encoder
+//! Reference: https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-005-ur.md
+//!            https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2024-001-multipart-ur.md
+//! Test vector sources:
+//!   - the seed example in BCR-2020-005 §UR CBOR Tags (ur:seed/oyad...)
+//!   - test_single_part_ur / test_ur_encoder in bc-ur (C++ reference implementation) test/test.cpp
 //!     https://github.com/BlockchainCommons/bc-ur/blob/master/test/test.cpp
-//!   - bc-ur-rust src/ur.rs の test_ur（ur:test/lsadaoaxjygonesw）
+//!   - test_ur in bc-ur-rust src/ur.rs (ur:test/lsadaoaxjygonesw)
 //!     https://github.com/BlockchainCommons/bc-ur-rust/blob/master/src/ur.rs
-//!   - BCR-2024-001 §5 の findNominalFragmentLength のテストベクタ
+//!   - the findNominalFragmentLength test vectors in BCR-2024-001 §5
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -38,54 +40,54 @@ const Error = @import("../core/errors.zig").Error;
 const bytewords = @import("bytewords.zig");
 const cbor = @import("cbor.zig");
 
-/// UR の型名の最大長（実用上は `crypto-psbt` 程度）。
+/// Maximum UR type name length (in practice around `crypto-psbt`).
 pub const max_type_len = 32;
-/// `bytes` 型（仕様では試験・検証用とされている）。
+/// The `bytes` type (described in the spec as being for testing and verification).
 pub const type_bytes = "bytes";
-/// `crypto-psbt` 型（PSBT を運ぶ）。
+/// The `crypto-psbt` type (carries a PSBT).
 pub const type_crypto_psbt = "crypto-psbt";
-/// URI スキーム。
+/// URI scheme.
 pub const scheme = "ur:";
-/// フラグメント長の下限の既定値（bc-ur / URKit の既定値に合わせる）。
+/// Default lower bound for the fragment length (matches the bc-ur / URKit default).
 pub const default_min_fragment_len = 10;
 
-/// 出力文字列の大文字小文字。UR は case agnostic で、QR コードの英数字モードでは
-/// 大文字の方が効率がよい。
+/// Case of the output string. UR is case agnostic, and in a QR code's alphanumeric mode
+/// uppercase is more efficient.
 pub const TextCase = enum { lower, upper };
 
-/// seq（パート番号と分割数）。
+/// seq (part number and part count).
 pub const Seq = struct {
-    /// パート番号。**1 始まり**。seqLen を超える値はファウンテン符号の冗長パート。
+    /// Part number. **One-based**. A value above seqLen is a fountain-code redundant part.
     num: u32,
-    /// メッセージの分割数。
+    /// Number of parts the message is split into.
     len: u32,
 };
 
-/// 分解した UR 文字列。
+/// A parsed UR string.
 pub const Uri = struct {
-    /// 型名（入力の大文字小文字のまま。入力の一部を指す）。
+    /// Type name (with the case of the input, pointing into the input).
     ur_type: []const u8,
-    /// マルチパートの seq。単一パートなら null。
+    /// The multipart seq. null for a single part.
     seq: ?Seq = null,
-    /// `<message>` または `<fragment>` の bytewords 部分（入力の一部を指す）。
+    /// The bytewords part of `<message>` or `<fragment>` (points into the input).
     body: []const u8,
 };
 
-/// パート（マルチパート UR の中身）。
+/// A part (the contents of a multipart UR).
 pub const Part = struct {
     seq_num: u32,
     seq_len: u32,
-    /// メッセージ全体のバイト数（パディングを含まない）。
+    /// Total message length in bytes (padding excluded).
     message_len: usize,
-    /// メッセージ全体の CRC-32。
+    /// CRC-32 of the whole message.
     checksum: u32,
-    /// フラグメント（末尾のパートは 0 でパディングされている）。
+    /// Fragment (the last part is zero-padded).
     data: []const u8,
 };
 
-// ---------------------------------------------------------------- 型名
+// ---------------------------------------------------------------- type names
 
-/// 型名として妥当か（英字・数字・ハイフンのみ、1〜max_type_len 文字）。
+/// Whether this is a valid type name (letters, digits and hyphens only, 1 to max_type_len characters).
 pub fn isValidType(ur_type: []const u8) bool {
     if (ur_type.len == 0 or ur_type.len > max_type_len) return false;
     for (ur_type) |c| {
@@ -98,7 +100,7 @@ pub fn isValidType(ur_type: []const u8) bool {
     return true;
 }
 
-/// 型名を大文字小文字を無視して比較する。
+/// Compares type names case-insensitively.
 pub fn typeEql(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| {
@@ -118,7 +120,7 @@ fn digitsLen(value: u32) usize {
     return len;
 }
 
-/// 10 進数を書く。戻り値は書いたバイト数。領域は `digitsLen` 以上あること。
+/// Writes a decimal number. Returns the number of bytes written. The area must hold at least `digitsLen`.
 fn writeDigits(out: []u8, value: u32) usize {
     var buf: [10]u8 = undefined;
     var index: usize = buf.len;
@@ -146,15 +148,15 @@ fn parseDigits(text: []const u8) Error!u32 {
     return value;
 }
 
-// ---------------------------------------------------------------- 単一パート
+// ---------------------------------------------------------------- single part
 
-/// 単一パート UR `ur:<type>/<bytewords(message)>` を組み立てる。
+/// Builds a single-part UR `ur:<type>/<bytewords(message)>`.
 ///
-/// `message` はタグ無しの CBOR（PSBT なら CBOR のバイト文字列、`bytes` 型なら任意のバイト列を
-/// CBOR のバイト文字列にしたもの）。bytewords には CRC-32 が付く。
+/// `message` is tagless CBOR (for a PSBT, a CBOR byte string; for the `bytes` type, an arbitrary
+/// byte string wrapped in CBOR). A CRC-32 is appended to the bytewords.
 pub fn encodeSingle(out: []u8, ur_type: []const u8, message: []const u8, case: TextCase) Error![]u8 {
     if (!isValidType(ur_type)) return error.InvalidEncoding;
-    // CBOR は最低 1 バイト。空のメッセージは UR として復号できないので拒否する。
+    // CBOR is at least one byte. An empty message cannot be decoded as a UR, so it is rejected.
     if (message.len == 0) return error.InvalidEncoding;
 
     const prefix_len = scheme.len + ur_type.len + 1;
@@ -172,10 +174,10 @@ pub fn encodeSingle(out: []u8, ur_type: []const u8, message: []const u8, case: T
     return out[0..total];
 }
 
-/// 生のバイト列を CBOR のバイト文字列に包んで単一パート UR にする。
+/// Wraps a raw byte string in a CBOR byte string and makes it a single-part UR.
 ///
-/// `ur:bytes` や `ur:crypto-psbt` のように「中身は 1 つのバイト文字列」という型で使う。
-/// ペイロードを一時バッファにコピーしない（CBOR ヘッダと本体をまとめて符号化する）。
+/// Used for types such as `ur:bytes` or `ur:crypto-psbt` whose contents are a single byte string.
+/// The payload is not copied into a temporary buffer (the CBOR header and body are encoded together).
 pub fn encodeSingleByteString(
     out: []u8,
     ur_type: []const u8,
@@ -203,9 +205,9 @@ pub fn encodeSingleByteString(
     return out[0..total];
 }
 
-/// UR 文字列を型名・seq・bytewords 部分に分解する（大文字小文字はそのまま返す）。
+/// Splits a UR string into type name, seq and bytewords part (case is returned as-is).
 ///
-/// 返るスライスは `text` の一部を指す。
+/// The returned slices point into `text`.
 pub fn parse(text: []const u8) Error!Uri {
     if (text.len < scheme.len + 3) return error.InvalidEncoding;
     if (!typeEql(text[0..scheme.len], scheme)) return error.InvalidEncoding;
@@ -235,9 +237,9 @@ pub fn parse(text: []const u8) Error!Uri {
     return .{ .ur_type = ur_type, .body = tail };
 }
 
-/// 単一パート UR を復号する。`expected_type` を指定すると型名も検査する。
+/// Decodes a single-part UR. If `expected_type` is given, the type name is checked too.
 ///
-/// デコードしたメッセージが dCBOR として壊れていないことも検査する。
+/// It also checks that the decoded message is not broken as dCBOR.
 pub fn decodeSingle(out: []u8, text: []const u8, expected_type: ?[]const u8) Error![]u8 {
     const uri = try parse(text);
     if (uri.seq != null) return error.InvalidEncoding;
@@ -250,20 +252,20 @@ pub fn decodeSingle(out: []u8, text: []const u8, expected_type: ?[]const u8) Err
     return message;
 }
 
-// ---------------------------------------------------------------- パート
+// ---------------------------------------------------------------- parts
 
-/// パートの CBOR `[seqNum, seqLen, messageLen, checksum, data]` の長さ。
+/// Length of a part's CBOR `[seqNum, seqLen, messageLen, checksum, data]`.
 ///
-/// 作業領域（`Encoder.init` の `scratch`）の大きさを決めるのに使う。
+/// Used to size the work area (`scratch` of `Encoder.init`).
 pub fn partCborLength(seq_num: u32, seq_len: u32, message_len: usize, checksum: u32, data_len: usize) usize {
     return 1 + cbor.headLength(seq_num) + cbor.headLength(seq_len) + cbor.headLength(message_len) +
         cbor.headLength(checksum) + cbor.headLength(data_len) + data_len;
 }
 
-/// フラグメント長 `fragment_len` のパート CBOR が取りうる最大長。
+/// Maximum length the part CBOR for fragment length `fragment_len` can take.
 ///
-/// 作業領域（`Encoder.init` の `scratch` / `Decoder.init` の `part_buf`）は
-/// これ以上を用意すればよい。
+/// The work areas (`scratch` of `Encoder.init` / `part_buf` of `Decoder.init`) only need
+/// to be at least this large.
 pub fn maxPartCborLength(fragment_len: usize) usize {
     return partCborLength(
         std.math.maxInt(u32),
@@ -274,7 +276,7 @@ pub fn maxPartCborLength(fragment_len: usize) usize {
     );
 }
 
-/// パートの CBOR（配列 5 要素）を書き出す。
+/// Writes a part's CBOR (a five-element array).
 pub fn encodePart(out: []u8, part: Part) Error![]u8 {
     if (part.seq_num == 0 or part.seq_len == 0 or part.message_len == 0) return error.InvalidEncoding;
 
@@ -288,7 +290,7 @@ pub fn encodePart(out: []u8, part: Part) Error![]u8 {
     return out[0..pos];
 }
 
-/// パートの CBOR を読み取る。返る `data` は入力の一部を指す。
+/// Reads a part's CBOR. The returned `data` points into the input.
 pub fn decodePart(bytes: []const u8) Error!Part {
     var reader = cbor.Reader.init(bytes);
     if (try reader.readArrayHeader() != 5) return error.InvalidEncoding;
@@ -314,7 +316,7 @@ pub fn decodePart(bytes: []const u8) Error!Part {
     };
 }
 
-/// 符号化済みのパート CBOR を `ur:<type>/<seqNum>-<seqLen>/<bytewords>` にする。
+/// Turns encoded part CBOR into `ur:<type>/<seqNum>-<seqLen>/<bytewords>`.
 pub fn encodePartUr(
     out: []u8,
     ur_type: []const u8,
@@ -349,17 +351,17 @@ pub fn encodePartUr(
     return out[0..total];
 }
 
-/// マルチパート UR 文字列からパートを取り出す。
+/// Extracts a part from a multipart UR string.
 pub const DecodedPart = struct {
     ur_type: []const u8,
     seq: Seq,
     part: Part,
 };
 
-/// UR 文字列（マルチパート）をパートに復号する。
+/// Decodes a UR string (multipart) into a part.
 ///
-/// パスの `seq` と CBOR の `seqNum` / `seqLen` が食い違う場合は error.InvalidEncoding。
-/// 返る `part.data` は `part_buf` の一部を指す。
+/// If the path's `seq` and the CBOR's `seqNum` / `seqLen` disagree, error.InvalidEncoding.
+/// The returned `part.data` points into `part_buf`.
 pub fn decodePartUr(part_buf: []u8, text: []const u8) Error!DecodedPart {
     const uri = try parse(text);
     const seq = uri.seq orelse return error.InvalidEncoding;
@@ -371,12 +373,12 @@ pub fn decodePartUr(part_buf: []u8, text: []const u8) Error!DecodedPart {
     return .{ .ur_type = uri.ur_type, .seq = seq, .part = part };
 }
 
-// ---------------------------------------------------------------- 分割
+// ---------------------------------------------------------------- splitting
 
-/// メッセージ長とフラグメント長の上限・下限から、実際のフラグメント長を決める
-/// （BCR-2024-001 §5 の findNominalFragmentLength）。
+/// Decides the actual fragment length from the message length and the fragment length bounds
+/// (findNominalFragmentLength in BCR-2024-001 §5).
 ///
-/// フラグメント長は「メッセージが `max_fragment_len` 以下になる最小の分割数」で決まる。
+/// The fragment length is "the smallest part count that makes the message fit in `max_fragment_len`".
 pub fn findFragmentLength(message_len: usize, min_fragment_len: usize, max_fragment_len: usize) Error!usize {
     if (message_len == 0) return error.InvalidEncoding;
     if (min_fragment_len == 0 or max_fragment_len < min_fragment_len) return error.InvalidEncoding;
@@ -391,29 +393,29 @@ pub fn findFragmentLength(message_len: usize, min_fragment_len: usize, max_fragm
     return fragment_len;
 }
 
-/// 逐次パートを生成する（`seqNum` = 1, 2, …, `seqLen`）。
+/// Generates sequential parts (`seqNum` = 1, 2, ..., `seqLen`).
 ///
-/// ファウンテン符号の冗長パートは生成しない。全て送り終えたら、受信側が取りこぼした
-/// パートに備えて 1 から順に送り直す（本実装では固定レート方式のみ）。
+/// Fountain-code redundant parts are not generated. Once everything has been sent, they are sent
+/// again from 1 in case the receiver missed some parts (this implementation supports the fixed-rate scheme only).
 pub const Encoder = struct {
-    /// 型名（呼び出し側が生かしておくこと）。
+    /// Type name (the caller must keep it alive).
     ur_type: []const u8,
-    /// タグ無し CBOR のメッセージ（呼び出し側が生かしておくこと）。
+    /// The tagless CBOR message (the caller must keep it alive).
     message: []const u8,
-    /// 1 フラグメントのバイト数。
+    /// Bytes in one fragment.
     fragment_len: usize,
-    /// フラグメント数（= 逐次パート数）。
+    /// Fragment count (= number of sequential parts).
     seq_len: u32,
-    /// メッセージ全体の CRC-32。
+    /// CRC-32 of the whole message.
     checksum: u32,
-    /// 次に返すパート番号（1 始まり）。`seq_len` を超えたら完了。
+    /// The next part number to return (one-based). Complete once it exceeds `seq_len`.
     next_seq_num: u32,
-    /// パート CBOR を組み立てる作業領域（呼び出し側が用意し、`Encoder` より長生きさせる）。
+    /// Work area for assembling the part CBOR (provided by the caller and outliving the `Encoder`).
     scratch: []u8,
 
-    /// `message` はタグ無しの CBOR。`max_fragment_len` は 1 パートに載せたい最大バイト数
-    /// （QR コードの容量から決める）。`min_fragment_len` は分割を細かくしすぎないための下限
-    /// （bc-ur / URKit の既定値は `default_min_fragment_len`）。
+    /// `message` is tagless CBOR. `max_fragment_len` is the maximum number of bytes to put in one
+    /// part (decided by the QR code capacity). `min_fragment_len` is a lower bound to avoid splitting
+    /// too finely (the bc-ur / URKit default is `default_min_fragment_len`).
     pub fn init(
         ur_type: []const u8,
         message: []const u8,
@@ -440,20 +442,20 @@ pub const Encoder = struct {
         };
     }
 
-    /// 全ての逐次パートを返し終えたか。
+    /// Whether every sequential part has been returned.
     pub fn isComplete(self: *const Encoder) bool {
         return self.next_seq_num > self.seq_len;
     }
 
-    /// 1 から順に送り直す（ファウンテン符号の代わりの固定レート方式）。
+    /// Sends them again from 1 (a fixed-rate scheme in place of a fountain code).
     pub fn restart(self: *Encoder) void {
         self.next_seq_num = 1;
     }
 
-    /// 次のパートを UR 文字列にする。全て返し終えていれば null。
+    /// Turns the next part into a UR string. null once every part has been returned.
     ///
-    /// メッセージが 1 フラグメントに収まる場合は、仕様が単一パート形式を REQUIRED と
-    /// しているため `ur:<type>/<message>` を 1 回だけ返す。
+    /// When the message fits in one fragment, the spec REQUIRES the single-part form, so
+    /// `ur:<type>/<message>` is returned exactly once.
     pub fn next(self: *Encoder, out: []u8, case: TextCase) Error!?[]u8 {
         if (self.isComplete()) return null;
 
@@ -483,37 +485,37 @@ pub const Encoder = struct {
         return encoded;
     }
 
-    /// 最大のパートを出力するのに必要な `out` の大きさ。
+    /// Size of `out` needed to output the largest part.
     pub fn maxPartLength(ur_type_len: usize, fragment_len: usize) usize {
         const part_len = maxPartCborLength(fragment_len);
         return scheme.len + ur_type_len + 1 + 10 + 1 + 10 + 1 + bytewords.encodedLength(part_len, .minimal);
     }
 };
 
-// ---------------------------------------------------------------- デコーダ
+// ---------------------------------------------------------------- decoder
 
-/// `Decoder.receive` の結果。
+/// Result of `Decoder.receive`.
 pub const Status = enum {
-    /// 取り込んだが、まだ全パートはそろっていない（メッセージは未完成）。
+    /// Taken in, but not all parts are present yet (the message is incomplete).
     need_more,
-    /// 取り込んだ結果、メッセージが完成した（`Decoder.result` が有効）。
+    /// The message became complete as a result (`Decoder.result` is valid).
     complete,
-    /// 既に持っているパート（重複）。状態は変わらない。
+    /// A part already held (duplicate). The state does not change.
     duplicate,
-    /// ファウンテン符号の冗長パート（seqNum > seqLen）。本実装では復元に使えないので無視した。
+    /// A fountain-code redundant part (seqNum > seqLen). Ignored: this implementation cannot use it to recover.
     fountain_unsupported,
 };
 
-/// マルチパート（および単一パート）UR を溜めてメッセージを再構成する。
+/// Collects multipart (and single-part) URs and reconstructs the message.
 ///
-/// パートは順不同・重複ありで渡してよい。`seqLen` 個そろったときだけ CRC-32 を検証し、
-/// 一致しなければ error.ChecksumMismatch（完成扱いにしない）。
+/// Parts may be passed out of order and with duplicates. Only when all `seqLen` parts are present is the
+/// CRC-32 verified; if it does not match, error.ChecksumMismatch (the message is not treated as complete).
 pub const Decoder = struct {
-    /// 受信済みフラグメントのビットマップ（`ceil(seqLen / 8)` バイト以上）。
+    /// Bitmap of received fragments (at least `ceil(seqLen / 8)` bytes).
     bits: []u8,
-    /// 再構成したメッセージの置き場（想定する最大メッセージ長以上）。
+    /// Storage for the reconstructed message (at least the maximum message length expected).
     message: []u8,
-    /// パート CBOR を復号する作業領域（`maxPartCborLength(fragment_len)` バイト以上）。
+    /// Work area for decoding part CBOR (at least `maxPartCborLength(fragment_len)` bytes).
     part_buf: []u8,
 
     type_buf: [max_type_len]u8 = undefined,
@@ -531,7 +533,7 @@ pub const Decoder = struct {
         return .{ .bits = bits, .message = message, .part_buf = part_buf };
     }
 
-    /// 状態を捨てて最初からやり直せるようにする。
+    /// Discards the state so that it can start over from the beginning.
     pub fn reset(self: *Decoder) void {
         self.type_len = 0;
         self.seq_len = 0;
@@ -545,28 +547,28 @@ pub const Decoder = struct {
         if (self.bits.len > 0) @memset(self.bits, 0);
     }
 
-    /// 最初に受理したパートの型名（未受信なら空スライス）。
+    /// Type name of the first accepted part (an empty slice if nothing has been received).
     pub fn urType(self: *const Decoder) []const u8 {
         return self.type_buf[0..self.type_len];
     }
 
-    /// 完成していればメッセージを返す。
+    /// Returns the message if it is complete.
     pub fn result(self: *const Decoder) ?[]const u8 {
         if (!self.complete) return null;
         return self.message[0..self.message_len];
     }
 
-    /// 必要なパート数（未受信なら 0）。
+    /// Number of parts needed (0 if nothing has been received).
     pub fn expectedFragmentCount(self: *const Decoder) usize {
         return self.seq_len;
     }
 
-    /// 受信済みのパート数。
+    /// Number of parts received.
     pub fn receivedFragmentCount(self: *const Decoder) usize {
         return self.received_count;
     }
 
-    /// 無視したファウンテンパートの数。
+    /// Number of fountain parts ignored.
     pub fn fountainPartCount(self: *const Decoder) usize {
         return self.fountain_parts;
     }
@@ -579,18 +581,18 @@ pub const Decoder = struct {
         self.bits[index / 8] |= @as(u8, 1) << @intCast(index % 8);
     }
 
-    /// 1 つの UR 文字列を取り込む。
+    /// Takes in one UR string.
     ///
-    /// 完成後は取り込まず `Status.duplicate` を返す。壊れた入力、および最初のパートと
-    /// 食い違うメタデータ（別メッセージのパートなど）は error で拒否する。
-    /// **エラーを返したときは、まだ受理していないパートの状態（ビットマップ・受信数）を
-    /// 変えない**ので、呼び出し側がエラーを無視して読み進めても壊れない。ただし最初に
-    /// 分解できた型名は記録される（別の型のストリームを混ぜないため）。最初からやり直すには
-    /// `reset` を呼ぶ。
+    /// After completion nothing is taken in and `Status.duplicate` is returned. Malformed input and
+    /// metadata that disagrees with the first part (a part of another message, say) are rejected with an error.
+    /// **When an error is returned, the state of parts not yet accepted (bitmap, received count) is not
+    /// changed**, so a caller that ignores the error and keeps reading is not corrupted. However, the
+    /// type name parsed from the first part is recorded (so that streams of different types are not mixed).
+    /// Call `reset` to start over from the beginning.
     pub fn receive(self: *Decoder, text: []const u8) Error!Status {
         const uri = try parse(text);
 
-        // 型名は最初のパートで決まり、以降は一致を要求する。
+        // The type name is fixed by the first part and must match afterwards.
         if (self.type_len == 0) {
             @memcpy(self.type_buf[0..uri.ur_type.len], uri.ur_type);
             self.type_len = uri.ur_type.len;
@@ -606,7 +608,7 @@ pub const Decoder = struct {
         const part = decoded.part;
 
         if (self.seq_len == 0) {
-            // 最初のパートがメッセージ全体のメタデータを決める。
+            // The first part fixes the metadata for the whole message.
             const seq_len: usize = part.seq_len;
             if ((part.message_len + seq_len - 1) / seq_len != part.data.len) return error.InvalidEncoding;
             if ((part.message_len + part.data.len - 1) / part.data.len != seq_len) return error.InvalidEncoding;
@@ -627,7 +629,7 @@ pub const Decoder = struct {
         }
 
         if (part.seq_num > self.seq_len) {
-            // ファウンテン符号の冗長パート。復元には使わない。
+            // A fountain-code redundant part. Not used for recovery.
             self.fountain_parts += 1;
             return .fountain_unsupported;
         }
@@ -635,8 +637,8 @@ pub const Decoder = struct {
         const index: usize = part.seq_num - 1;
         if (self.isReceived(index)) return .duplicate;
 
-        // 末尾のパートはパディングを含むので、メッセージ長を超える分は捨てる
-        // （CRC-32 はパディングを除いたメッセージ全体に対して計算されている）。
+        // The last part contains padding, so anything beyond the message length is dropped
+        // (the CRC-32 is computed over the whole message with the padding excluded).
         const offset = index * self.fragment_len;
         const take = @min(part.data.len, self.message_len - offset);
         @memcpy(self.message[offset..][0..take], part.data[0..take]);
@@ -653,10 +655,10 @@ pub const Decoder = struct {
         return .complete;
     }
 
-    /// 単一パート UR を取り込む。
+    /// Takes in a single-part UR.
     fn receiveSingle(self: *Decoder, body: []const u8) Error!Status {
         if (self.seq_len != 0 and !self.single_part) {
-            // マルチパートの途中に単一パートが来るのはおかしい。
+            // A single part in the middle of a multipart sequence is wrong.
             return error.InvalidEncoding;
         }
 
@@ -675,7 +677,7 @@ pub const Decoder = struct {
     }
 };
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -687,7 +689,7 @@ fn asHex(buf: []u8, hex: []const u8) []u8 {
     return buf[0 .. hex.len / 2];
 }
 
-/// BCR-2024-001 §5 のテストベクタのメッセージ（256 バイト、seed "Wolf"）。
+/// The message from the BCR-2024-001 §5 test vector (256 bytes, seed "Wolf").
 const message_256 = [256]u8{
     0x91, 0x6e, 0xc6, 0x5c, 0xf7, 0x7c, 0xad, 0xf5, 0x5c, 0xd7, 0xf9, 0xcd, 0xa1, 0xa1, 0x03, 0x00,
     0x26, 0xdd, 0xd4, 0x2e, 0x90, 0x5b, 0x77, 0xad, 0xc3, 0x6e, 0x4f, 0x2d, 0x3c, 0xcb, 0xa4, 0x4f,
@@ -707,7 +709,7 @@ const message_256 = [256]u8{
     0x6e, 0x3e, 0x86, 0xeb, 0x01, 0xc8, 0x03, 0xbb, 0xf9, 0x15, 0xd8, 0x0e, 0xdc, 0xd6, 0x4d, 0x4d,
 };
 
-/// bc-ur test_ur_encoder が期待する 9 個の逐次パート（`ur:bytes`, max_fragment_len = 30）。
+/// The nine sequential parts bc-ur's test_ur_encoder expects (`ur:bytes`, max_fragment_len = 30).
 const expected_parts = [9][]const u8{
     "ur:bytes/1-9/lpadascfadaxcywenbpljkhdcahkadaemejtswhhylkepmykhhtsytsnoyoyaxaedsuttydmmhhpktpmsrjtdkgslpgh",
     "ur:bytes/2-9/lpaoascfadaxcywenbpljkhdcagwdpfnsboxgwlbaawzuefywkdplrsrjynbvygabwjldapfcsgmghhkhstlrdcxaefz",
@@ -720,7 +722,7 @@ const expected_parts = [9][]const u8{
     "ur:bytes/9-9/lpasascfadaxcywenbpljkhdcajskecpmdckihdyhphfotjojtfmlnwmadspaxrkytbztpbauotbgtgtaeaevtgavtny",
 };
 
-/// UR のメッセージ = CBOR のバイト文字列 `59 0100` + 256 バイト（合計 259 バイト）。
+/// The UR message = CBOR byte string `59 0100` + 256 bytes (259 bytes in total).
 fn makeUrMessage(buf: *[259]u8) []u8 {
     buf[0] = 0x59;
     buf[1] = 0x01;
@@ -729,9 +731,9 @@ fn makeUrMessage(buf: *[259]u8) []u8 {
     return buf;
 }
 
-test "BCR-2020-005 の単一パートの例と一致する" {
+test "matches the BCR-2020-005 single-part example" {
     // ur:seed/oyadgdstaslplabghydrpfmkbggufgludprfgmamdpwmox
-    // （タグ無し CBOR a10150c7098580125e2ab0981253468b2dbc52 の Bytewords）
+    // (Bytewords of the tagless CBOR a10150c7098580125e2ab0981253468b2dbc52)
     var message_buf: [32]u8 = undefined;
     const message = asHex(&message_buf, "a10150c7098580125e2ab0981253468b2dbc52");
 
@@ -747,35 +749,35 @@ test "BCR-2020-005 の単一パートの例と一致する" {
         try decodeSingle(&decoded, "ur:seed/oyadgdstaslplabghydrpfmkbggufgludprfgmamdpwmox", "seed"),
     );
 
-    // 型名が違えば拒否する。
+    // A different type name is rejected.
     try testing.expectError(
         error.InvalidEncoding,
         decodeSingle(&decoded, "ur:seed/oyadgdstaslplabghydrpfmkbggufgludprfgmamdpwmox", "bytes"),
     );
-    // マルチパート形式は decodeSingle では拒否する。
+    // The multipart form is rejected by decodeSingle.
     try testing.expectError(
         error.InvalidEncoding,
         decodeSingle(&decoded, "ur:seed/1-9/oyadgdstaslplabghydrpfmkbggufgludprfgmamdpwmox", "seed"),
     );
 }
 
-test "bc-ur-rust の UR テストベクタと一致する" {
-    // bc-ur-rust src/ur.rs test_ur: CBOR [1, 2, 3]。
+test "matches the bc-ur-rust UR test vector" {
+    // bc-ur-rust src/ur.rs test_ur: CBOR [1, 2, 3].
     const message = [_]u8{ 0x83, 0x01, 0x02, 0x03 };
 
     var out: [64]u8 = undefined;
     try testing.expectEqualStrings("ur:test/lsadaoaxjygonesw", try encodeSingle(&out, "test", &message, .lower));
-    // QR コード向けの大文字表現（bc-ur-rust test_ur の "UR:TEST/LSADAOAXJYGONESW"）。
+    // Uppercase form for QR codes ("UR:TEST/LSADAOAXJYGONESW" in bc-ur-rust test_ur).
     try testing.expectEqualStrings("UR:TEST/LSADAOAXJYGONESW", try encodeSingle(&out, "test", &message, .upper));
 
-    // 大文字の UR も復号できる（case agnostic）。
+    // An uppercase UR decodes too (case agnostic).
     var decoded: [8]u8 = undefined;
     try testing.expectEqualStrings(&message, try decodeSingle(&decoded, "UR:TEST/LSADAOAXJYGONESW", "test"));
     try testing.expectEqualStrings(&message, try decodeSingle(&decoded, "ur:test/lsadaoaxjygonesw", null));
 }
 
-test "bc-ur の単一パート UR テストベクタと一致する" {
-    // bc-ur test/test.cpp test_single_part_ur: 50 バイトの CBOR バイト文字列。
+test "matches the bc-ur single-part UR test vector" {
+    // bc-ur test/test.cpp test_single_part_ur: a 50-byte CBOR byte string.
     var payload_buf: [64]u8 = undefined;
     const payload = asHex(
         &payload_buf,
@@ -792,17 +794,17 @@ test "bc-ur の単一パート UR テストベクタと一致する" {
 
     var decoded: [64]u8 = undefined;
     const message = try decodeSingle(&decoded, text, type_bytes);
-    // ur:bytes のメッセージは CBOR のバイト文字列なので、中身のペイロードを取り出す。
+    // The ur:bytes message is a CBOR byte string, so extract the payload inside.
     var reader = cbor.Reader.init(message);
     try testing.expectEqualStrings(payload, try reader.readBytes());
     try reader.finish();
 }
 
-test "findNominalFragmentLength のテストベクタと一致する" {
+test "matches the findNominalFragmentLength test vectors" {
     // BCR-2024-001 §5 testFindFragmentLength
     try testing.expectEqual(@as(usize, 1764), try findFragmentLength(12345, 1005, 1955));
     try testing.expectEqual(@as(usize, 12345), try findFragmentLength(12345, 1005, 30000));
-    // 259 バイトのメッセージを最大 30 バイトずつ → 29 バイト × 9 個（上のテストベクタと同じ）
+    // A 259-byte message in chunks of at most 30 bytes -> 29 bytes x 9 (the same as the test vector above)
     try testing.expectEqual(@as(usize, 29), try findFragmentLength(259, default_min_fragment_len, 30));
 
     try testing.expectError(error.InvalidEncoding, findFragmentLength(0, 10, 30));
@@ -810,7 +812,7 @@ test "findNominalFragmentLength のテストベクタと一致する" {
     try testing.expectError(error.InvalidEncoding, findFragmentLength(100, 30, 10));
 }
 
-test "bc-ur のマルチパート UR テストベクタと一致する（逐次パート）" {
+test "matches the bc-ur multipart UR test vector (sequential parts)" {
     var ur_message_buf: [259]u8 = undefined;
     const ur_message = makeUrMessage(&ur_message_buf);
 
@@ -827,12 +829,12 @@ test "bc-ur のマルチパート UR テストベクタと一致する（逐次�
     try testing.expect(encoder.isComplete());
     try testing.expectEqual(@as(?[]u8, null), try encoder.next(&out, .lower));
 
-    // 送り直しも同じ列を返す。
+    // Sending again returns the same sequence.
     encoder.restart();
     try testing.expectEqualStrings(expected_parts[0], (try encoder.next(&out, .lower)).?);
 }
 
-test "マルチパートを順不同・重複ありで再構成できる" {
+test "reconstructs a multipart message out of order and with duplicates" {
     var ur_message_buf: [259]u8 = undefined;
     const ur_message = makeUrMessage(&ur_message_buf);
 
@@ -853,12 +855,12 @@ test "マルチパートを順不同・重複ありで再構成できる" {
     var part_buf: [128]u8 = undefined;
     var decoder = Decoder.init(&bits, &message, &part_buf);
 
-    // 順不同 + 重複あり（3, 1, 3, 9, 5, ...）で渡す。
+    // Pass them out of order and with duplicates (3, 1, 3, 9, 5, ...).
     const order = [_]usize{ 2, 0, 2, 8, 4, 1, 6, 3, 7, 5 };
     for (order, 0..) |index, step| {
         const status = try decoder.receive(parts[index]);
         if (step < order.len - 1) {
-            // 途中では「まだ足りない」か「重複」でしかない。
+            // Midway it can only be "not enough yet" or "duplicate".
             try testing.expect(status == .need_more or status == .duplicate);
             try testing.expect(decoder.result() == null);
         } else {
@@ -871,7 +873,7 @@ test "マルチパートを順不同・重複ありで再構成できる" {
     try testing.expectEqualStrings(ur_message, decoder.result().?);
 }
 
-test "パートが欠けているうちは完成扱いしない" {
+test "does not treat the message as complete while parts are missing" {
     var ur_message_buf: [259]u8 = undefined;
     const ur_message = makeUrMessage(&ur_message_buf);
 
@@ -892,7 +894,7 @@ test "パートが欠けているうちは完成扱いしない" {
     var part_buf: [128]u8 = undefined;
     var decoder = Decoder.init(&bits, &message, &part_buf);
 
-    // 1, 2, 4, 5 だけ渡す（3, 6..9 が欠けている）。
+    // Pass only 1, 2, 4, 5 (3, 6..9 are missing).
     for ([_]usize{ 0, 1, 3, 4 }) |index| {
         try testing.expectEqual(Status.need_more, try decoder.receive(parts[index][0..lengths[index]]));
         try testing.expect(decoder.result() == null);
@@ -901,17 +903,17 @@ test "パートが欠けているうちは完成扱いしない" {
     try testing.expectEqual(@as(usize, 4), decoder.receivedFragmentCount());
     try testing.expectEqual(@as(usize, 9), decoder.expectedFragmentCount());
 
-    // 残りを渡すと完成する。
+    // Passing the rest completes it.
     for ([_]usize{ 2, 5, 6, 7, 8 }) |index| {
         _ = try decoder.receive(parts[index][0..lengths[index]]);
     }
     try testing.expectEqualStrings(ur_message, decoder.result().?);
-    // 完成後のパートは取り込まない。
+    // A part received after completion is not taken in.
     try testing.expectEqual(Status.duplicate, try decoder.receive(parts[0][0..lengths[0]]));
 }
 
-test "2 桁の seq でも往復でき、パディングが切り落とされる" {
-    // CBOR のバイト文字列（59 012c + 300 バイト = 303 バイト）を 11 個に分ける。
+test "round-trips with a two-digit seq and trims the padding" {
+    // Split the CBOR byte string (59 012c + 300 bytes = 303 bytes) into 11 parts.
     var message: [303]u8 = undefined;
     message[0] = 0x59;
     message[1] = 0x01;
@@ -939,7 +941,7 @@ test "2 桁の seq でも往復でき、パディングが切り落とされる"
     var part_buf: [128]u8 = undefined;
     var decoder = Decoder.init(&bits, &assembled_buf, &part_buf);
 
-    // 逆順（11, 10, …, 1）に渡す。
+    // Pass them in reverse order (11, 10, ..., 1).
     var index: usize = parts.len;
     while (index > 0) {
         index -= 1;
@@ -948,8 +950,8 @@ test "2 桁の seq でも往復でき、パディングが切り落とされる"
     try testing.expectEqualStrings(&message, decoder.result().?);
 }
 
-test "端数が出ない分割でも往復できる（パディングなし）" {
-    // CBOR のバイト文字列（58 1a + 26 バイト = 28 バイト）を 14 バイトずつ 2 個に分ける。
+test "round-trips when the split is exact (no padding)" {
+    // Split the CBOR byte string (58 1a + 26 bytes = 28 bytes) into 2 chunks of 14 bytes.
     var message: [28]u8 = undefined;
     message[0] = 0x58;
     message[1] = 0x1a;
@@ -978,7 +980,7 @@ test "端数が出ない分割でも往復できる（パディングなし）" 
     try testing.expectEqualStrings(&message, decoder.result().?);
 }
 
-test "壊れたパートを拒否し、誤って完成扱いしない" {
+test "rejects broken parts and does not falsely declare completion" {
     var ur_message_buf: [259]u8 = undefined;
     const ur_message = makeUrMessage(&ur_message_buf);
 
@@ -999,12 +1001,12 @@ test "壊れたパートを拒否し、誤って完成扱いしない" {
     var part_buf: [128]u8 = undefined;
     var decoder = Decoder.init(&bits, &message, &part_buf);
 
-    // (1) bytewords のチェックサムを壊したパート
+    // (1) A part with a broken bytewords checksum
     var broken = parts[0];
     broken[lengths[0] - 1] = if (broken[lengths[0] - 1] == 'a') 'b' else 'a';
     try testing.expectError(error.ChecksumMismatch, decoder.receive(broken[0..lengths[0]]));
 
-    // (2) 中身のデータだけを書き換えたパート（bytewords のチェックサムは付け直す）
+    // (2) A part whose data alone was rewritten (the bytewords checksum is recomputed)
     var part_cbor: [128]u8 = undefined;
     const tampered = try decodePartUr(&part_buf, parts[3][0..lengths[3]]);
     var data: [32]u8 = undefined;
@@ -1028,18 +1030,18 @@ test "壊れたパートを拒否し、誤って完成扱いしない" {
         .lower,
     );
 
-    // 残りのパートをすべて渡し、最後に壊れた 4 番目を渡す。
+    // Pass every remaining part, then the broken fourth one last.
     for ([_]usize{ 0, 1, 2, 4, 5, 6, 7, 8 }) |index| {
         _ = try decoder.receive(parts[index][0..lengths[index]]);
     }
     try testing.expect(decoder.result() == null);
     try testing.expectError(error.ChecksumMismatch, decoder.receive(tampered_text));
-    // チェックサムが合わないので完成にはならない。
+    // The checksum does not match, so it never completes.
     try testing.expect(decoder.result() == null);
     try testing.expect(!decoder.complete);
 }
 
-test "別のメッセージのパートや不正な入力を拒否する" {
+test "rejects parts of another message and malformed input" {
     var ur_message_buf: [259]u8 = undefined;
     const ur_message = makeUrMessage(&ur_message_buf);
 
@@ -1062,9 +1064,9 @@ test "別のメッセージのパートや不正な入力を拒否する" {
 
     try testing.expectEqual(Status.need_more, try decoder.receive(parts[0][0..lengths[0]]));
 
-    // 別の型名
+    // A different type name
     try testing.expectError(error.InvalidEncoding, decoder.receive("ur:crypto-psbt/2-9/lpaoascfadaxcywenbpljkhdcagw"));
-    // 別のメッセージ（チェックサムが違う）
+    // A different message (different checksum)
     var other_message: [259]u8 = undefined;
     _ = makeUrMessage(&other_message);
     other_message[3] ^= 0xff;
@@ -1075,7 +1077,7 @@ test "別のメッセージのパートや不正な入力を拒否する" {
     const other_part2 = (try other_encoder.next(&other_out, .lower)).?;
     try testing.expectError(error.InvalidEncoding, decoder.receive(other_part2));
 
-    // 壊れた書式
+    // Malformed syntax
     try testing.expectError(error.InvalidEncoding, decoder.receive(""));
     try testing.expectError(error.InvalidEncoding, decoder.receive("ur:"));
     try testing.expectError(error.InvalidEncoding, decoder.receive("http://example.com/1-9/abcd"));
@@ -1083,15 +1085,15 @@ test "別のメッセージのパートや不正な入力を拒否する" {
     try testing.expectError(error.InvalidEncoding, decoder.receive("ur:bytes/1/1-9/lpao"));
     try testing.expectError(error.InvalidEncoding, decoder.receive("ur:bytes/1-9/"));
     try testing.expectError(error.InvalidEncoding, decoder.receive("ur:bytes/x-y/lpao"));
-    try testing.expectError(error.InvalidEncoding, decoder.receive("ur:bytes/1-9/oooo")); // 語彙にない
+    try testing.expectError(error.InvalidEncoding, decoder.receive("ur:bytes/1-9/oooo")); // not in the vocabulary
     try testing.expectError(error.InvalidEncoding, decoder.receive("ur:bad_type!/1-9/lpao"));
 
-    // 状態は変わっていない（1 パートだけ受信済み）。
+    // The state is unchanged (only one part received).
     try testing.expectEqual(@as(usize, 1), decoder.receivedFragmentCount());
     try testing.expect(decoder.result() == null);
 }
 
-test "ファウンテン符号の冗長パートは受理するが復元には使わない" {
+test "accepts fountain-code redundant parts but does not use them for recovery" {
     var ur_message_buf: [259]u8 = undefined;
     const ur_message = makeUrMessage(&ur_message_buf);
 
@@ -1110,7 +1112,7 @@ test "ファウンテン符号の冗長パートは受理するが復元には�
 
     try testing.expectEqual(Status.need_more, try decoder.receive(part1_copy[0..part1.len]));
 
-    // 冗長パート（seqNum = 10 > seqLen = 9）を手で組み立てる。
+    // Build a redundant part by hand (seqNum = 10 > seqLen = 9).
     const decoded = try decodePartUr(&part_buf, part1_copy[0..part1.len]);
     const fountain_part = Part{
         .seq_num = decoded.part.seq_len + 1,
@@ -1137,7 +1139,7 @@ test "ファウンテン符号の冗長パートは受理するが復元には�
     try testing.expect(decoder.result() == null);
 }
 
-test "単一パート UR も Decoder で受け取れる" {
+test "a single-part UR can be received by Decoder too" {
     const payload = "00112233445566778899aabbccddeeff";
 
     var out: [256]u8 = undefined;
@@ -1151,14 +1153,14 @@ test "単一パート UR も Decoder で受け取れる" {
     try testing.expectEqual(Status.complete, try decoder.receive(text));
     try testing.expectEqualStrings(type_crypto_psbt, decoder.urType());
 
-    // 中身は CBOR のバイト文字列。
+    // The contents are a CBOR byte string.
     var reader = cbor.Reader.init(decoder.result().?);
     const decoded_payload = try reader.readBytes();
     try reader.finish();
     try testing.expectEqualStrings(payload, decoded_payload);
 }
 
-test "小さなメッセージは単一パート形式で出力する" {
+test "a small message is output in single-part form" {
     const message = [_]u8{ 0x83, 0x01, 0x02, 0x03 };
 
     var scratch: [64]u8 = undefined;
@@ -1171,21 +1173,21 @@ test "小さなメッセージは単一パート形式で出力する" {
     try testing.expectEqual(@as(?[]u8, null), try encoder.next(&out, .lower));
 }
 
-test "出力バッファが足りない場合は BufferTooSmall" {
+test "BufferTooSmall when the output buffer is too small" {
     var small: [8]u8 = undefined;
     const message = [_]u8{ 0x83, 0x01, 0x02, 0x03 };
 
     try testing.expectError(error.BufferTooSmall, encodeSingle(&small, "test", &message, .lower));
     try testing.expectError(error.BufferTooSmall, encodeSingleByteString(&small, type_bytes, "hello", .lower));
 
-    // 作業領域が足りない Encoder は作れない。
+    // An Encoder with too small a work area cannot be created.
     var tiny_scratch: [8]u8 = undefined;
     try testing.expectError(
         error.BufferTooSmall,
         Encoder.init(type_bytes, &message_256, 30, default_min_fragment_len, &tiny_scratch),
     );
 
-    // メッセージの置き場が足りない Decoder。
+    // A Decoder with too small a message area.
     var tiny_message: [4]u8 = undefined;
     var bits: [8]u8 = undefined;
     var part_buf: [128]u8 = undefined;
@@ -1196,7 +1198,7 @@ test "出力バッファが足りない場合は BufferTooSmall" {
     );
 }
 
-test "型名と seq の書式" {
+test "type name and seq syntax" {
     try testing.expect(isValidType("bytes"));
     try testing.expect(isValidType("crypto-psbt"));
     try testing.expect(isValidType("crypto-account"));
@@ -1205,9 +1207,9 @@ test "型名と seq の書式" {
     try testing.expect(!isValidType("bad_type"));
     try testing.expect(!isValidType("bad type"));
     try testing.expect(!isValidType("crypto/psbt"));
-    try testing.expect(!isValidType("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")); // 33 文字
+    try testing.expect(!isValidType("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")); // 33 characters
 
-    // 1 始まりの seq を読み取れる。
+    // A one-based seq can be read.
     const uri = try parse("ur:bytes/1-9/lpaoascf");
     try testing.expectEqual(@as(u32, 1), uri.seq.?.num);
     try testing.expectEqual(@as(u32, 9), uri.seq.?.len);
@@ -1217,7 +1219,7 @@ test "型名と seq の書式" {
     const single = try parse("ur:seed/oyadgd");
     try testing.expect(single.seq == null);
     try testing.expectEqualStrings("seed", single.ur_type);
-    // 大文字の UR も分解できる。
+    // An uppercase UR can be parsed too.
     const upper = try parse("UR:BYTES/10-9/LPAOASCF");
     try testing.expectEqual(@as(u32, 10), upper.seq.?.num);
     try testing.expectEqual(@as(u32, 9), upper.seq.?.len);

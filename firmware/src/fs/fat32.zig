@@ -1,34 +1,34 @@
-//! FAT32 のマウントと読み書き（microSD で PSBT を受け渡すための最小限）。
+//! FAT32 mount and read/write (the minimum needed to exchange PSBTs over microSD).
 //!
-//! **対応する範囲**
-//! - マウント: MBR の先頭 4 エントリから FAT32 パーティションを探す。
-//!   パーティションテーブルの無いスーパーフロッピーも受け付ける。
-//! - BPB: セクタ長 512 のみ。クラスタ長は 1〜128 セクタ（2 の冪）。
-//! - ファイル一覧（サブディレクトリを含む）、読み出し（FAT チェーンを辿る。
-//!   断片化していてもよい）、書き込み（新規・上書き）、削除、リネーム
-//! - 長いファイル名（LFN / VFAT）の読み書き。UTF-8 ↔ UTF-16 の変換を含む。
-//!   `IN.PSBT` は拡張子が 4 文字なので 8.3 に収まらず、**必ず LFN になる**。
-//! - パスは `/` 区切りの絶対パス。大文字小文字は ASCII の範囲で畳み込む
-//!   （FAT の慣習。LFN の非 ASCII はバイト単位で比較する）。
+//! **Supported scope**
+//! - Mount: find a FAT32 partition in the first 4 MBR entries.
+//!   A superfloppy with no partition table is accepted too.
+//! - BPB: 512-byte sectors only. Cluster size is 1 to 128 sectors (a power of two).
+//! - File listing (including subdirectories), reading (following the FAT chain;
+//!   fragmentation is fine), writing (create and overwrite), deleting, renaming
+//! - Reading and writing long file names (LFN / VFAT), including UTF-8 ↔ UTF-16 conversion.
+//!   `IN.PSBT` has a 4-character extension, so it does not fit 8.3 and **always becomes an LFN**.
+//! - Paths are absolute and separated by `/`. Case is folded within ASCII only
+//!   (the FAT convention. Non-ASCII LFN characters are compared byte by byte).
 //!
-//! **対応しない範囲**（意図的に実装していない）
-//! - FAT12 / FAT16 / exFAT（`error.UnsupportedFatType`）
-//! - セクタ長 512 以外（`error.InvalidEncoding`）
-//! - サブディレクトリの作成（既存ディレクトリへの書き込みは可）
-//! - 日付・時刻の設定（1980-01-01 固定、時刻は 0）
-//! - 断片化の最適化（空きクラスタを順に探すだけ）
-//! - chkdsk 相当の検証（FAT 2 枚の一致や FSInfo の正しさは検査しない）
-//! - 別ディレクトリへの移動（リネームは同じディレクトリ内のみ）
-//! - `..` を含むパス、ドライブ文字、`\` 区切り、相対パス
-//! - 書き込みの原子性（電源断では空のファイルや未接続クラスタが残りうる）
-//! - ミラーリング無効（`BPB_ExtFlags` の bit7）のボリュームでは、有効な
-//!   FAT コピーだけを読み書きする（両方に書くと壊すため）
+//! **Unsupported scope** (deliberately not implemented)
+//! - FAT12 / FAT16 / exFAT (`error.UnsupportedFatType`)
+//! - Sector sizes other than 512 (`error.InvalidEncoding`)
+//! - Creating subdirectories (writing into existing directories is allowed)
+//! - Setting date and time (fixed at 1980-01-01, time 0)
+//! - Defragmentation (free clusters are simply searched in order)
+//! - chkdsk-style validation (the two FAT copies are not compared, nor FSInfo checked)
+//! - Moving to another directory (rename works within the same directory only)
+//! - Paths containing `..`, drive letters, `\` separators, relative paths
+//! - Write atomicity (a power loss can leave an empty file or unattached clusters)
+//! - On a volume with mirroring disabled (`BPB_ExtFlags` bit 7), only the active
+//!   FAT copy is read and written (writing both would corrupt it)
 //!
-//! **メモリ**
-//! - マウント時に 1 クラスタ分（セクタ長 × クラスタあたりセクタ数）だけ
-//!   アロケータから確保する。ファイル全体を載せるバッファは持たない。
-//! - ディレクトリ走査は呼び出し側が用意した `Iterator`（約 1.1KB）で行う。
-//! - 書き込み系の一時領域は最大 4KB 程度（`Iterator` + `Entry` + 名前バッファ）。
+//! **Memory**
+//! - At mount time, only one cluster (sector size x sectors per cluster) is allocated
+//!   from the allocator. No buffer holds a whole file.
+//! - Directory traversal uses a caller-provided `Iterator` (about 1.1KB).
+//! - Write-side scratch space is at most about 4KB (`Iterator` + `Entry` + name buffer).
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -36,16 +36,16 @@ const block_device = @import("block_device.zig");
 const BlockDevice = block_device.BlockDevice;
 const sector_size = block_device.sector_size;
 
-/// LFN の上限（UTF-16 コード単位）。FAT の仕様で 255。
+/// Maximum LFN length (UTF-16 code units). 255 per the FAT specification.
 pub const max_name_utf16 = 255;
-/// LFN 名を UTF-8 で表すのに必要な最大長（1 コード単位あたり最大 3 バイト）。
+/// Maximum length needed to represent an LFN name in UTF-8 (at most 3 bytes per code unit).
 pub const max_name_utf8 = max_name_utf16 * 3;
 
 const entry_size = 32;
 const entries_per_sector = sector_size / entry_size;
-/// LFN 1 エントリに入る UTF-16 コード単位の数。
+/// Number of UTF-16 code units that fit in one LFN entry.
 const lfn_chars = 13;
-/// 255 コード単位を格納するのに必要な LFN エントリ数の上限。
+/// Upper bound on the number of LFN entries needed to hold 255 code units.
 const max_lfn_entries = (max_name_utf16 + lfn_chars - 1) / lfn_chars;
 
 const attr_read_only: u8 = 0x01;
@@ -54,77 +54,77 @@ const attr_system: u8 = 0x04;
 const attr_volume_id: u8 = 0x08;
 const attr_directory: u8 = 0x10;
 const attr_archive: u8 = 0x20;
-/// LFN エントリの属性（READ_ONLY|HIDDEN|SYSTEM|VOLUME_ID）。
+/// Attribute of an LFN entry (READ_ONLY|HIDDEN|SYSTEM|VOLUME_ID).
 const attr_lfn: u8 = attr_read_only | attr_hidden | attr_system | attr_volume_id;
 
-/// 削除済みエントリの先頭バイト。
+/// First byte of a deleted entry.
 const entry_free: u8 = 0xE5;
-/// ディレクトリの終端を表す先頭バイト。
+/// First byte marking the end of a directory.
 const entry_end: u8 = 0x00;
 
-/// FAT の値として使うマスク（上位 4 ビットは予約）。
+/// Mask used for FAT values (the top 4 bits are reserved).
 const fat_mask: u32 = 0x0FFFFFFF;
-/// 不良クラスタ。
+/// Bad cluster.
 const fat_bad: u32 = 0x0FFFFFF7;
-/// チェーンの終端（これ以上は EOC）。
+/// End of chain (values at or above this are EOC).
 const fat_eoc_min: u32 = 0x0FFFFFF8;
-/// 空きクラスタ。
+/// Free cluster.
 const fat_free: u32 = 0;
 
-/// FSInfo で「不明」を表す値。
+/// Value meaning "unknown" in FSInfo.
 const value_unknown: u32 = 0xFFFFFFFF;
-/// FSInfo の署名。
+/// FSInfo signature.
 const fsinfo_lead_signature: u32 = 0x41615252;
 const fsinfo_struct_signature: u32 = 0x61417272;
 const fsinfo_trail_signature: u32 = 0xAA550000;
 
-/// 書き込むエントリの日付（1980-01-01）。時刻は設定しない（0）。
+/// Date written into entries (1980-01-01). The time is not set (0).
 const default_date: u16 = (1 << 5) | 1;
 
-/// FAT32 のエラー。`InvalidEncoding` / `BufferTooSmall` / `Truncated` /
-/// `OutOfMemory` は `core/errors.zig` と同じ値を使う（画面表示の都合）。
+/// FAT32 errors. `InvalidEncoding` / `BufferTooSmall` / `Truncated` /
+/// `OutOfMemory` use the same values as `core/errors.zig` (for display purposes).
 pub const Error = block_device.Error || error{
-    /// BPB・名前・UTF-8/UTF-16 の書式が不正
+    /// Malformed BPB, name, or UTF-8/UTF-16
     InvalidEncoding,
-    /// 絶対パスでない、".." を含む、名前が空など
+    /// Not an absolute path, contains "..", an empty name, etc.
     InvalidPath,
-    /// 名前が FAT の上限（UTF-16 で 255 コード単位）を超えた
+    /// The name exceeds the FAT limit (255 UTF-16 code units)
     NameTooLong,
-    /// 出力バッファが足りない
+    /// The output buffer is too small
     BufferTooSmall,
-    /// デバイスがファイルシステムより小さい
+    /// The device is smaller than the file system
     Truncated,
-    /// メモリ確保に失敗した
+    /// Memory allocation failed
     OutOfMemory,
-    /// FAT32 ではない
+    /// Not FAT32
     NotFat32,
-    /// FAT12 / FAT16 / exFAT（FAT32 でないと分かっている場合）
+    /// FAT12 / FAT16 / exFAT (when it is known not to be FAT32)
     UnsupportedFatType,
-    /// FAT チェーンの循環・範囲外・フリークラスタなど、構造が壊れている
+    /// Broken structure: a FAT chain loop, out of range, a free cluster in a chain, etc.
     CorruptChain,
-    /// 指定パスのエントリが無い
+    /// No entry at the given path
     NotFound,
-    /// ファイルではない（ディレクトリ・ボリュームラベル）
+    /// Not a file (a directory or volume label)
     NotAFile,
-    /// ディレクトリに対する操作が不正
+    /// The operation is invalid for a directory
     IsDirectory,
-    /// ディレクトリではないものの中を辿ろうとした
+    /// Tried to descend into something that is not a directory
     NotADirectory,
-    /// 空きクラスタが無い
+    /// No free cluster
     NoFreeCluster,
-    /// 空きエントリが無い、または 8.3 の別名を 999999 通り試しても空きが無い
+    /// No free entry, or no free 8.3 alias even after trying 999999 of them
     NameCollision,
-    /// 名前が既に使われている（リネーム先など）
+    /// The name is already in use (e.g. as a rename destination)
     AlreadyExists,
 };
 
 // ---------------------------------------------------------------------------
-// BPB（BIOS Parameter Block）
+// BPB (BIOS Parameter Block)
 // ---------------------------------------------------------------------------
 
-/// FAT32 の BPB と、そこから導かれる配置。
+/// The FAT32 BPB and the layout derived from it.
 pub const Bpb = struct {
-    /// ボリュームの先頭セクタ（スーパーフロッピーは 0）。
+    /// First sector of the volume (0 for a superfloppy).
     partition_sector: u32,
     bytes_per_sector: u16,
     sectors_per_cluster: u8,
@@ -132,19 +132,19 @@ pub const Bpb = struct {
     fat_count: u8,
     sectors_per_fat: u32,
     root_cluster: u32,
-    /// パーティション内の総セクタ数。
+    /// Total number of sectors in the partition.
     total_sectors: u32,
     fs_info_sector: u16,
     backup_boot_sector: u16,
-    /// 1 つ目の FAT の先頭セクタ（絶対 LBA）。
+    /// First sector of the first FAT (absolute LBA).
     fat_sector: u32,
-    /// データ領域の先頭セクタ（絶対 LBA）。
+    /// First sector of the data area (absolute LBA).
     data_sector: u32,
-    /// データ領域のクラスタ数。クラスタ番号は 2 〜 `cluster_count + 1`。
+    /// Number of clusters in the data area. Cluster numbers run from 2 to `cluster_count + 1`.
     cluster_count: u32,
-    /// 使用する FAT コピー（ミラーリング無効のときだけ 0 以外）。
+    /// FAT copy in use (non-zero only when mirroring is disabled).
     active_fat: u8,
-    /// FAT がミラーリングされているか（両方のコピーを更新してよいか）。
+    /// Whether the FAT is mirrored (whether both copies may be updated).
     mirrored: bool,
     volume_label: [11]u8,
 
@@ -152,32 +152,32 @@ pub const Bpb = struct {
         return @as(usize, self.sectors_per_cluster) * sector_size;
     }
 
-    /// 有効なクラスタ番号の上限。
+    /// Highest valid cluster number.
     pub fn maxCluster(self: *const Bpb) u32 {
         return self.cluster_count + 1;
     }
 
-    /// クラスタ番号から先頭セクタ（絶対 LBA）を求める。範囲は呼び出し側で検証する。
+    /// Compute the first sector (absolute LBA) of a cluster number. The caller validates the range.
     pub fn clusterToSector(self: *const Bpb, cluster: u32) u32 {
         std.debug.assert(cluster >= 2 and cluster <= self.maxCluster());
         const offset = @as(u64, cluster - 2) * @as(u64, self.sectors_per_cluster);
         return @intCast(@as(u64, self.data_sector) + offset);
     }
 
-    /// 指定した FAT コピーの中での `cluster` のエントリがあるセクタ。
+    /// Sector holding the entry for `cluster` in the given FAT copy.
     pub fn fatSectorOf(self: *const Bpb, cluster: u32, copy: u8) u32 {
         const byte_offset = @as(u64, cluster) * 4;
         const sector_offset = byte_offset / sector_size;
         return @intCast(@as(u64, self.fat_sector) + @as(u64, copy) * @as(u64, self.sectors_per_fat) + sector_offset);
     }
 
-    /// セクタ内のエントリ位置（バイト）。
+    /// Entry position within the sector (in bytes).
     pub fn fatOffsetOf(cluster: u32) usize {
         return (@as(usize, cluster) * 4) % sector_size;
     }
 };
 
-/// 起動セクタを BPB として解釈する。FAT12/16/exFAT は専用のエラーで弾く。
+/// Interpret the boot sector as a BPB. FAT12/16/exFAT are rejected with dedicated errors.
 fn parseBpb(sector: *const [sector_size]u8, partition_sector: u32, device_sectors: u64) Error!Bpb {
     if (sector[510] != 0x55 or sector[511] != 0xAA) return error.InvalidEncoding;
     if (std.mem.eql(u8, sector[3..11], "EXFAT   ")) return error.UnsupportedFatType;
@@ -201,8 +201,8 @@ fn parseBpb(sector: *const [sector_size]u8, partition_sector: u32, device_sector
     const total_32 = std.mem.readInt(u32, sector[32..36], .little);
     const fat_32 = std.mem.readInt(u32, sector[36..40], .little);
 
-    // FAT12 / FAT16 はルートディレクトリが固定長（root_entries != 0）で、
-    // FAT 長が 16 ビット側に入る。exFAT は OEM 名で弾いてある。
+    // FAT12 / FAT16 have a fixed-size root directory (root_entries != 0) and the
+    // FAT length in the 16-bit field. exFAT was already rejected by OEM name.
     if (fat_32 == 0 or root_entries != 0) {
         if (fat_16 != 0 or root_entries != 0) return error.UnsupportedFatType;
         return error.InvalidEncoding;
@@ -217,7 +217,7 @@ fn parseBpb(sector: *const [sector_size]u8, partition_sector: u32, device_sector
     const cluster_count = data_sectors / @as(u32, sectors_per_cluster);
     if (cluster_count == 0) return error.InvalidEncoding;
 
-    // FAT が全クラスタ番号を保持できるか（1 セクタ = 128 エントリ）。
+    // Whether the FAT can hold every cluster number (1 sector = 128 entries).
     const fat_entries = @as(u64, fat_32) * (sector_size / 4);
     if (fat_entries < @as(u64, cluster_count) + 2) return error.InvalidEncoding;
 
@@ -226,7 +226,7 @@ fn parseBpb(sector: *const [sector_size]u8, partition_sector: u32, device_sector
 
     if (@as(u64, partition_sector) + @as(u64, total_sectors) > device_sectors) return error.Truncated;
 
-    // ミラーリング無効なら有効な FAT コピーだけを使う。
+    // When mirroring is disabled, use only the active FAT copy.
     const ext_flags = std.mem.readInt(u16, sector[40..42], .little);
     const mirrored = (ext_flags & 0x0080) == 0;
     const active_fat: u8 = @intCast(ext_flags & 0x000F);
@@ -257,30 +257,30 @@ fn parseBpb(sector: *const [sector_size]u8, partition_sector: u32, device_sector
 }
 
 // ---------------------------------------------------------------------------
-// ディレクトリエントリ
+// Directory entries
 // ---------------------------------------------------------------------------
 
-/// ディレクトリエントリ 1 件。`name` は LFN があればそれ、無ければ 8.3 を
-/// UTF-8 にしたもの。名前のスライスは `nameSlice()` で取る。
+/// One directory entry. `name` is the LFN when there is one, otherwise the 8.3
+/// name converted to UTF-8. Take the name slice with `nameSlice()`.
 pub const Entry = struct {
     name: [max_name_utf8]u8 = @splat(0),
     name_len: u16 = 0,
-    /// 生の 11 バイト短名（先頭 0x05 は 0xE5 に補正済み）。
+    /// Raw 11-byte short name (a leading 0x05 is already corrected to 0xE5).
     short_name: [11]u8 = @splat(' '),
-    /// 短名の NT ケースフラグ（bit3: 基底が小文字、bit4: 拡張子が小文字）。
+    /// NT case flags of the short name (bit3: base is lowercase, bit4: extension is lowercase).
     case_flags: u8 = 0,
     attr: u8 = 0,
-    /// 検証済みの LFN が付いていたか。
+    /// Whether a validated LFN was attached.
     has_lfn: bool = false,
-    /// 短名エントリの直前にある、検証済みの連続 LFN エントリ数。
+    /// Number of validated consecutive LFN entries immediately before the short-name entry.
     lfn_count: u8 = 0,
     first_cluster: u32 = 0,
     size: u32 = 0,
-    /// ディレクトリ内の線形エントリ番号（削除・リネームで使う）。
+    /// Linear entry number within the directory (used by delete and rename).
     index: u32 = 0,
-    /// 短名エントリのあるセクタ（絶対 LBA）。
+    /// Sector holding the short-name entry (absolute LBA).
     sector: u32 = 0,
-    /// そのセクタ内のオフセット（32 の倍数）。
+    /// Offset within that sector (a multiple of 32).
     offset: u16 = 0,
 
     pub fn nameSlice(self: *const Entry) []const u8 {
@@ -295,7 +295,7 @@ pub const Entry = struct {
         return self.attr & attr_volume_id != 0 and self.attr & attr_directory == 0;
     }
 
-    /// "." または ".."（一覧に出すかどうかは呼び出し側が決める）。
+    /// "." or ".." (the caller decides whether to list them).
     pub fn isDot(self: *const Entry) bool {
         if (self.short_name[0] != '.') return false;
         const dots: usize = if (self.short_name[1] == '.') 2 else 1;
@@ -305,7 +305,7 @@ pub const Entry = struct {
         return true;
     }
 
-    /// 8.3 名（NT ケースフラグを反映した表示用）。`buffer` は 12 バイト以上。
+    /// 8.3 name for display (with NT case flags applied). `buffer` must be at least 12 bytes.
     pub fn shortDisplay(self: *const Entry, buffer: *[12]u8) []const u8 {
         var base_len: usize = 8;
         while (base_len > 0 and self.short_name[base_len - 1] == ' ') base_len -= 1;
@@ -331,7 +331,7 @@ pub const Entry = struct {
     }
 };
 
-/// 一覧の走査で使う 1 クラスタ分の状態をまとめたもの。
+/// State for one cluster used by a listing traversal.
 const ClusterCursor = struct {
     fs: *Fat32,
     cluster: u32,
@@ -342,7 +342,7 @@ const ClusterCursor = struct {
         return .{ .fs = fs, .cluster = cluster };
     }
 
-    /// このクラスタの次を返す。チェーンが終端なら null。循環は `CorruptChain`。
+    /// Successor of this cluster, or null at the end of the chain. A loop is `CorruptChain`.
     fn advance(self: *ClusterCursor) Error!?u32 {
         self.steps += 1;
         if (self.steps > self.fs.bpb.cluster_count) return error.CorruptChain;
@@ -357,26 +357,26 @@ const ClusterCursor = struct {
 };
 
 // ---------------------------------------------------------------------------
-// ファイル名（8.3 と LFN）
+// File names (8.3 and LFN)
 // ---------------------------------------------------------------------------
 
-/// 書き込む名前の準備結果。
+/// Result of preparing a name for writing.
 const NameInfo = struct {
     units: [max_name_utf16]u16 = @splat(0),
     unit_count: u16 = 0,
     short_name: [11]u8 = @splat(' '),
-    /// 短名の直前に書く LFN エントリ数（0 なら 8.3 のみ）。
+    /// Number of LFN entries to write before the short name (0 means 8.3 only).
     lfn_count: u8 = 0,
 };
 
-/// LFN のチェックサム（11 バイト短名から）。
+/// LFN checksum (computed from the 11-byte short name).
 fn shortNameChecksum(short: *const [11]u8) u8 {
     var sum: u8 = 0;
     for (short) |c| sum = (sum >> 1) +% ((sum & 1) << 7) +% c;
     return sum;
 }
 
-/// LFN エントリ内で `index` 番目（0〜12）のコード単位が入るオフセット。
+/// Offset of the `index`-th (0 to 12) code unit within an LFN entry.
 fn lfnCharOffset(index: usize) usize {
     if (index < 5) return 1 + index * 2;
     if (index < 11) return 14 + (index - 5) * 2;
@@ -391,7 +391,7 @@ fn isShortChar(c: u8) bool {
     };
 }
 
-/// 8.3 としてそのまま使える名前か（大文字のみ・8+3 以内・使える文字のみ）。
+/// Whether a name can be used as 8.3 as is (uppercase only, within 8+3, allowed characters only).
 fn isPlainShortName(name: []const u8) bool {
     if (name.len == 0 or name.len > 12) return false;
     if (name[0] == '.') return false;
@@ -412,7 +412,7 @@ fn isPlainShortName(name: []const u8) bool {
     return !isReservedDeviceName(name);
 }
 
-/// Windows が特別扱いする名前（8.3 では使わせない）。
+/// Names Windows treats specially (not allowed in 8.3).
 fn isReservedDeviceName(name: []const u8) bool {
     var buffer: [8]u8 = @splat(0);
     var len: usize = 0;
@@ -432,7 +432,7 @@ fn isReservedDeviceName(name: []const u8) bool {
     return false;
 }
 
-/// 8.3 の 11 バイト（"NAME    EXT"）を作る。`isPlainShortName` が真の名前だけを渡す。
+/// Build the 11-byte 8.3 form ("NAME    EXT"). Pass only names where `isPlainShortName` is true.
 fn plainShortFromName(name: []const u8) [11]u8 {
     var out: [11]u8 = @splat(' ');
     var base_index: usize = 0;
@@ -454,7 +454,7 @@ fn plainShortFromName(name: []const u8) [11]u8 {
     return out;
 }
 
-/// 8.3 に使えない文字を '_' に寄せる（小文字は大文字にする）。
+/// Map characters unusable in 8.3 to '_' (lowercase becomes uppercase).
 fn shortCharOr(c: u8) u8 {
     if (c >= 'a' and c <= 'z') return c - 32;
     if (isShortChar(c)) return c;
@@ -480,7 +480,7 @@ fn formatDecimal(value: u32, out: *[6]u8) usize {
     return len;
 }
 
-/// UTF-8 を UTF-16 に変換する。不正な並びは `InvalidEncoding`。
+/// Convert UTF-8 to UTF-16. A malformed sequence is `InvalidEncoding`.
 fn utf8ToUtf16(out: []u16, text: []const u8) Error!usize {
     var len: usize = 0;
     var i: usize = 0;
@@ -534,8 +534,8 @@ fn utf8ToUtf16(out: []u16, text: []const u8) Error!usize {
     return len;
 }
 
-/// UTF-16 を UTF-8 に変換する。対になっていないサロゲートは U+FFFD にする
-/// （PC が付けた名前で一覧全体を失敗させないため）。
+/// Convert UTF-16 to UTF-8. Unpaired surrogates become U+FFFD
+/// (so a name written by a PC does not fail the whole listing).
 fn utf16ToUtf8(out: []u8, units: []const u16) Error!usize {
     var len: usize = 0;
     var i: usize = 0;
@@ -587,7 +587,7 @@ fn encodeUtf8(out: []u8, code_point: u21) Error!usize {
     return 4;
 }
 
-/// ASCII の範囲で大文字小文字を畳み込んで比較する。
+/// Compare case-insensitively within the ASCII range.
 fn asciiCaseEqual(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| {
@@ -596,14 +596,14 @@ fn asciiCaseEqual(a: []const u8, b: []const u8) bool {
     return true;
 }
 
-/// `name` がこのエントリを指すか（LFN 名か 8.3 名のどちらかと一致すればよい）。
+/// Whether `name` refers to this entry (matching either the LFN name or the 8.3 name is enough).
 fn nameMatches(entry: *const Entry, name: []const u8) bool {
     if (asciiCaseEqual(entry.nameSlice(), name)) return true;
     var buffer: [12]u8 = @splat(0);
     return asciiCaseEqual(entry.shortDisplay(&buffer), name);
 }
 
-/// 書き込む名前を検証する。
+/// Validate a name to be written.
 fn validateName(name: []const u8) Error!void {
     if (name.len == 0) return error.InvalidPath;
     if (name.len > max_name_utf8) return error.NameTooLong;
@@ -622,65 +622,65 @@ fn validateName(name: []const u8) Error!void {
 }
 
 // ---------------------------------------------------------------------------
-// FAT32 本体
+// The FAT32 volume itself
 // ---------------------------------------------------------------------------
 
 const FatCache = struct {
     valid: bool = false,
     dirty: bool = false,
-    /// 有効な FAT コピーの中でのセクタ（絶対 LBA）。
+    /// Sector within the active FAT copy (absolute LBA).
     sector: u32 = 0,
     data: [sector_size]u8 = @splat(0),
 };
 
 const FsInfo = struct {
-    /// 署名が正しい FSInfo があったか。無ければ free_count の更新はしない。
+    /// Whether an FSInfo with a valid signature was found. Without it, free_count is not updated.
     valid: bool = false,
     sector: u32 = 0,
-    /// 予備ブートセクタ側の FSInfo（署名が正しいときだけ）。
+    /// FSInfo in the backup boot sector (only when the signature is valid).
     backup_sector: ?u32 = null,
     next_free: u32 = value_unknown,
     free_count: u32 = value_unknown,
 };
 
-/// 書き込み時にディレクトリを 1 つ伸ばすときに使う結果。
+/// Result used when extending a directory by one cluster during a write.
 const DataChain = struct {
     first_cluster: u32,
     cluster_count: u32,
 };
 
-/// マウント済みの FAT32 ボリューム。
+/// A mounted FAT32 volume.
 ///
-/// スレッド安全ではない（1 つのボリュームは同時に 1 つの操作から使う）。
-/// 読み出しも作業バッファを共有するため再入不可。
+/// Not thread-safe (one volume is used by one operation at a time).
+/// Reads are not reentrant either, because they share the scratch buffer.
 pub const Fat32 = struct {
     device: BlockDevice,
     allocator: std.mem.Allocator,
     bpb: Bpb,
-    /// 1 クラスタ分の作業バッファ。
+    /// Scratch buffer for one cluster.
     cluster_buf: []u8,
     fat_cache: FatCache = .{},
     fs_info: FsInfo = .{},
 
-    /// ブロックデバイスから FAT32 をマウントする。
-    /// 成功したら `deinit` を呼ぶこと。
+    /// Mount FAT32 from a block device.
+    /// Call `deinit` on success.
     pub fn mount(device: BlockDevice, allocator: std.mem.Allocator) Error!Fat32 {
         var boot: [sector_size]u8 = @splat(0);
         try device.readSector(0, &boot);
         const device_sectors = device.sectorCount();
 
-        // 1. スーパーフロッピー（パーティションテーブル無しで BPB が先頭）
+        // 1. Superfloppy (no partition table, the BPB is at the start)
         if (parseBpb(&boot, 0, device_sectors)) |bpb| {
             return finishMount(device, allocator, bpb);
         } else |super_error| {
-            // 2. MBR の先頭 4 エントリから FAT32 パーティションを探す
+            // 2. Find a FAT32 partition in the first 4 MBR entries
             if (parseMbr(&boot, device, device_sectors)) |bpb| {
                 return finishMount(device, allocator, bpb);
             } else |mbr_error| {
                 if (super_error == error.UnsupportedFatType) return error.UnsupportedFatType;
                 if (mbr_error == error.UnsupportedFatType) return error.UnsupportedFatType;
-                // 先頭が FAT の起動セクタの形をしているなら、そちらの理由を返す
-                // （壊れた BPB を「FAT32 ではない」と誤って報告しないため）
+                // If the start looks like a FAT boot sector, return that reason instead
+                // (so a corrupt BPB is not misreported as "not FAT32")
                 if (mbr_error == error.NotFat32 and looksLikeFatBootSector(&boot)) return super_error;
                 return mbr_error;
             }
@@ -692,7 +692,7 @@ pub const Fat32 = struct {
         self.cluster_buf = self.cluster_buf[0..0];
     }
 
-    /// ルートディレクトリの先頭クラスタ。
+    /// First cluster of the root directory.
     pub fn rootCluster(self: *const Fat32) u32 {
         return self.bpb.root_cluster;
     }
@@ -701,20 +701,20 @@ pub const Fat32 = struct {
         return self.bpb.clusterSize();
     }
 
-    /// パスのエントリを返す。`/` はルートディレクトリ自身。
+    /// Return the entry for a path. `/` is the root directory itself.
     pub fn stat(self: *Fat32, path: []const u8) Error!Entry {
         var entry: Entry = .{};
         if (!try self.findPath(path, &entry)) return error.NotFound;
         return entry;
     }
 
-    /// パスが存在するか。無い場合だけ false を返し、他のエラーはそのまま返す。
+    /// Whether a path exists. Returns false only when missing; other errors pass through.
     pub fn exists(self: *Fat32, path: []const u8) Error!bool {
         var entry: Entry = .{};
         return self.findPath(path, &entry);
     }
 
-    /// ディレクトリを走査する反復子を作る。
+    /// Build an iterator over a directory.
     pub fn openDir(self: *Fat32, path: []const u8) Error!Iterator {
         var entry: Entry = .{};
         if (!try self.findPath(path, &entry)) return error.NotFound;
@@ -722,14 +722,14 @@ pub const Fat32 = struct {
         return self.iterate(entry.first_cluster);
     }
 
-    /// ファイルを読む。`out` は `size` 以上必要（足りなければ `BufferTooSmall`）。
+    /// Read a file. `out` must be at least `size` bytes long (otherwise `BufferTooSmall`).
     pub fn readFile(self: *Fat32, path: []const u8, out: []u8) Error![]u8 {
         const entry = try self.stat(path);
         return self.readEntry(&entry, out);
     }
 
-    /// ファイルを読んで新しいバッファを返す。`max_bytes` を超えるファイルは
-    /// `BufferTooSmall`（PSBT の 64KB 上限をここで効かせる）。
+    /// Read a file into a newly allocated buffer. A file larger than `max_bytes` gives
+    /// `BufferTooSmall` (this is where the 64KB PSBT limit is enforced).
     pub fn readFileAlloc(
         self: *Fat32,
         allocator: std.mem.Allocator,
@@ -746,18 +746,18 @@ pub const Fat32 = struct {
         return self.readEntry(&entry, buffer);
     }
 
-    /// ファイルを書く（既存なら上書き）。親ディレクトリは存在すること。
+    /// Write a file (overwriting an existing one). The parent directory must exist.
     ///
-    /// 上書きは「先に古いクラスタを解放してから書く」ため、電源断では
-    /// 空のファイルが残りうる（原子的ではない）。
+    /// Overwriting frees the old clusters before writing the new data, so a power loss
+    /// can leave an empty file behind (it is not atomic).
     pub fn writeFile(self: *Fat32, path: []const u8, data: []const u8) Error!void {
         const parts = try splitPath(path);
         try validateName(parts.name);
-        if (data.len > 0xFFFFFFFF) return error.BufferTooSmall; // FAT のサイズ欄は 32 ビット
+        if (data.len > 0xFFFFFFFF) return error.BufferTooSmall; // The FAT size field is 32 bits
         const parent = try self.stat(parts.parent);
         if (!parent.isDirectory()) return error.NotADirectory;
 
-        // 既存エントリを探す（8.3 の別名を作るときに自分自身と衝突させない）
+        // Find an existing entry (so making an 8.3 alias does not collide with itself)
         var existing: Entry = .{};
         const found = try self.findEntryInDir(parent.first_cluster, parts.name, &existing);
         if (found) {
@@ -770,7 +770,7 @@ pub const Fat32 = struct {
 
         if (found and existing.index < existing.lfn_count) return error.CorruptChain;
 
-        // 上書き: 先にエントリを空にしてから古いクラスタを解放する
+        // Overwrite: clear the entry first, then free the old clusters
         if (found and existing.lfn_count == info.lfn_count) {
             try self.clearEntryData(&existing);
         }
@@ -778,7 +778,7 @@ pub const Fat32 = struct {
             _ = try self.freeChain(existing.first_cluster);
         }
 
-        // 名前のスロットを確保する（同じスロット数なら作り直し）
+        // Reserve slots for the name (reuse them when the slot count is unchanged)
         var slot_index: u32 = 0;
         if (found and existing.lfn_count == info.lfn_count) {
             slot_index = existing.index - existing.lfn_count;
@@ -789,7 +789,7 @@ pub const Fat32 = struct {
             slot_index = try self.allocateSlots(parent.first_cluster, @as(u32, info.lfn_count) + 1);
         }
 
-        // データを書いてからエントリを書く（途中のファイルが完成品に見えないように）
+        // Write the data before the entry (so a half-written file never looks complete)
         const chain = try self.writeData(data);
         try self.writeEntryGroup(
             parent.first_cluster,
@@ -801,7 +801,7 @@ pub const Fat32 = struct {
         );
     }
 
-    /// ファイルを削除する（クラスタも解放する）。
+    /// Delete a file (freeing its clusters too).
     pub fn deleteFile(self: *Fat32, path: []const u8) Error!void {
         const parts = try splitPath(path);
         const parent = try self.stat(parts.parent);
@@ -813,17 +813,17 @@ pub const Fat32 = struct {
         if (entry.isVolumeLabel()) return error.NotAFile;
         if (entry.index < entry.lfn_count) return error.CorruptChain;
 
-        // 先にエントリを消す（電源断でクラスタが漏れる方が、二重に繋がるより安全）
+        // Delete the entry first (leaking clusters on power loss is safer than double-linking)
         try self.markDeleted(parent.first_cluster, entry.index - entry.lfn_count, entry.index);
         _ = try self.freeChain(entry.first_cluster);
     }
 
-    /// 同じディレクトリ内で名前を変える。データ（クラスタ）は動かさない。
+    /// Rename within the same directory. The data (clusters) is not moved.
     ///
-    /// 名前だけを書き換える。8.3 に収まらない名前（`OUT.PSBT` は拡張子が
-    /// 4 文字なので該当する）では LFN エントリを作り直す。
-    /// **移動先の名前が既にある場合は `error.AlreadyExists`**（上書きしない）。
-    /// 上書きしたい場合は先に `deleteFile` を呼ぶこと。
+    /// Only the name is rewritten. For names that do not fit 8.3 (`OUT.PSBT` qualifies,
+    /// because its extension is 4 characters) the LFN entries are rebuilt.
+    /// **When the destination name already exists this is `error.AlreadyExists`** (no overwrite).
+    /// Call `deleteFile` first if you want to overwrite.
     pub fn rename(self: *Fat32, from: []const u8, to: []const u8) Error!void {
         const from_parts = try splitPath(from);
         const to_parts = try splitPath(to);
@@ -849,7 +849,7 @@ pub const Fat32 = struct {
         const attr = entry.attr & (attr_read_only | attr_hidden | attr_system | attr_directory | attr_archive);
         const group_start = entry.index - entry.lfn_count;
         if (entry.lfn_count == info.lfn_count) {
-            // 同じスロット数: その場で名前だけ書き換える
+            // Same slot count: rewrite only the name in place
             try self.writeEntryGroup(
                 parent.first_cluster,
                 group_start,
@@ -861,8 +861,8 @@ pub const Fat32 = struct {
             return;
         }
 
-        // スロット数が変わる: 先に新しい場所を確保してから、古い名前を消す。
-        // （途中で電源が切れたら「何も無い」状態にする。クラスタは動かさない）
+        // The slot count changes: reserve the new location first, then delete the old name.
+        // (A power loss midway leaves "nothing". The clusters are not moved.)
         const slot_index = try self.allocateSlots(parent.first_cluster, @as(u32, info.lfn_count) + 1);
         try self.markDeleted(parent.first_cluster, group_start, entry.index);
         try self.writeEntryGroup(
@@ -875,7 +875,7 @@ pub const Fat32 = struct {
         );
     }
 
-    // -- 内部: マウント ----------------------------------------------------
+    // -- Internal: mount ---------------------------------------------------
 
     fn finishMount(device: BlockDevice, allocator: std.mem.Allocator, bpb: Bpb) Error!Fat32 {
         const buffer = try allocator.alloc(u8, bpb.clusterSize());
@@ -891,7 +891,7 @@ pub const Fat32 = struct {
         return volume;
     }
 
-    /// FSInfo の署名を確かめて、使えるときだけ free_count / next_free を信用する。
+    /// Verify the FSInfo signature and trust free_count / next_free only when usable.
     fn loadFsInfo(self: *Fat32) Error!void {
         const relative = self.bpb.fs_info_sector;
         if (relative == 0 or relative >= self.bpb.reserved_sectors) return;
@@ -915,7 +915,7 @@ pub const Fat32 = struct {
         }
     }
 
-    /// クラスタ数と次に探し始める位置を FSInfo に書く（FSInfo が無ければ何もしない）。
+    /// Write the cluster count and the next search position to FSInfo (no-op without an FSInfo).
     fn updateFsInfo(self: *Fat32, allocated: u32, freed: u32, next_free: ?u32) Error!void {
         if (!self.fs_info.valid) return;
 
@@ -940,14 +940,14 @@ pub const Fat32 = struct {
         if (self.fs_info.backup_sector) |backup| try self.device.writeSector(backup, buffer);
     }
 
-    // -- 内部: 作業バッファ -------------------------------------------------
+    // -- Internal: scratch buffers -----------------------------------------
 
-    /// セクタ 1 枚分の作業領域（1 クラスタのバッファの先頭を使う）。
+    /// Scratch area for one sector (uses the head of the one-cluster buffer).
     fn sectorBuf(self: *Fat32) *[sector_size]u8 {
         return self.cluster_buf[0..sector_size];
     }
 
-    // -- 内部: FAT ---------------------------------------------------------
+    // -- Internal: FAT -----------------------------------------------------
 
     fn loadFatSector(self: *Fat32, lba: u32) Error!void {
         if (self.fat_cache.valid and self.fat_cache.sector == lba) return;
@@ -957,7 +957,7 @@ pub const Fat32 = struct {
         self.fat_cache.valid = true;
     }
 
-    /// 書き溜めた FAT セクタを（ミラーリングされていれば両方のコピーに）書く。
+    /// Write back buffered FAT sectors (to both copies when mirrored).
     fn flushFat(self: *Fat32) Error!void {
         if (!self.fat_cache.valid or !self.fat_cache.dirty) return;
         if (self.bpb.mirrored) {
@@ -988,7 +988,7 @@ pub const Fat32 = struct {
         self.fat_cache.dirty = true;
     }
 
-    /// 空きクラスタを `from` から探す（末尾まで見たら先頭へ戻る）。
+    /// Find a free cluster starting at `from` (wrapping to the beginning after the end).
     fn findFreeCluster(self: *Fat32, from: u32) Error!u32 {
         const max = self.bpb.maxCluster();
         var cluster: u32 = if (from >= 2 and from <= max) from else 2;
@@ -1007,12 +1007,12 @@ pub const Fat32 = struct {
         return 2;
     }
 
-    /// クラスタを 1 つ読む（`out` は 1 クラスタ分）。
+    /// Read one cluster (`out` must hold one cluster).
     fn readCluster(self: *Fat32, cluster: u32, out: []u8) Error!void {
         try self.device.readSectors(self.bpb.clusterToSector(cluster), out[0..self.clusterSize()]);
     }
 
-    /// クラスタを 1 つ書く（`data` は 1 クラスタ分）。
+    /// Write one cluster (`data` must hold one cluster).
     fn writeCluster(self: *Fat32, cluster: u32, data: []const u8) Error!void {
         try self.device.writeSectors(self.bpb.clusterToSector(cluster), data[0..self.clusterSize()]);
     }
@@ -1022,10 +1022,10 @@ pub const Fat32 = struct {
         try self.writeCluster(cluster, self.cluster_buf);
     }
 
-    // -- 内部: チェーン -----------------------------------------------------
+    // -- Internal: chains --------------------------------------------------
 
-    /// FAT チェーンを 1 クラスタずつ辿る。返したクラスタの FAT は書き換えてよい
-    /// （次を先に読んである）。循環はクラスタ数の上限で検出する。
+    /// Walk a FAT chain one cluster at a time. The FAT entry of a returned cluster may
+    /// be rewritten (its successor was read in advance). Loops are caught by the cluster cap.
     const ChainWalker = struct {
         fs: *Fat32,
         cluster: u32,
@@ -1065,7 +1065,7 @@ pub const Fat32 = struct {
         }
     };
 
-    /// チェーンを解放する（FAT を 0 にする）。解放したクラスタ数を返す。
+    /// Free a chain (set its FAT entries to 0). Returns the number of clusters freed.
     fn freeChain(self: *Fat32, first_cluster: u32) Error!u32 {
         if (first_cluster < 2) return 0;
         var freed: u32 = 0;
@@ -1079,16 +1079,16 @@ pub const Fat32 = struct {
         return freed;
     }
 
-    // -- 内部: パス ---------------------------------------------------------
+    // -- Internal: paths ---------------------------------------------------
 
     const PathParts = struct {
-        /// 親ディレクトリのパス（`/` を含む）。
+        /// Parent directory path (includes `/`).
         parent: []const u8,
-        /// 最後の要素（ファイル名）。
+        /// Last component (the file name).
         name: []const u8,
     };
 
-    /// 絶対パスを親と名前へ分ける。名前は空にならない。
+    /// Split an absolute path into parent and name. The name is never empty.
     fn splitPath(path: []const u8) Error!PathParts {
         if (path.len == 0 or path[0] != '/') return error.InvalidPath;
         var end = path.len;
@@ -1102,7 +1102,7 @@ pub const Fat32 = struct {
         return .{ .parent = parent, .name = name };
     }
 
-    /// パスを 1 要素ずつ辿る。見つからなければ false。
+    /// Walk a path component by component. False when it is not found.
     fn findPath(self: *Fat32, path: []const u8, out: *Entry) Error!bool {
         if (path.len == 0 or path[0] != '/') return error.InvalidPath;
         out.* = .{};
@@ -1123,7 +1123,7 @@ pub const Fat32 = struct {
         return true;
     }
 
-    /// ディレクトリ `dir_cluster` から名前で 1 件探す。
+    /// Find one entry by name in directory `dir_cluster`.
     fn findEntryInDir(self: *Fat32, dir_cluster: u32, name: []const u8, out: *Entry) Error!bool {
         var iterator = try self.iterate(dir_cluster);
         while (try iterator.next(out)) {
@@ -1138,7 +1138,7 @@ pub const Fat32 = struct {
         return .{ .fs = self, .cluster = dir_cluster };
     }
 
-    // -- 内部: 名前の準備 ---------------------------------------------------
+    // -- Internal: name preparation ----------------------------------------
 
     fn prepareName(self: *Fat32, dir_cluster: u32, name: []const u8, ignore_index: ?u32, info: *NameInfo) Error!void {
         info.* = .{};
@@ -1154,7 +1154,7 @@ pub const Fat32 = struct {
         }
     }
 
-    /// 長い名前に対する 8.3 の別名（"LONGFI~1.BIN" 形式）を作る。
+    /// Build an 8.3 alias for a long name (the "LONGFI~1.BIN" form).
     fn makeShortAlias(self: *Fat32, dir_cluster: u32, name: []const u8, ignore_index: ?u32) Error![11]u8 {
         var base: [8]u8 = @splat('_');
         var base_len: usize = 0;
@@ -1200,7 +1200,7 @@ pub const Fat32 = struct {
         return error.NameCollision;
     }
 
-    /// 8.3 の別名が既に使われているか（`ignore_index` のエントリは数えない）。
+    /// Whether an 8.3 alias is already in use (the entry at `ignore_index` is not counted).
     fn shortNameExists(self: *Fat32, dir_cluster: u32, short: *const [11]u8, ignore_index: ?u32) Error!bool {
         var index: u32 = 0;
         var cursor = ClusterCursor.init(self, dir_cluster);
@@ -1224,7 +1224,7 @@ pub const Fat32 = struct {
         }
     }
 
-    // -- 内部: 読み出し -----------------------------------------------------
+    // -- Internal: reading ------------------------------------------------
 
     fn readEntry(self: *Fat32, entry: *const Entry, out: []u8) Error![]u8 {
         if (entry.isDirectory()) return error.IsDirectory;
@@ -1250,17 +1250,17 @@ pub const Fat32 = struct {
 
             const next = try self.fatGet(cluster);
             if (next == fat_bad or next == fat_free or next == 1) return error.CorruptChain;
-            if (next >= fat_eoc_min) return error.CorruptChain; // サイズよりチェーンが短い
+            if (next >= fat_eoc_min) return error.CorruptChain; // Chain shorter than the size
             if (next > self.bpb.maxCluster()) return error.CorruptChain;
             steps += 1;
-            if (steps > self.bpb.cluster_count) return error.CorruptChain; // 循環
+            if (steps > self.bpb.cluster_count) return error.CorruptChain; // A loop
             cluster = next;
         }
 
-        // サイズ分を読んだあと、チェーンが本当に終わっているかを確かめる。
-        // 終端でなければ（サイズより長いか、循環している）上限付きで辿って検査する。
-        // サイズより長いだけのチェーンは読めた内容に影響しないため許すが、
-        // 一周して戻ってくるチェーンはここで `CorruptChain` になる。
+        // After reading `size` bytes, check that the chain really ends.
+        // If it does not (it is longer than the size, or loops), walk it with a limit to check.
+        // A chain that is merely longer than the size does not affect the bytes read, so it
+        // is allowed, but a chain that comes back around becomes `CorruptChain` here.
         const tail = try self.fatGet(cluster);
         if (tail != fat_bad and tail != fat_free and tail != 1 and tail < fat_eoc_min) {
             var walker = ChainWalker.init(self, cluster);
@@ -1269,9 +1269,9 @@ pub const Fat32 = struct {
         return out[0..size];
     }
 
-    // -- 内部: 書き込み -----------------------------------------------------
+    // -- Internal: writing ------------------------------------------------
 
-    /// データをクラスタに書き、FAT を連結する。確保した先頭クラスタを返す。
+    /// Write data into clusters and link the FAT. Returns the first cluster allocated.
     fn writeData(self: *Fat32, data: []const u8) Error!DataChain {
         if (data.len == 0) return .{ .first_cluster = 0, .cluster_count = 0 };
 
@@ -1284,7 +1284,7 @@ pub const Fat32 = struct {
 
         {
             errdefer {
-                // 失敗したら確保済みを解放する（後始末の失敗は元のエラーを隠さない）
+                // Free what was allocated on failure (cleanup does not hide the real error)
                 if (first >= 2) _ = self.freeChain(first) catch 0;
                 self.flushFat() catch {};
             }
@@ -1311,7 +1311,7 @@ pub const Fat32 = struct {
         return .{ .first_cluster = first, .cluster_count = count };
     }
 
-    /// 既存エントリのデータ欄（先頭クラスタとサイズ）を空にする。
+    /// Clear the data fields (first cluster and size) of an existing entry.
     fn clearEntryData(self: *Fat32, entry: *const Entry) Error!void {
         const buffer = self.sectorBuf();
         try self.device.readSector(entry.sector, buffer);
@@ -1322,8 +1322,8 @@ pub const Fat32 = struct {
         try self.device.writeSector(entry.sector, buffer);
     }
 
-    /// 空きエントリを `count` 個連続で確保し、その先頭の線形番号を返す。
-    /// 足りなければディレクトリのクラスタを足して伸ばす。
+    /// Reserve `count` consecutive free entries and return the linear number of the first one.
+    /// If there are not enough, append clusters to the directory to extend it.
     fn allocateSlots(self: *Fat32, dir_cluster: u32, count: u32) Error!u32 {
         var index: u32 = 0;
         var run_start: u32 = 0;
@@ -1362,7 +1362,7 @@ pub const Fat32 = struct {
             if (next == null) break;
         }
 
-        // チェーンの終端までで足りない: クラスタを足す（足した分は 0 埋め＝空き）
+        // Not enough even at the end of the chain: append clusters (zero-filled = free)
         if (run_length == 0) run_start = index;
         const per_cluster: u32 = @intCast(self.clusterSize() / entry_size);
         const missing = count - run_length;
@@ -1384,7 +1384,7 @@ pub const Fat32 = struct {
         return run_start;
     }
 
-    /// 指定した線形番号の範囲のエントリを削除済み（0xE5）にする。
+    /// Mark the entries in the given linear-number range as deleted (0xE5).
     fn markDeleted(self: *Fat32, dir_cluster: u32, first_index: u32, last_index: u32) Error!void {
         var index: u32 = 0;
         var cursor = ClusterCursor.init(self, dir_cluster);
@@ -1414,7 +1414,7 @@ pub const Fat32 = struct {
         }
     }
 
-    /// エントリの並び（LFN + 短名）を `start_index` から書く。
+    /// Write a group of entries (LFN + short name) starting at `start_index`.
     fn writeEntryGroup(
         self: *Fat32,
         dir_cluster: u32,
@@ -1469,7 +1469,7 @@ fn fsInfoLooksValid(buffer: *const [sector_size]u8) bool {
         std.mem.readInt(u32, buffer[508..512], .little) == fsinfo_trail_signature;
 }
 
-/// LFN エントリ（ディスク順）と短名エントリを組み立てる。
+/// Assemble the LFN entries (in disk order) and the short-name entry.
 fn buildEntryGroup(
     info: *const NameInfo,
     attr: u8,
@@ -1508,7 +1508,7 @@ fn buildEntryGroup(
     const short = &slots[count];
     @memset(short, 0);
     @memcpy(short[0..11], &info.short_name);
-    if (short[0] == 0xE5) short[0] = 0x05; // 削除済みと紛れないようにする
+    if (short[0] == 0xE5) short[0] = 0x05; // So it is not mistaken for a deleted entry
     short[11] = attr;
     short[12] = 0;
     std.mem.writeInt(u16, short[16..18], default_date, .little);
@@ -1521,8 +1521,8 @@ fn buildEntryGroup(
     return count;
 }
 
-/// 先頭セクタが FAT の起動セクタの形をしているか（BPB が壊れている場合の
-/// エラーの選び分けに使う。MBR と誤認しないようジャンプ命令も見る）。
+/// Whether the first sector looks like a FAT boot sector (used to pick the error when
+/// the BPB is corrupt. The jump instruction is checked too, so an MBR is not mistaken for one).
 fn looksLikeFatBootSector(sector: *const [sector_size]u8) bool {
     if (sector[510] != 0x55 or sector[511] != 0xAA) return false;
     if (sector[0] != 0xEB and sector[0] != 0xE9) return false;
@@ -1530,7 +1530,7 @@ fn looksLikeFatBootSector(sector: *const [sector_size]u8) bool {
     return bytes_per_sector >= sector_size and bytes_per_sector % sector_size == 0;
 }
 
-/// MBR の先頭 4 エントリから FAT32 パーティションを探す。
+/// Find a FAT32 partition in the first 4 MBR entries.
 fn parseMbr(mbr: *const [sector_size]u8, device: BlockDevice, device_sectors: u64) Error!Bpb {
     if (mbr[510] != 0x55 or mbr[511] != 0xAA) return error.NotFat32;
 
@@ -1539,7 +1539,7 @@ fn parseMbr(mbr: *const [sector_size]u8, device: BlockDevice, device_sectors: u6
     var saw_other_fat = false;
     var last_error: Error = error.NotFat32;
 
-    // 1 回目: パーティション型が FAT32（0x0B / 0x0C）のものを優先する
+    // First pass: prefer partitions whose type is FAT32 (0x0B / 0x0C)
     for (0..4) |index| {
         const base = 446 + index * 16;
         const part_type = mbr[base + 4];
@@ -1564,7 +1564,7 @@ fn parseMbr(mbr: *const [sector_size]u8, device: BlockDevice, device_sectors: u6
         }
     }
 
-    // 2 回目: 型が FAT でなくても BPB が読めれば受け付ける（変な型の実機対策）
+    // Second pass: accept any type if the BPB can be read (for real cards with odd type bytes)
     for (0..4) |index| {
         const base = 446 + index * 16;
         const part_type = mbr[base + 4];
@@ -1585,12 +1585,12 @@ fn parseMbr(mbr: *const [sector_size]u8, device: BlockDevice, device_sectors: u6
 }
 
 // ---------------------------------------------------------------------------
-// ディレクトリの反復子
+// Directory iterator
 // ---------------------------------------------------------------------------
 
-/// ディレクトリを 1 件ずつ返す反復子。呼び出し側が用意する（約 1.1KB）。
+/// Iterator returning directory entries one at a time. Provided by the caller (about 1.1KB).
 ///
-/// 使い方:
+/// Usage:
 /// ```
 /// var entry: fs.Entry = .{};
 /// var it = try volume.openDir("/");
@@ -1607,12 +1607,12 @@ pub const Iterator = struct {
     sector: [sector_size]u8 = @splat(0),
     sector_loaded: bool = false,
     entry_index: u16 = 0,
-    /// ディレクトリ内の線形エントリ番号（次に読む位置）。
+    /// Linear entry number within the directory (the next position to read).
     index: u32 = 0,
     done: bool = false,
     steps: u32 = 0,
     lfn_units: [max_name_utf16]u16 = @splat(0),
-    /// 見た序数のビットマスク（1〜20 ビット目）。
+    /// Bitmask of the ordinals seen (bits 1 to 20).
     lfn_seen: u32 = 0,
     lfn_total: u8 = 0,
     lfn_count: u8 = 0,
@@ -1620,7 +1620,7 @@ pub const Iterator = struct {
     lfn_valid: bool = false,
     lfn_last_index: u32 = 0,
 
-    /// 次のエントリを `out` に書く。ディレクトリの終端なら false。
+    /// Write the next entry to `out`. False at the end of the directory.
     pub fn next(self: *Iterator, out: *Entry) Error!bool {
         while (true) {
             if (self.done) return false;
@@ -1691,8 +1691,8 @@ pub const Iterator = struct {
         self.lfn_valid = false;
     }
 
-    /// LFN エントリを 1 つ取り込む。少しでも辻褄が合わなければ `lfn_valid` を落とし、
-    /// 短名だけを使う（一覧全体を失敗させない）。
+    /// Take in one LFN entry. If anything is inconsistent, drop `lfn_valid` and
+    /// use only the short name (so the whole listing does not fail).
     fn accumulateLfn(self: *Iterator, raw: *const [entry_size]u8, index: u32) void {
         const ordinal: u8 = raw[0] & 0x1F;
         const is_last = (raw[0] & 0x40) != 0;
@@ -1705,12 +1705,12 @@ pub const Iterator = struct {
             if (!is_last or ordinal == 0 or ordinal > max_lfn_entries) self.lfn_valid = false;
         } else {
             if (is_last) self.lfn_valid = false;
-            if (index != self.lfn_last_index + 1) self.lfn_valid = false; // 飛び飛びは認めない
+            if (index != self.lfn_last_index + 1) self.lfn_valid = false; // Gaps are not accepted
             if (raw[13] != self.lfn_checksum) self.lfn_valid = false;
             if (ordinal == 0 or ordinal > self.lfn_total) {
                 self.lfn_valid = false;
             } else if (@as(i32, ordinal) != @as(i32, self.lfn_total) - @as(i32, self.lfn_count)) {
-                self.lfn_valid = false; // 下から順（N, N-1, ..., 1）に来ているか
+                self.lfn_valid = false; // Whether they arrive from the top down (N, N-1, ..., 1)
             }
         }
 
@@ -1746,7 +1746,7 @@ pub const Iterator = struct {
         out.offset = offset;
 
         if (out.isVolumeLabel()) {
-            // ボリュームラベルは 11 バイトをそのまま使う（8.3 の分割はしない）
+            // A volume label uses all 11 bytes as is (no 8.3 splitting)
             var length: usize = 11;
             while (length > 0 and short[length - 1] == ' ') length -= 1;
             @memcpy(out.name[0..length], short[0..length]);
@@ -1782,10 +1782,10 @@ pub const Iterator = struct {
 };
 
 // ---------------------------------------------------------------------------
-// テスト
+// Tests
 // ---------------------------------------------------------------------------
 
-test "core/errors.zig と共通のエラー値は同じ" {
+test "core/errors.zig and the shared error values match" {
     const CoreError = @import("../core/errors.zig").Error;
 
     const encoding: anyerror = error.InvalidEncoding;
@@ -1807,12 +1807,12 @@ test "core/errors.zig と共通のエラー値は同じ" {
     try std.testing.expect(@as(anyerror, out_of_memory_core) == @as(anyerror, out_of_memory_mine));
 }
 
-/// テスト用の合成 FAT32 イメージ。
+/// Synthetic FAT32 image for tests.
 ///
-/// mkfs.fat が作る構造（BPB・FSInfo・FAT 2 枚・ルートディレクトリ）を最小限だけ
-/// 再現する。FAT32 は規格上 33MB 以上必要なので、実イメージはテストに埋め込めない。
-/// ここでは「FAT32 として筋の通った」小さなボリュームを作り、実装の読み書きを
-/// インメモリで検証する。
+/// Reproduces the minimum of the structure mkfs.fat creates (BPB, FSInfo, 2 FATs, root
+/// directory). By the specification FAT32 needs at least 33MB, so a real image cannot be
+/// embedded in a test. Instead a small volume that is "consistent as FAT32" is built here
+/// and the implementation's reads and writes are exercised in memory.
 const TestImage = struct {
     dev: block_device.MemoryDevice,
     partition_sector: u32 = 0,
@@ -1829,17 +1829,17 @@ const TestImage = struct {
     next_free: u32 = 3,
 
     const Options = struct {
-        /// パーティション内の総セクタ数。
+        /// Total number of sectors in the partition.
         total_sectors: u32 = 1024,
         sectors_per_cluster: u8 = 1,
         fat_count: u8 = 2,
-        /// 0 以外なら MBR を書いて、その位置からパーティションを置く。
+        /// When non-zero, write an MBR and place the partition at that position.
         partition_sector: u32 = 0,
-        /// ルートディレクトリに置くボリュームラベル（11 バイト短名）。
+        /// Volume label to place in the root directory (an 11-byte short name).
         volume_label: ?[]const u8 = null,
-        /// FSInfo を置くか（署名を書くか）。
+        /// Whether to place an FSInfo (whether to write the signature).
         fs_info: bool = true,
-        /// FAT のミラーリングを無効にするか（ExtFlags の bit7）。
+        /// Whether to disable FAT mirroring (ExtFlags bit 7).
         mirroring_disabled: bool = false,
     };
 
@@ -1853,7 +1853,7 @@ const TestImage = struct {
             .fs_info_sector = if (options.fs_info) 1 else 0,
         };
 
-        // 自分の FAT を保持できる最小の長さに収束させる
+        // Converge on the smallest length that can hold its own FAT
         var fat_sectors: u32 = 1;
         for (0..8) |_| {
             const data_sectors = image.total_sectors - image.reserved_sectors -
@@ -1875,7 +1875,7 @@ const TestImage = struct {
         if (image.partition_sector != 0) image.writeMbr();
         image.writeBootSector(options.mirroring_disabled);
 
-        // 予約領域の先頭 2 エントリと、ルートディレクトリのクラスタ
+        // The first 2 reserved entries and the root directory cluster
         image.setFat(0, 0x0FFFFFF8);
         image.setFat(1, 0x0FFFFFFF);
         image.setFat(image.root_cluster, fat_eoc_min);
@@ -1927,7 +1927,7 @@ const TestImage = struct {
         return std.mem.readInt(u32, self.sector(location.sector)[location.offset..][0..4], .little) & fat_mask;
     }
 
-    /// 両方の FAT コピーへ書く（実装とは独立）。
+    /// Write to both FAT copies (independent of the implementation).
     fn setFat(self: *TestImage, cluster: u32, value: u32) void {
         const location = self.fatOffset(cluster);
         for (0..self.fat_count) |copy| {
@@ -1985,10 +1985,10 @@ const TestImage = struct {
         boot[13] = self.sectors_per_cluster;
         std.mem.writeInt(u16, boot[14..16], self.reserved_sectors, .little);
         boot[16] = self.fat_count;
-        std.mem.writeInt(u16, boot[17..19], 0, .little); // FAT32 は 0
+        std.mem.writeInt(u16, boot[17..19], 0, .little); // 0 for FAT32
         std.mem.writeInt(u16, boot[19..21], 0, .little);
         boot[21] = 0xF8;
-        std.mem.writeInt(u16, boot[22..24], 0, .little); // FAT32 は 0
+        std.mem.writeInt(u16, boot[22..24], 0, .little); // 0 for FAT32
         std.mem.writeInt(u32, boot[28..32], self.partition_sector, .little);
         std.mem.writeInt(u32, boot[32..36], self.total_sectors, .little);
         std.mem.writeInt(u32, boot[36..40], self.sectors_per_fat, .little);
@@ -2025,7 +2025,7 @@ const TestImage = struct {
         }
     }
 
-    /// ディレクトリの空きスロットにエントリを書く（足りなければクラスタを足す）。
+    /// Write entries into free directory slots (appending clusters when there are not enough).
     fn addEntries(self: *TestImage, dir_cluster: u32, entries: []const [entry_size]u8) !void {
         var written: usize = 0;
         var cluster = dir_cluster;
@@ -2054,7 +2054,7 @@ const TestImage = struct {
         }
     }
 
-    /// データを書いてクラスタを連結する。先頭クラスタを返す。
+    /// Write data and link clusters. Returns the first cluster.
     fn allocChain(self: *TestImage, data: []const u8) !u32 {
         const cluster_size = @as(usize, self.sectors_per_cluster) * sector_size;
         if (data.len == 0) return 0;
@@ -2087,7 +2087,7 @@ const TestImage = struct {
         try self.addEntries(dir_cluster, &.{raw});
     }
 
-    /// LFN 付きのファイルを書く（テスト側の独立した実装）。
+    /// Write a file with an LFN (an independent implementation on the test side).
     fn addLfnFile(self: *TestImage, dir_cluster: u32, name: []const u8, data: []const u8) !void {
         const first = try self.allocChain(data);
 
@@ -2099,7 +2099,7 @@ const TestImage = struct {
             unit_count += 1;
         }
 
-        // 短名は基底 6 文字 + "~1" + 拡張子 3 文字
+        // The short name is 6 base characters + "~1" + a 3-character extension
         var short: [11]u8 = @splat(' ');
         var base_len: usize = 0;
         var ext_len: usize = 0;
@@ -2164,7 +2164,7 @@ const TestImage = struct {
         try self.addEntries(dir_cluster, slots[0 .. index + 1]);
     }
 
-    /// サブディレクトリを作る（"." と ".." を含む）。
+    /// Create a subdirectory (including "." and "..").
     fn addDirectory(self: *TestImage, parent_cluster: u32, short: *const [11]u8) !u32 {
         const cluster = try self.allocCluster();
         self.writeCluster(cluster, &.{});
@@ -2193,7 +2193,7 @@ const TestImage = struct {
         return cluster;
     }
 
-    /// チェーンを解放する（テスト側で断片化を作るため）。
+    /// Free a chain (used by tests to create fragmentation).
     fn freeChain(self: *TestImage, first_cluster: u32) void {
         var cluster = first_cluster;
         while (cluster >= 2 and cluster <= self.cluster_count + 1) {
@@ -2228,7 +2228,7 @@ const TestImage = struct {
         return count;
     }
 
-    /// FAT 1 枚目の先頭から 2 枚目と比べる（書き込み後に一致することを確かめる）。
+    /// Compare the second FAT against the first (to confirm they match after a write).
     fn fatCopiesMatch(self: *TestImage) bool {
         const first = self.firstFatSector();
         const second = first + self.sectors_per_fat;
@@ -2248,7 +2248,7 @@ const short_deep = [11]u8{ 'D', 'E', 'E', 'P', ' ', ' ', ' ', ' ', ' ', ' ', ' '
 const short_file = [11]u8{ 'F', 'I', 'L', 'E', ' ', ' ', ' ', ' ', 'T', 'X', 'T' };
 const short_big = [11]u8{ 'B', 'I', 'G', ' ', ' ', ' ', ' ', ' ', 'B', 'I', 'N' };
 
-/// テスト用: 読み出した内容を文字列として比べる。
+/// Test helper: compare read contents as a string.
 fn expectFileContent(volume: *Fat32, path: []const u8, expected: []const u8) !void {
     var buffer: [4096]u8 = @splat(0);
     if (expected.len > buffer.len) return error.TestUnexpectedResult;
@@ -2264,7 +2264,7 @@ fn fillPattern(out: []u8, seed: u32) void {
     }
 }
 
-test "mount: スーパーフロッピーの BPB と FSInfo を読む" {
+test "mount: reads the superfloppy BPB and FSInfo" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2287,7 +2287,7 @@ test "mount: スーパーフロッピーの BPB と FSInfo を読む" {
     try std.testing.expectEqual(image.free_count, volume.fs_info.free_count);
 }
 
-test "mount: MBR の先頭 4 エントリから FAT32 を探す" {
+test "mount: finds FAT32 in the first 4 MBR entries" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .partition_sector = 2048 });
     defer image.deinit(allocator);
@@ -2303,7 +2303,7 @@ test "mount: MBR の先頭 4 エントリから FAT32 を探す" {
     try std.testing.expectEqualStrings("hello mbr", data);
 }
 
-test "mount: セクタ長が 512 以外は InvalidEncoding" {
+test "mount: a sector size other than 512 is InvalidEncoding" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2312,20 +2312,20 @@ test "mount: セクタ長が 512 以外は InvalidEncoding" {
     try std.testing.expectError(error.InvalidEncoding, Fat32.mount(image.device(), allocator));
 }
 
-test "mount: クラスタあたりセクタ数が不正なら InvalidEncoding" {
+test "mount: an invalid sectors-per-cluster value is InvalidEncoding" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
-    image.sector(0)[13] = 3; // 2 の冪でない
+    image.sector(0)[13] = 3; // Not a power of two
 
     try std.testing.expectError(error.InvalidEncoding, Fat32.mount(image.device(), allocator));
 }
 
-test "mount: FAT12 / FAT16 は UnsupportedFatType" {
+test "mount: FAT12 / FAT16 is UnsupportedFatType" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
-    // FAT16 の BPB に作り変える（ルートエントリ数 != 0、FAT 長は 16 ビット側）
+    // Turn the BPB into a FAT16 one (root entry count != 0, FAT length in the 16-bit field)
     std.mem.writeInt(u16, image.sector(0)[17..19], 512, .little);
     std.mem.writeInt(u16, image.sector(0)[22..24], 40, .little);
     std.mem.writeInt(u32, image.sector(0)[36..40], 0, .little);
@@ -2333,7 +2333,7 @@ test "mount: FAT12 / FAT16 は UnsupportedFatType" {
     try std.testing.expectError(error.UnsupportedFatType, Fat32.mount(image.device(), allocator));
 }
 
-test "mount: exFAT は UnsupportedFatType" {
+test "mount: exFAT is UnsupportedFatType" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2342,18 +2342,18 @@ test "mount: exFAT は UnsupportedFatType" {
     try std.testing.expectError(error.UnsupportedFatType, Fat32.mount(image.device(), allocator));
 }
 
-test "mount: デバイスより大きいボリュームは Truncated" {
+test "mount: a volume larger than the device is Truncated" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
-    // デバイスを 4KB 短くする（BPB は元のまま）
+    // Make the device 4KB shorter (the BPB is left as is)
     const full = image.dev.storage;
     image.dev.storage = full[0 .. full.len - 4096];
     try std.testing.expectError(error.Truncated, Fat32.mount(image.device(), allocator));
-    image.dev.storage = full; // deinit で解放できるように元へ戻す
+    image.dev.storage = full; // Restore it so deinit can free it
 }
 
-test "mount: ルートクラスタが範囲外なら InvalidEncoding" {
+test "mount: a root cluster out of range is InvalidEncoding" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2362,7 +2362,7 @@ test "mount: ルートクラスタが範囲外なら InvalidEncoding" {
     try std.testing.expectError(error.InvalidEncoding, Fat32.mount(image.device(), allocator));
 }
 
-test "mount: パーティションテーブルも BPB も無ければ NotFat32" {
+test "mount: neither a partition table nor a BPB is NotFat32" {
     const allocator = std.testing.allocator;
     var memory = try block_device.MemoryDevice.create(allocator, 64 * sector_size);
     defer memory.deinit(allocator);
@@ -2370,7 +2370,7 @@ test "mount: パーティションテーブルも BPB も無ければ NotFat32" 
     try std.testing.expectError(error.NotFat32, Fat32.mount(memory.device(), allocator));
 }
 
-test "list: ルートの短名・LFN・ボリュームラベルを列挙する" {
+test "list: enumerates root short names, LFNs, and the volume label" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .volume_label = "ZHWW TEST  " });
     defer image.deinit(allocator);
@@ -2411,21 +2411,21 @@ test "list: ルートの短名・LFN・ボリュームラベルを列挙する" 
     try std.testing.expect(saw_long);
 }
 
-test "list: サブディレクトリ（. と .. を含む）と NT 小文字フラグ" {
+test "list: a subdirectory (including . and ..) and the NT lowercase flag" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
     const sub = try image.addDirectory(image.root_cluster, &short_zhww);
     try image.addFile(sub, &short_out_tmp, "signed psbt");
 
-    // NT ケースフラグ付きの短名（Windows が小文字 8.3 に付ける形）
+    // A short name with NT case flags (the form Windows puts on a lowercase 8.3 name)
     var lower: [11]u8 = @splat(' ');
     @memcpy(lower[0..6], "lowerc");
     @memcpy(lower[8..11], "txt");
     var slot: [entry_size]u8 = @splat(0);
     @memcpy(slot[0..11], &lower);
     slot[11] = attr_archive;
-    slot[12] = 0x18; // 基底も拡張子も小文字
+    slot[12] = 0x18; // Both base and extension are lowercase
     std.mem.writeInt(u16, slot[18..20], default_date, .little);
     std.mem.writeInt(u16, slot[24..26], default_date, .little);
     std.mem.writeInt(u32, slot[28..32], 3, .little);
@@ -2449,7 +2449,7 @@ test "list: サブディレクトリ（. と .. を含む）と NT 小文字フ�
     try std.testing.expect(saw_dir);
     try std.testing.expect(saw_lower);
 
-    // サブディレクトリの中身（"." と ".." も返る）
+    // Contents of the subdirectory ("." and ".." are returned too)
     var inner = try volume.openDir("/ZHWW");
     var saw_dot = false;
     var saw_dotdot = false;
@@ -2469,7 +2469,7 @@ test "list: サブディレクトリ（. と .. を含む）と NT 小文字フ�
     try std.testing.expect(saw_file);
 }
 
-test "read: 短名のファイルをバイト単位で読む" {
+test "read: reads a short-name file byte for byte" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2484,12 +2484,12 @@ test "read: 短名のファイルをバイト単位で読む" {
     const data = try volume.readFile("/BIG.BIN", &buffer);
     try std.testing.expectEqualSlices(u8, &payload, data);
 
-    // 小文字でも引ける（FAT の慣習）
+    // It can be opened in lowercase too (the FAT convention)
     const again = try volume.readFile("/big.bin", &buffer);
     try std.testing.expectEqualSlices(u8, &payload, again);
 }
 
-test "read: LFN のファイルを LFN 名でも 8.3 名でも読める" {
+test "read: reads an LFN file by LFN name and by 8.3 name" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2511,11 +2511,11 @@ test "read: LFN のファイルを LFN 名でも 8.3 名でも読める" {
     try std.testing.expectEqualStrings("LongFileName-PSBT.bin", entry.nameSlice());
 }
 
-test "read: 4 文字の拡張子（IN.PSBT）は LFN として読む" {
+test "read: a 4-character extension (IN.PSBT) is read as an LFN" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
-    // 4 文字の拡張子は 8.3 に収まらないので、必ず LFN になる
+    // A 4-character extension does not fit 8.3, so it always becomes an LFN
     try image.addLfnFile(image.root_cluster, "IN.PSBT", "psbt payload");
 
     var volume = try Fat32.mount(image.device(), allocator);
@@ -2526,7 +2526,7 @@ test "read: 4 文字の拡張子（IN.PSBT）は LFN として読む" {
     try std.testing.expectEqualStrings("psbt payload", data);
 }
 
-test "read: サブディレクトリの中を読む" {
+test "read: reads inside a subdirectory" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2546,30 +2546,30 @@ test "read: サブディレクトリの中を読む" {
     try std.testing.expectEqual(image.root_cluster, root_entry.first_cluster);
 }
 
-test "read: 断片化した複数クラスタのファイルを読む" {
+test "read: reads a fragmented file spanning several clusters" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
 
-    // 先に 4 クラスタのファイルを 2 つ置き、1 つ目を解放して穴を作る。
-    // そのあと 5 クラスタのファイルを書くと、穴（4 個）＋後方のクラスタに分かれる。
+    // First place two 4-cluster files, then free the first to create a hole.
+    // Writing a 5-cluster file afterwards splits it into the hole (4) plus later clusters.
     try image.addFile(image.root_cluster, &short_readme, "A");
     var hole_payload: [4 * 512]u8 = undefined;
     fillPattern(&hole_payload, 11);
-    try image.addFile(image.root_cluster, &short_big, &hole_payload); // クラスタ 4〜7
+    try image.addFile(image.root_cluster, &short_big, &hole_payload); // Clusters 4 to 7
     var filler_payload: [4 * 512]u8 = undefined;
     fillPattern(&filler_payload, 22);
     var filler_short: [11]u8 = @splat(' ');
     @memcpy(filler_short[0..5], "FILLR");
-    try image.addFile(image.root_cluster, &filler_short, &filler_payload); // クラスタ 8〜11
-    image.freeChain(4); // 穴（クラスタ 4〜7）を空ける
+    try image.addFile(image.root_cluster, &filler_short, &filler_payload); // Clusters 8 to 11
+    image.freeChain(4); // Free the hole (clusters 4 to 7)
 
     var fragmented: [5 * 512]u8 = undefined;
     fillPattern(&fragmented, 33);
     var target_short: [11]u8 = @splat(' ');
     @memcpy(target_short[0..4], "FRAG");
     @memcpy(target_short[8..11], "BIN");
-    try image.addFile(image.root_cluster, &target_short, &fragmented); // 4〜7 + 12
+    try image.addFile(image.root_cluster, &target_short, &fragmented); // 4 to 7 + 12
 
     var chain_buffer: [16]u32 = @splat(0);
     const chain = image.chainOf(4, &chain_buffer);
@@ -2578,7 +2578,7 @@ test "read: 断片化した複数クラスタのファイルを読む" {
     for (chain[1..], chain[0 .. chain.len - 1]) |current, previous| {
         if (current != previous + 1) jump = true;
     }
-    try std.testing.expect(jump); // 本当に断片化している
+    try std.testing.expect(jump); // Really fragmented
 
     var volume = try Fat32.mount(image.device(), allocator);
     defer volume.deinit();
@@ -2588,7 +2588,7 @@ test "read: 断片化した複数クラスタのファイルを読む" {
     try std.testing.expectEqualSlices(u8, &fragmented, data);
 }
 
-test "read: クラスタ長が 4 セクタのボリューム" {
+test "read: a volume with a 4-sector cluster" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .total_sectors = 2048, .sectors_per_cluster = 4 });
     defer image.deinit(allocator);
@@ -2605,7 +2605,7 @@ test "read: クラスタ長が 4 セクタのボリューム" {
     try std.testing.expectEqualSlices(u8, &payload, data);
 }
 
-test "read: 出力バッファが足りなければ BufferTooSmall" {
+test "read: an insufficient output buffer is BufferTooSmall" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2624,7 +2624,7 @@ test "read: 出力バッファが足りなければ BufferTooSmall" {
     try std.testing.expectEqual(@as(usize, 600), exact.len);
 }
 
-test "read: 無いパス・ディレクトリ・相対パス・.. を弾く" {
+test "read: rejects a missing path, a directory, a relative path, and .." {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2643,7 +2643,7 @@ test "read: 無いパス・ディレクトリ・相対パス・.. を弾く" {
     try std.testing.expectError(error.NotADirectory, volume.readFile("/FILE.TXT/x", &buffer));
     try std.testing.expectError(error.NotADirectory, volume.openDir("/FILE.TXT"));
 
-    // "/" と "/ZHWW/" は同じディレクトリを指す
+    // "/" and "/ZHWW/" point at the same directory
     const root_entry = try volume.stat("/");
     const sub_entry = try volume.stat("/ZHWW/");
     try std.testing.expectEqual(sub, sub_entry.first_cluster);
@@ -2653,17 +2653,17 @@ test "read: 無いパス・ディレクトリ・相対パス・.. を弾く" {
     try std.testing.expect(!try volume.exists("/ZHWW/NOPE.TXT"));
 }
 
-test "read: 循環した FAT チェーンは CorruptChain（無限ループしない）" {
+test "read: a looping FAT chain is CorruptChain (no infinite loop)" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .total_sectors = 96 });
     defer image.deinit(allocator);
-    // 5 クラスタ分のサイズを持つファイルを作り、チェーンを 3 個で循環させる
+    // Create a file the size of 5 clusters and make the chain loop after 3
     var payload: [5 * 512]u8 = @splat(0x5A);
     try image.addFile(image.root_cluster, &short_big, &payload);
     var chain_buffer: [8]u32 = @splat(0);
     const chain = image.chainOf(3, &chain_buffer);
     try std.testing.expectEqual(@as(usize, 5), chain.len);
-    image.setFat(chain[chain.len - 1], chain[0]); // 末尾を先頭へ繋いで循環
+    image.setFat(chain[chain.len - 1], chain[0]); // Link the tail back to the head to loop
 
     var volume = try Fat32.mount(image.device(), allocator);
     defer volume.deinit();
@@ -2671,18 +2671,18 @@ test "read: 循環した FAT チェーンは CorruptChain（無限ループし�
     var buffer: [5 * 512]u8 = @splat(0);
     try std.testing.expectError(error.CorruptChain, volume.readFile("/BIG.BIN", &buffer));
 
-    // 一覧（ディレクトリ自体は正常）と削除は影響を受けない…削除は循環を検出する
+    // Listing (the directory is fine) and delete are unaffected... delete does detect the loop
     _ = try volume.stat("/BIG.BIN");
     try std.testing.expectError(error.CorruptChain, volume.deleteFile("/BIG.BIN"));
 }
 
-test "read: 自己ループしたチェーンも CorruptChain" {
+test "read: a self-looping chain is CorruptChain too" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .total_sectors = 96 });
     defer image.deinit(allocator);
     var payload: [4 * 512]u8 = @splat(0x33);
     try image.addFile(image.root_cluster, &short_big, &payload);
-    image.setFat(3, 3); // 自分自身を指す
+    image.setFat(3, 3); // Points at itself
 
     var volume = try Fat32.mount(image.device(), allocator);
     defer volume.deinit();
@@ -2691,14 +2691,14 @@ test "read: 自己ループしたチェーンも CorruptChain" {
     try std.testing.expectError(error.CorruptChain, volume.readFile("/BIG.BIN", &buffer));
 }
 
-test "read: 範囲外・フリークラスタを指すチェーンは CorruptChain" {
+test "read: a chain pointing out of range or at a free cluster is CorruptChain" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .total_sectors = 96 });
     defer image.deinit(allocator);
     var payload: [3 * 512]u8 = @splat(0x44);
     try image.addFile(image.root_cluster, &short_big, &payload);
 
-    // (1) 範囲外を指す
+    // (1) Points out of range
     image.setFat(3, image.cluster_count + 10);
     var volume = try Fat32.mount(image.device(), allocator);
     defer volume.deinit();
@@ -2706,20 +2706,20 @@ test "read: 範囲外・フリークラスタを指すチェーンは CorruptCha
     try std.testing.expectError(error.CorruptChain, volume.readFile("/BIG.BIN", &buffer));
     volume.deinit();
 
-    // (2) フリークラスタを指す
+    // (2) Points at a free cluster
     image.setFat(3, 0);
     var volume2 = try Fat32.mount(image.device(), allocator);
     defer volume2.deinit();
     try std.testing.expectError(error.CorruptChain, volume2.readFile("/BIG.BIN", &buffer));
 }
 
-test "read: サイズよりチェーンが短ければ CorruptChain" {
+test "read: a chain shorter than the size is CorruptChain" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .total_sectors = 96 });
     defer image.deinit(allocator);
     var payload: [3 * 512]u8 = @splat(0x55);
     try image.addFile(image.root_cluster, &short_big, &payload);
-    image.setFat(3, fat_eoc_min); // 1 クラスタで終端にする
+    image.setFat(3, fat_eoc_min); // Terminate after one cluster
 
     var volume = try Fat32.mount(image.device(), allocator);
     defer volume.deinit();
@@ -2728,7 +2728,7 @@ test "read: サイズよりチェーンが短ければ CorruptChain" {
     try std.testing.expectError(error.CorruptChain, volume.readFile("/BIG.BIN", &buffer));
 }
 
-test "write: 新しい短名ファイルを書き、FAT 2 枚と FSInfo を更新する" {
+test "write: writes a new short-name file and updates both FATs and FSInfo" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2741,20 +2741,20 @@ test "write: 新しい短名ファイルを書き、FAT 2 枚と FSInfo を更�
     fillPattern(&payload, 99);
     try volume.writeFile("/NEW.BIN", &payload);
 
-    // FAT の 2 枚が一致する
+    // The two FAT copies match
     try std.testing.expect(image.fatCopiesMatch());
 
-    // クラスタが 3 個使われた（1300 バイト / 512）
+    // 3 clusters were used (1300 bytes / 512)
     try std.testing.expectEqual(free_before - 3, image.freeClusters());
     try std.testing.expectEqual(free_before - 3, volume.fs_info.free_count);
 
-    // FSInfo の free_count がディスクにも書かれている
+    // FSInfo's free_count is written to disk too
     const fsinfo = image.sector(1);
     try std.testing.expectEqual(free_before - 3, std.mem.readInt(u32, fsinfo[488..492], .little));
     const backup = image.sector(1 + 6);
     try std.testing.expectEqual(free_before - 3, std.mem.readInt(u32, backup[488..492], .little));
 
-    // 書き戻して読める
+    // Readable after writing back
     var buffer: [1300]u8 = @splat(0);
     const data = try volume.readFile("/NEW.BIN", &buffer);
     try std.testing.expectEqualSlices(u8, &payload, data);
@@ -2765,7 +2765,7 @@ test "write: 新しい短名ファイルを書き、FAT 2 枚と FSInfo を更�
     try std.testing.expectEqual(attr_archive, entry.attr);
 }
 
-test "write: 長い名前は LFN として書き、並びとチェックサムが正しい" {
+test "write: writes a long name as an LFN with the right order and checksum" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2776,32 +2776,32 @@ test "write: 長い名前は LFN として書き、並びとチェックサム�
     const name = "LongFileName-PSBT.bin";
     try volume.writeFile("/LongFileName-PSBT.bin", "signed psbt bytes");
 
-    // 自分自身の読み出しで確認
+    // Confirmed by reading it back through the implementation itself
     var buffer: [64]u8 = @splat(0);
     const data = try volume.readFile("/LongFileName-PSBT.bin", &buffer);
     try std.testing.expectEqualStrings("signed psbt bytes", data);
 
-    // ディスク上の LFN を独立に検証する（並び順・0x40・チェックサム・パディング）。
-    // "LongFileName-PSBT.bin" は 21 コード単位 → LFN 2 個 + 短名 1 個。ディスク順は
-    // 「名前の後半（ordinal 2、0x40 付き）」「前半（ordinal 1）」「短名」。
+    // Verify the on-disk LFN independently (order, 0x40, checksum, padding).
+    // "LongFileName-PSBT.bin" is 21 code units -> 2 LFN entries + 1 short-name entry.
+    // Disk order: second half (ordinal 2, with 0x40), first half (ordinal 1), short name.
     const target = image.sector(image.clusterSector(image.root_cluster));
     const lfn_second = target[0..entry_size];
     const lfn_first = target[entry_size..][0..entry_size];
     const short_entry = target[2 * entry_size ..][0..entry_size];
     try std.testing.expectEqual(@as(u8, attr_lfn), lfn_second[11]);
     try std.testing.expectEqual(@as(u8, attr_lfn), lfn_first[11]);
-    try std.testing.expectEqual(@as(u8, 0x42), lfn_second[0]); // 2 個組の最後（0x40 付き）
+    try std.testing.expectEqual(@as(u8, 0x42), lfn_second[0]); // Last of a 2-entry set (with 0x40)
     try std.testing.expectEqual(@as(u8, 0x01), lfn_first[0]);
-    try std.testing.expectEqual(@as(u8, 0), lfn_second[12]); // LFN エントリの type は 0
+    try std.testing.expectEqual(@as(u8, 0), lfn_second[12]); // The type field of an LFN entry is 0
 
     var short_name: [11]u8 = short_entry[0..11].*;
     if (short_name[0] == 0x05) short_name[0] = 0xE5;
-    try std.testing.expectEqualSlices(u8, "LONGFI~1BIN", &short_name); // 生の 11 バイト（点は入らない）
+    try std.testing.expectEqualSlices(u8, "LONGFI~1BIN", &short_name); // Raw 11 bytes (no dot)
     try std.testing.expectEqual(shortNameChecksum(&short_name), lfn_second[13]);
     try std.testing.expectEqual(shortNameChecksum(&short_name), lfn_first[13]);
     try std.testing.expectEqual(@as(u32, 17), std.mem.readInt(u32, short_entry[28..32], .little));
 
-    // UTF-16 を組み立て直して名前と一致することを確かめる
+    // Reassemble the UTF-16 and check that it matches the name
     var units: [max_name_utf16]u16 = @splat(0);
     for (0..lfn_chars) |position| {
         units[position] = std.mem.readInt(u16, lfn_first[lfnCharOffset(position)..][0..2], .little);
@@ -2810,14 +2810,14 @@ test "write: 長い名前は LFN として書き、並びとチェックサム�
     var decoded: [max_name_utf8]u8 = @splat(0);
     const decoded_len = try utf16ToUtf8(&decoded, units[0..21]);
     try std.testing.expectEqualStrings(name, decoded[0..decoded_len]);
-    try std.testing.expectEqual(@as(u16, 0x0000), units[21]); // 終端
-    try std.testing.expectEqual(@as(u16, 0xFFFF), units[22]); // そのあとは埋め草
+    try std.testing.expectEqual(@as(u16, 0x0000), units[21]); // Terminator
+    try std.testing.expectEqual(@as(u16, 0xFFFF), units[22]); // Padding after that
 
-    // 8.3 の別名からも読める
+    // Readable through the 8.3 alias as well
     const by_short = try volume.readFile("/LONGFI~1.BIN", &buffer);
     try std.testing.expectEqualStrings("signed psbt bytes", by_short);
 
-    // 一覧にも長い名前で出る
+    // It also shows up in the listing under the long name
     var entry: Entry = .{};
     var iterator = try volume.openDir("/");
     var found = false;
@@ -2827,7 +2827,7 @@ test "write: 長い名前は LFN として書き、並びとチェックサム�
     try std.testing.expect(found);
 }
 
-test "write: 4 文字の拡張子（OUT.PSBT）を LFN として書ける" {
+test "write: a 4-character extension (OUT.PSBT) is written as an LFN" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2847,7 +2847,7 @@ test "write: 4 文字の拡張子（OUT.PSBT）を LFN として書ける" {
     try std.testing.expectEqualStrings("OUT~1.PSB", entry.shortDisplay(&short_buffer));
 }
 
-test "write: UTF-8 の名前（日本語）を LFN として書ける" {
+test "write: a UTF-8 name (Japanese) is written as an LFN" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2867,7 +2867,7 @@ test "write: UTF-8 の名前（日本語）を LFN として書ける" {
     try std.testing.expect(entry.has_lfn);
 }
 
-test "write: 既存ファイルの上書きでクラスタが漏れない" {
+test "write: overwriting an existing file leaks no clusters" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2881,7 +2881,7 @@ test "write: 既存ファイルの上書きでクラスタが漏れない" {
     try volume.writeFile("/OUT.TMP", &small);
     try std.testing.expectEqual(free_before - 1, image.freeClusters());
 
-    // 大きくする
+    // Make it larger
     var large: [2400]u8 = undefined;
     fillPattern(&large, 2);
     try volume.writeFile("/OUT.TMP", &large);
@@ -2889,12 +2889,12 @@ test "write: 既存ファイルの上書きでクラスタが漏れない" {
     var buffer: [2400]u8 = @splat(0);
     try std.testing.expectEqualSlices(u8, &large, try volume.readFile("/OUT.TMP", &buffer));
 
-    // 小さくする
-    try volume.writeFile("/out.tmp", &small); // 大文字小文字違いも同じファイル
+    // Make it smaller
+    try volume.writeFile("/out.tmp", &small); // A different case is the same file
     try std.testing.expectEqual(free_before - 1, image.freeClusters());
     try std.testing.expectEqualSlices(u8, &small, try volume.readFile("/OUT.TMP", &buffer));
 
-    // エントリは 1 つだけ
+    // Only one entry
     var entry: Entry = .{};
     var iterator = try volume.openDir("/");
     var count: usize = 0;
@@ -2906,7 +2906,7 @@ test "write: 既存ファイルの上書きでクラスタが漏れない" {
     try std.testing.expect(image.fatCopiesMatch());
 }
 
-test "write: 空のファイルを書いて読める" {
+test "write: an empty file can be written and read" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2923,16 +2923,16 @@ test "write: 空のファイルを書いて読める" {
     const data = try volume.readFile("/EMPTY.TXT", &buffer);
     try std.testing.expectEqual(@as(usize, 0), data.len);
 
-    // 上書きで中身を入れる
+    // Put contents in by overwriting
     try volume.writeFile("/EMPTY.TXT", "now it has bytes");
     try std.testing.expectEqualStrings("now it has bytes", try volume.readFile("/EMPTY.TXT", &buffer));
 
-    // また空にする
+    // Empty it again
     try volume.writeFile("/EMPTY.TXT", "");
     try std.testing.expectEqual(@as(u32, 0), (try volume.stat("/EMPTY.TXT")).first_cluster);
 }
 
-test "write: サブディレクトリの中へ書ける" {
+test "write: can write into a subdirectory" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -2952,31 +2952,31 @@ test "write: サブディレクトリの中へ書ける" {
     try std.testing.expectError(error.NotFound, volume.writeFile("/NOPE/OUT.TMP", "x"));
 }
 
-test "write: ディレクトリが満杯ならクラスタを足して伸ばす" {
+test "write: a full directory grows by appending a cluster" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .total_sectors = 128 });
     defer image.deinit(allocator);
 
-    // ルートディレクトリ（16 スロット）を全部埋める
+    // Fill the root directory (16 slots) completely
     var count: u32 = 0;
     while (count < entries_per_sector) : (count += 1) {
         var short: [11]u8 = @splat(' ');
-        short[0] = 'A' + @as(u8, @intCast(count / 10)); // A0〜A9, B0〜B5
+        short[0] = 'A' + @as(u8, @intCast(count / 10)); // A0 to A9, B0 to B5
         short[1] = '0' + @as(u8, @intCast(count % 10));
         @memcpy(short[8..11], "TXT");
         try image.addFile(image.root_cluster, &short, &[_]u8{0x77});
     }
-    try std.testing.expect(image.getFat(image.root_cluster) >= fat_eoc_min); // まだ 1 クラスタ
+    try std.testing.expect(image.getFat(image.root_cluster) >= fat_eoc_min); // Still one cluster
 
     var volume = try Fat32.mount(image.device(), allocator);
     defer volume.deinit();
 
-    // 名前が LFN になるので 2 スロット必要 → 伸ばさざるを得ない
+    // The name becomes an LFN, so 2 slots are needed -> it has to grow
     var payload: [600]u8 = undefined;
     fillPattern(&payload, 8);
     try volume.writeFile("/Extended-Name.bin", &payload);
 
-    try std.testing.expect(image.getFat(image.root_cluster) < fat_eoc_min); // 伸びた（終端ではない）
+    try std.testing.expect(image.getFat(image.root_cluster) < fat_eoc_min); // It grew (not the end)
     try std.testing.expect(image.fatCopiesMatch());
 
     var buffer: [600]u8 = @splat(0);
@@ -2984,7 +2984,7 @@ test "write: ディレクトリが満杯ならクラスタを足して伸ばす"
     try std.testing.expectEqualStrings("A0.TXT", (try volume.stat("/A0.TXT")).nameSlice());
     try std.testing.expectEqualStrings("B5.TXT", (try volume.stat("/B5.TXT")).nameSlice());
 
-    // 一覧で 17 件（16 + 1）
+    // 17 entries in the listing (16 + 1)
     var entry: Entry = .{};
     var iterator = try volume.openDir("/");
     var seen: usize = 0;
@@ -2992,12 +2992,12 @@ test "write: ディレクトリが満杯ならクラスタを足して伸ばす"
     try std.testing.expectEqual(@as(usize, 17), seen);
 }
 
-test "write: 空きクラスタが無ければ NoFreeCluster" {
+test "write: no free cluster gives NoFreeCluster" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .total_sectors = 64 });
     defer image.deinit(allocator);
 
-    // 空きクラスタを全部 1 つのファイルで埋める
+    // Fill every free cluster with a single file
     const free = image.freeClusters();
     const payload = try allocator.alloc(u8, free * 512);
     defer allocator.free(payload);
@@ -3010,11 +3010,11 @@ test "write: 空きクラスタが無ければ NoFreeCluster" {
 
     var payload_after: [1024]u8 = @splat(0x01);
     try std.testing.expectError(error.NoFreeCluster, volume.writeFile("/NOPE.BIN", &payload_after));
-    // 失敗しても確保済みクラスタを残さない
+    // A failure leaves no allocated clusters behind
     try std.testing.expectEqual(@as(u32, 0), image.freeClusters());
 }
 
-test "delete: エントリとクラスタが消える" {
+test "delete: the entry and its clusters disappear" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -3035,7 +3035,7 @@ test "delete: エントリとクラスタが消える" {
     try std.testing.expectError(error.NotFound, volume.deleteFile("/OUT.TMP"));
 }
 
-test "delete: LFN 付きのファイルは LFN エントリも消える" {
+test "delete: a file with an LFN loses its LFN entries too" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -3052,16 +3052,16 @@ test "delete: LFN 付きのファイルは LFN エントリも消える" {
     try std.testing.expect(!try volume.exists("/IN.PSBT"));
     try expectFileContent(&volume, "/KEEP.TXT", "keep me");
 
-    // ディレクトリの先頭 2 スロット（LFN + 短名）が削除済みになっている
+    // The first 2 slots of the directory (LFN + short name) are now deleted
     const target = image.sector(image.clusterSector(image.root_cluster));
     try std.testing.expectEqual(@as(u8, entry_free), target[0]);
     try std.testing.expectEqual(@as(u8, entry_free), target[entry_size]);
 
-    // 別のファイルを書いても壊れない
+    // Writing another file does not corrupt anything
     try volume.writeFile("/AFTER.BIN", "after");
     try expectFileContent(&volume, "/AFTER.BIN", "after");
 
-    // 一覧に残骸が出ない
+    // No leftovers show up in the listing
     var item: Entry = .{};
     var iterator = try volume.openDir("/");
     while (try iterator.next(&item)) {
@@ -3069,7 +3069,7 @@ test "delete: LFN 付きのファイルは LFN エントリも消える" {
     }
 }
 
-test "delete: ディレクトリは IsDirectory" {
+test "delete: a directory is IsDirectory" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -3080,7 +3080,7 @@ test "delete: ディレクトリは IsDirectory" {
     try std.testing.expectError(error.IsDirectory, volume.deleteFile("/ZHWW"));
 }
 
-test "rename: OUT.TMP → OUT.PSBT（LFN が必要）でもデータが保たれる" {
+test "rename: OUT.TMP → OUT.PSBT (which needs an LFN) keeps the data" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -3094,7 +3094,7 @@ test "rename: OUT.TMP → OUT.PSBT（LFN が必要）でもデータが保たれ
     const before = try volume.stat("/OUT.TMP");
     const free_before = image.freeClusters();
 
-    // OUT.TMP は 8.3 だが OUT.PSBT は拡張子が 4 文字 → LFN を作り直す経路
+    // OUT.TMP is 8.3 but OUT.PSBT has a 4-character extension -> the path that rebuilds the LFN
     try volume.rename("/OUT.TMP", "/OUT.PSBT");
 
     try std.testing.expect(!try volume.exists("/OUT.TMP"));
@@ -3102,7 +3102,7 @@ test "rename: OUT.TMP → OUT.PSBT（LFN が必要）でもデータが保たれ
     try std.testing.expectEqualStrings("OUT.PSBT", after.nameSlice());
     try std.testing.expect(after.has_lfn);
     try std.testing.expectEqual(before.size, after.size);
-    try std.testing.expectEqual(before.first_cluster, after.first_cluster); // データは動かさない
+    try std.testing.expectEqual(before.first_cluster, after.first_cluster); // The data is not moved
     try std.testing.expectEqual(free_before, image.freeClusters());
 
     var buffer: [2400]u8 = @splat(0);
@@ -3110,7 +3110,7 @@ test "rename: OUT.TMP → OUT.PSBT（LFN が必要）でもデータが保たれ
     try std.testing.expectEqualSlices(u8, &payload, try volume.readFile("/OUT~1.PSB", &buffer));
 }
 
-test "rename: 8.3 どうしはその場で名前だけ書き換える" {
+test "rename: between 8.3 names only the name is rewritten in place" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -3120,24 +3120,24 @@ test "rename: 8.3 どうしはその場で名前だけ書き換える" {
 
     try volume.writeFile("/OUT.TMP", "payload");
     const before = try volume.stat("/OUT.TMP");
-    const raw_before = image.sector(before.sector)[before.offset + 11]; // 属性バイト
+    const raw_before = image.sector(before.sector)[before.offset + 11]; // The attribute byte
 
     try volume.rename("/OUT.TMP", "/OUT.LOG");
 
     const after = try volume.stat("/OUT.LOG");
-    try std.testing.expectEqual(before.index, after.index); // 同じスロット
+    try std.testing.expectEqual(before.index, after.index); // The same slot
     try std.testing.expectEqual(before.sector, after.sector);
     try std.testing.expectEqual(before.offset, after.offset);
     try std.testing.expectEqual(before.first_cluster, after.first_cluster);
     try std.testing.expectEqual(raw_before, image.sector(after.sector)[after.offset + 11]);
     try expectFileContent(&volume, "/OUT.LOG", "payload");
 
-    // データのバイトも名前だけが変わったことを確かめる（他のフィールドは同じ）
+    // Check in the raw bytes that only the name changed (the other fields are the same)
     const raw_after = image.sector(after.sector);
     try std.testing.expectEqualStrings("OUT     LOG", raw_after[after.offset..][0..11]);
 }
 
-test "rename: 長い名前から 8.3 へ、8.3 から長い名前へ" {
+test "rename: from a long name to 8.3 and from 8.3 to a long name" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -3155,7 +3155,7 @@ test "rename: 長い名前から 8.3 へ、8.3 から長い名前へ" {
     try std.testing.expect(!try volume.exists("/SHORT.BIN"));
     try std.testing.expect(image.fatCopiesMatch());
 
-    // 一覧に 1 件だけ
+    // Only one entry in the listing
     var entry: Entry = .{};
     var iterator = try volume.openDir("/");
     var count: usize = 0;
@@ -3163,7 +3163,7 @@ test "rename: 長い名前から 8.3 へ、8.3 から長い名前へ" {
     try std.testing.expectEqual(@as(usize, 1), count);
 }
 
-test "rename: 移動先が既にあれば AlreadyExists、別ディレクトリへは InvalidPath" {
+test "rename: an existing destination is AlreadyExists, another directory is InvalidPath" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -3182,13 +3182,13 @@ test "rename: 移動先が既にあれば AlreadyExists、別ディレクトリ�
     try std.testing.expectError(error.NotFound, volume.rename("/NOPE.TMP", "/OUT.LOG"));
     try std.testing.expectError(error.NotFound, volume.rename("/OUT.LOG", "/OUT.LOG"));
 
-    // 同じエントリを指す名前（大文字小文字だけの変更）はその場で書き換わる
+    // A name pointing at the same entry (a case-only change) is rewritten in place
     try volume.rename("/OUT.PSBT", "/out.psbt");
     try std.testing.expectEqualStrings("out.psbt", (try volume.stat("/out.psbt")).nameSlice());
     try expectFileContent(&volume, "/out.psbt", "b");
 }
 
-test "write: 名前の検証（長すぎる・使えない文字・空）" {
+test "write: name validation (too long, unusable characters, empty)" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -3208,7 +3208,7 @@ test "write: 名前の検証（長すぎる・使えない文字・空）" {
     try std.testing.expectError(error.InvalidPath, volume.writeFile("REL.TXT", "x"));
 }
 
-test "write: 255 コード単位ちょうどの名前を書ける" {
+test "write: a name of exactly 255 code units can be written" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .total_sectors = 256 });
     defer image.deinit(allocator);
@@ -3218,7 +3218,7 @@ test "write: 255 コード単位ちょうどの名前を書ける" {
 
     var name: [1 + 251 + 4]u8 = @splat('b');
     name[0] = '/';
-    @memcpy(name[252..256], ".bin"); // 251 + 4 = 255 コード単位
+    @memcpy(name[252..256], ".bin"); // 251 + 4 = 255 code units
     try volume.writeFile(&name, "max name");
     var buffer: [32]u8 = @splat(0);
     try std.testing.expectEqualStrings("max name", try volume.readFile(&name, &buffer));
@@ -3236,7 +3236,7 @@ test "write: 255 コード単位ちょうどの名前を書ける" {
     try std.testing.expect(found);
 }
 
-test "write: ミラーリング無効のボリュームでは有効な FAT だけを更新する" {
+test "write: a volume with mirroring disabled updates only the active FAT" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .mirroring_disabled = true });
     defer image.deinit(allocator);
@@ -3249,13 +3249,13 @@ test "write: ミラーリング無効のボリュームでは有効な FAT だ�
     try volume.writeFile("/OUT.TMP", "mirroring off");
     try expectFileContent(&volume, "/OUT.TMP", "mirroring off");
 
-    // 2 枚目は触られていない（0 のまま）
+    // The second copy is untouched (still 0)
     const second = image.firstFatSector() + image.sectors_per_fat;
     const offset = image.fatOffset(3).offset;
     try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, image.sector(second)[offset..][0..4], .little) & fat_mask);
 }
 
-test "write: 8.3 で使えない文字を含む名前は別名に寄せる" {
+test "write: a name with characters unusable in 8.3 falls back to an alias" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{});
     defer image.deinit(allocator);
@@ -3269,20 +3269,20 @@ test "write: 8.3 で使えない文字を含む名前は別名に寄せる" {
     var short_buffer: [12]u8 = @splat(0);
     try std.testing.expectEqualStrings("OUT~1.PSB", entry.shortDisplay(&short_buffer));
 
-    // 2 つ目は ~2 になる
+    // The second one becomes ~2
     try volume.writeFile("/out2.psbt", "second");
     const second = try volume.stat("/out2.psbt");
     var second_buffer: [12]u8 = @splat(0);
     try std.testing.expectEqualStrings("OUT2~1.PSB", second.shortDisplay(&second_buffer));
 
-    // 予約名（CON）は 8.3 にせず LFN にする
+    // A reserved name (CON) becomes an LFN instead of 8.3
     try volume.writeFile("/CON", "reserved");
     const reserved = try volume.stat("/CON");
     try std.testing.expect(reserved.has_lfn);
     try std.testing.expectEqualStrings("CON", reserved.nameSlice());
 }
 
-test "write: 書き込み後の不変条件（FAT 2 枚の一致と FSInfo の整合）" {
+test "write: post-write invariants (the two FATs match and FSInfo is consistent)" {
     const allocator = std.testing.allocator;
     var image = try TestImage.init(allocator, .{ .total_sectors = 512 });
     defer image.deinit(allocator);
@@ -3312,7 +3312,7 @@ test "write: 書き込み後の不変条件（FAT 2 枚の一致と FSInfo の�
     const data = try volume.readFile("/D.PSBT", &buffer);
     try std.testing.expectEqualSlices(u8, payload[0..1500], data);
 
-    // FAT のチェーンも壊れていない（使用中の全クラスタから辿って循環が無いこと）
+    // The FAT chains are intact too (walking every in-use cluster finds no loop)
     var cluster: u32 = 2;
     while (cluster <= image.cluster_count + 1) : (cluster += 1) {
         if (image.getFat(cluster) == fat_free) continue;

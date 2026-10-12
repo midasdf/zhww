@@ -1,11 +1,12 @@
-//! ファイルをブロックデバイスとして扱う実装。
+//! A block device backed by a file.
 //!
-//! **host（PC）専用**。microSD の実物が無くても、FAT32 のイメージファイルに対して
-//! カード上の操作を再現できるようにするためのもの（開発用 CLI の `card` コマンドで使う）。
-//! 実機では SPI / SDIO 経由の実装に差し替える（同じ `BlockDevice` の口を使う）。
+//! **Host (PC) only.** Lets you reproduce the on-card operations against a FAT32
+//! image file without a real microSD card (used by the developer CLI's `card` command).
+//! On the device it is swapped for an SPI / SDIO implementation (the same `BlockDevice`
+//! interface).
 //!
-//! 読み書きは位置指定（`readPositionalAll` / `writePositionalAll`）で行うので、
-//! ファイル位置に依存しない。
+//! Reads and writes are positional (`readPositionalAll` / `writePositionalAll`),
+//! so they do not depend on the file position.
 
 const std = @import("std");
 const block_device = @import("zhww").block_device;
@@ -25,7 +26,7 @@ pub const FileDevice = struct {
         };
     }
 
-    /// `BlockDevice` として使うための口を作る。
+    /// Build the `BlockDevice` handle for this file device.
     pub fn device(self: *FileDevice) block_device.BlockDevice {
         return .{ .context = self, .vtable = &vtable };
     }

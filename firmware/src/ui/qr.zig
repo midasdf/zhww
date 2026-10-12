@@ -1,114 +1,119 @@
-//! QR コード（ISO/IEC 18004）エンコーダ。表示専用で、**デコーダは含まない**。
+//! QR Code (ISO/IEC 18004) encoder. Display only; **it does not include a decoder**.
 //!
-//! 用途は 240×240 LCD に UR 文字列・アドレス・署名結果を QR として表示すること。
-//! 署名フローから渡される数百バイトの UR 文字列を扱えるよう、バージョン 1〜40 に対応する。
+//! Its purpose is to show UR strings, addresses and signing results as QR codes on a 240x240 LCD.
+//! It supports versions 1-40 so that it can handle the several-hundred-byte UR strings passed in by the signing flow.
 //!
-//! **実装範囲**
-//! - モード: 数字 / 英数字 / バイト（1 シンボル = 1 セグメント。混在セグメント最適化はしない）
-//! - 誤り訂正: L / M / Q / H（自動昇格 "boost error" はしない。指定どおりに作る）
-//! - バージョン: 1〜40。入力長と EC レベルから最小を自動選択（指定も可能）
-//! - マスク: 8 種類すべてを試し、規格 Table 11 の 4 ペナルティ（N1〜N4）の合計が
-//!   最小のものを選ぶ（同点は小さい番号）
-//! - 出力: モジュール行列（1 モジュール 1 バイト、0=明 1=暗）と RGB565 描画ヘルパ
+//! **Scope of the implementation**
+//! - Modes: numeric / alphanumeric / byte (one symbol = one segment; no mixed-segment optimization)
+//! - Error correction: L / M / Q / H (no automatic "boost error" promotion; the symbol is built exactly as requested)
+//! - Versions: 1-40. The smallest is chosen automatically from the input length and EC level (it can also be requested)
+//! - Mask: all 8 patterns are tried and the one with the smallest total of the 4 penalties (N1-N4) of the
+//!   standard's Table 11 is chosen (ties go to the smaller number)
+//! - Output: a module matrix (one byte per module, 0=light 1=dark) and an RGB565 drawing helper
 //!
-//! **マスク評価の規約（実装上の最大の分岐点）**
-//! 規格 6.8 は「マスキングは format/version 情報を除いた符号化領域に適用する」と定めるが、
-//! **4 つのペナルティで評価する行列に format/version 情報を含めるか**は明文で定めていない。
-//! 本実装は既定（`MaskEval.final_symbol`）で「候補マスクの format 情報を書き込んだ
-//! 最終形のシンボル」を評価する。この規約は規格 Annex I.2 の作業例
-//! （"01234567" をバージョン 1-M で符号化 → 選択されるマスクは 010 = 2）を再現する。
-//! 検証では 20 通りの解釈（format 情報を書く/書かない × N3 の 5 通り × N4 の 2 通り）を
-//! 総当たりし、Annex I.2 のマスク 2 を再現するのはこの組み合わせだけであった。
-//! もう一方の `MaskEval.encoding_region_only`（format/version 情報を空のまま評価）は
-//! segno 1.6.6 と python-qrcode 8.2 がとる規約で、第三者実装との突き合わせに使う。
-//! どちらの規約でも生成されるシンボルは規格に適合し、復号できる（マスク番号は
-//! format 情報に記録されるため）。
+//! **Mask evaluation convention (the biggest branch point in the implementation)**
+//! The standard's 6.8 specifies that masking is applied to the encoding region excluding the format/version
+//! information, but **whether the matrix evaluated by the 4 penalties includes the format/version
+//! information** is not stated explicitly. By default (`MaskEval.final_symbol`) this implementation
+//! evaluates the "final symbol" with the candidate mask's format information written in. This convention
+//! reproduces the worked example in the standard's Annex I.2 (encoding "01234567" at version 1-M selects
+//! mask 010 = 2). In verification, 20 interpretations (writing / not writing the format information
+//! x 5 variants of N3 x 2 variants of N4) were enumerated exhaustively, and this was the only combination
+//! that reproduced mask 2 of Annex I.2. The other option, `MaskEval.encoding_region_only` (evaluating with
+//! the format/version information left blank), is the convention taken by segno 1.6.6 and python-qrcode 8.2
+//! and is used for cross-checking against third-party implementations. Under either convention the
+//! generated symbol conforms to the standard and can be decoded (because the mask number is recorded in
+//! the format information).
 //!
-//! **第三者実装との既知の差異（重要）**
-//! - segno 1.6.6 には「ターミネータの直後がちょうどコードワード境界に来るとき、規格が
-//!   要求しない 8 ビットの 0 を追加してしまう」バグがある（heuer/segno#123、2023-05 報告、
-//!   本実装の時点で未修正）。この結果 segno は 0xEC のパッドコードワード 1 個を 0x00 に
-//!   置き換え、以降のパッドコードワードが 1 バイト分ずれる。バイトモードではほぼ常に
-//!   この条件に当たるため、segno と本実装の行列はパディング領域で一致しない。
-//!   本実装は規格 7.4.9 / 7.4.10 のとおり、境界に来た場合はパディングビットを追加しない。
-//!   （0xEC の位置が変わるだけで復号はできるが、規格の要求ではない。）
-//! - 自動マスク選択は N3 の解釈が実装ごとに違う。本実装は規格 Table 11 の文言どおり
-//!   「1011101 の前後いずれかに 4 モジュールの明領域」を数え、シンボル外（クワイエット
-//!   ゾーン）は明として扱う（segno と同じ）。Nayuki qrcodegen は 1:1:3:1:1 の比率を
-//!   n 倍に拡張した解釈、zxing / python-qrcode はシンボル外を明としない。
-//! - N4（暗モジュール比率）は `k = |暗% - 50%| / 5%` の整数除算。規格 Table 11 の
-//!   ちょうど 5% 倍数の境界の扱いは実装ごとに揺れるが、本実装は segno と一致する
-//!   （qrcodegen の `ceil(...) - 1` とは境界でのみ差が出る）。
+//! **Known differences from third-party implementations (important)**
+//! - segno 1.6.6 has a bug where it appends 8 zero bits that the standard does not require when the
+//!   terminator lands exactly on a codeword boundary (heuer/segno#123, reported 2023-05, unfixed at the
+//!   time of this implementation). As a result segno replaces one 0xEC pad codeword with 0x00 and shifts
+//!   every following pad codeword by one byte. Byte mode hits this condition almost always, so the
+//!   matrices produced by segno and by this implementation do not match in the padding region. This
+//!   implementation follows the standard's 7.4.9 / 7.4.10 and adds no padding bits when the boundary is
+//!   reached. (Only the position of 0xEC changes and the symbol still decodes, but this is not required
+//!   by the standard.)
+//! - Automatic mask selection interprets N3 differently from implementation to implementation. Following
+//!   the wording of the standard's Table 11, this implementation counts "four light modules either before
+//!   or after 1011101" and treats the area outside the symbol (the quiet zone) as light (the same as
+//!   segno). Nayuki qrcodegen interprets it as the 1:1:3:1:1 ratio scaled up n times, and zxing /
+//!   python-qrcode do not treat the area outside the symbol as light.
+//! - N4 (dark module ratio) is the integer division `k = |dark% - 50%| / 5%`. Implementations vary in how
+//!   they treat a boundary that is exactly a multiple of 5% in the standard's Table 11, but this
+//!   implementation agrees with segno (it differs from qrcodegen's `ceil(...) - 1` only at the boundary).
 //!
-//! **メモリ**
-//! 行列（バージョン 40 で 177×177 = 31 KB）と一時バッファ（データコードワード 2956 B、
-//! 最終メッセージ 3706 B、機能モジュールフラグ 4 KB）をアロケータから取る。
-//! 秘密情報は扱わない（QR に載せる文字列は呼び出し側の責任で選ぶ）。
+//! **Memory**
+//! The matrix (177x177 = 31 KB at version 40) and the temporary buffers (2956 B of data codewords,
+//! 3706 B of final message, 4 KB of function module flags) come from the allocator.
+//! No secret data is handled (the caller is responsible for choosing the string carried in the QR code).
 //!
-//! **テストの期待値の出典**
-//! 埋め込んだ期待値はすべて第三者実装または規格そのものから取得している（各テストの
-//! コメントに明記）。自作の期待値は使っていない。検証に使った実装:
-//!   - ISO/IEC 18004:2006(E) の本文・Annex（Table C.1 / Table D.1 / Annex I.2 の作業例）
-//!   - Nayuki qrcodegen 1.8.0（Python 版）
+//! **Where the test expectations come from**
+//! Every embedded expectation was obtained from a third-party implementation or from the standard itself
+//! (stated in each test's comments). No expectations of our own making are used. The implementations used
+//! for verification:
+//!   - The body and annexes of ISO/IEC 18004:2006(E) (Table C.1 / Table D.1 / the worked example in Annex I.2)
+//!   - Nayuki qrcodegen 1.8.0 (Python version)
 //!   - python-qrcode 8.2
-//!   - segno 1.6.6（上記パディングバグのみ規格どおりに修正して実行）
+//!   - segno 1.6.6 (run with only the padding bug above corrected to follow the standard)
 //!
-//! **突き合わせ検証の結果（開発時に実施。テストベクタの生成にも使った）**
-//! - 強制マスク時の全モジュール行列: 全 40 バージョン × 4 EC レベル × マスク {0,7} の
-//!   320 ケースで qrcodegen と完全一致（SHA-256 で比較）。代表 56 ケース
-//!   （短い英数字・数字・境界長・日本語 UTF-8・UR 風 700 文字・ランダム 1000 バイトなど
-//!   × 4 EC）では qrcodegen / python-qrcode / segno（パディング修正）の 3 実装すべてと
-//!   完全一致。
-//! - バージョン自動選択: 上記 124 ケース（31 入力 × 4 EC）で 3 実装と完全一致。
-//!   容量を超える 7 ケースも 3 実装と同じくエラーになることを確認。
-//! - 自動マスク選択: `MaskEval.encoding_region_only`（segno と同じ規約）は segno と
-//!   117/117 一致。既定の `MaskEval.final_symbol` は規格 Annex I.2 の作業例
-//!   （"01234567" 1-M → マスク 2）を再現する唯一の規約だが、format 情報を評価に
-//!   含めない segno / python-qrcode とはマスクが食い違うことがある（マスクが違っても
-//!   生成物は規格適合で、復号結果は同じ）。
+//! **Cross-check results (performed during development; also used to generate the test vectors)**
+//! - Full module matrix with a forced mask: exact match with qrcodegen in all 320 cases
+//!   (all 40 versions x 4 EC levels x masks {0,7}, compared by SHA-256). For the representative 56 cases
+//!   (short alphanumeric, numeric, boundary lengths, Japanese UTF-8, a UR-like 700 characters, 1000 random
+//!   bytes, etc. x 4 EC) it matched all three implementations: qrcodegen / python-qrcode / segno (padding
+//!   corrected).
+//! - Automatic version selection: exact match with the 3 implementations in the 124 cases above
+//!   (31 inputs x 4 EC). The 7 cases that exceed capacity were also confirmed to error out like the 3
+//!   implementations.
+//! - Automatic mask selection: `MaskEval.encoding_region_only` (the same convention as segno) matched
+//!   segno 117/117. The default `MaskEval.final_symbol` is the only convention that reproduces the worked
+//!   example in the standard's Annex I.2 ("01234567" 1-M gives mask 2), but it can disagree on the mask with
+//!   segno / python-qrcode, which do not include the format information in the evaluation (even with a
+//!   different mask the output conforms to the standard and decodes to the same result).
 //!
-//! 参考: ISO/IEC 18004:2015/2006, https://www.qrcode.com/en/about/standards.html
+//! Reference: ISO/IEC 18004:2015/2006, https://www.qrcode.com/en/about/standards.html
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const CoreError = @import("../core/errors.zig").Error;
 
-/// エンコード時のエラー。コア共通の `Error` に QR 固有のものを加える。
+/// Encoding errors. QR-specific cases added to the core shared `Error`.
 pub const Error = CoreError || error{
-    /// 誤り訂正レベルとバージョンの容量を超える（バージョン 40 でも収まらない）
+    /// Exceeds the capacity of the error correction level and version (does not fit even at version 40)
     DataTooLong,
-    /// バージョン指定が範囲外（1〜40）
+    /// The requested version is out of range (1-40)
     InvalidVersion,
-    /// 指定したモードで表せない文字が入力に含まれる
-    /// （数字モードに数字以外、英数字モードに規格 Table 5 以外の文字）
+    /// The input contains characters that cannot be represented in the requested mode
+    /// (non-digits in numeric mode, characters outside the standard's Table 5 in alphanumeric mode)
     InvalidCharacter,
 };
 
-/// 対応する最小バージョン。
+/// Smallest supported version.
 pub const min_version: u8 = 1;
-/// 対応する最大バージョン。
+/// Largest supported version.
 pub const max_version: u8 = 40;
-/// バージョン 1 のシンボル一辺のモジュール数。
+/// Modules per side of a version 1 symbol.
 pub const min_size: usize = 17 + 4 * min_version;
-/// バージョン 40 のシンボル一辺のモジュール数。
+/// Modules per side of a version 40 symbol.
 pub const max_size: usize = 17 + 4 * max_version;
-/// マスクパターンの数（規格 Table 10）。
+/// Number of mask patterns (standard, Table 10).
 pub const mask_count: usize = 8;
-/// 規格 8.1 が要求する最小クワイエットゾーン（モジュール数）。
+/// Minimum quiet zone required by the standard's 8.1 (in modules).
 pub const min_quiet_zone: u8 = 4;
 
-/// 誤り訂正レベル（規格 Table 12）。値は format 情報の 2 ビットそのもの。
+/// Error correction level (standard, Table 12). The value is the 2 bits of the format information itself.
 pub const EcLevel = enum(u2) {
-    /// 約 7% 復元
+    /// About 7% recovery
     l = 0b01,
-    /// 約 15% 復元
+    /// About 15% recovery
     m = 0b00,
-    /// 約 25% 復元
+    /// About 25% recovery
     q = 0b11,
-    /// 約 30% 復元
+    /// About 30% recovery
     h = 0b10,
 
-    /// 容量テーブルの添字（L=0, M=1, Q=2, H=3）。
+    /// Index into the capacity tables (L=0, M=1, Q=2, H=3).
     pub fn index(self: EcLevel) usize {
         return switch (self) {
             .l => 0,
@@ -118,12 +123,12 @@ pub const EcLevel = enum(u2) {
         };
     }
 
-    /// format 情報に入れる 2 ビット（規格 Table 12）。
+    /// The 2 bits placed in the format information (standard, Table 12).
     pub fn formatBits(self: EcLevel) u3 {
         return @backingInt(self);
     }
 
-    /// 1 文字の指定（'l' / 'm' / 'q' / 'h'、大文字も可）。
+    /// Parses a single character ('l' / 'm' / 'q' / 'h'; upper case also accepted).
     pub fn fromChar(c: u8) ?EcLevel {
         return switch (c) {
             'l', 'L' => .l,
@@ -134,7 +139,7 @@ pub const EcLevel = enum(u2) {
         };
     }
 
-    /// 画面表示などに使う名前。
+    /// Name used for on-screen display and similar.
     pub fn name(self: EcLevel) []const u8 {
         return switch (self) {
             .l => "L",
@@ -145,13 +150,13 @@ pub const EcLevel = enum(u2) {
     }
 };
 
-/// データモード（規格 Table 2 のモード指示子）。
+/// Data mode (the mode indicator of the standard's Table 2).
 pub const Mode = enum {
     numeric,
     alphanumeric,
     byte,
 
-    /// モード指示子（4 ビット、規格 Table 2）。
+    /// Mode indicator (4 bits, standard Table 2).
     pub fn indicator(self: Mode) u4 {
         return switch (self) {
             .numeric => 0b0001,
@@ -160,7 +165,7 @@ pub const Mode = enum {
         };
     }
 
-    /// 文字数指示子のビット数（規格 Table 3）。
+    /// Bit width of the character count indicator (standard, Table 3).
     pub fn charCountBits(self: Mode, version: u8) usize {
         return switch (self) {
             .numeric => if (version <= 9) 10 else if (version <= 26) 12 else 14,
@@ -169,7 +174,7 @@ pub const Mode = enum {
         };
     }
 
-    /// 画面表示などに使う名前。
+    /// Name used for on-screen display and similar.
     pub fn name(self: Mode) []const u8 {
         return switch (self) {
             .numeric => "numeric",
@@ -178,7 +183,7 @@ pub const Mode = enum {
         };
     }
 
-    /// このモードで `text` を表せるか（バイトモードは常に真）。
+    /// Whether `text` can be represented in this mode (byte mode is always true).
     pub fn canEncode(self: Mode, text: []const u8) bool {
         return switch (self) {
             .numeric => isNumeric(text),
@@ -188,63 +193,65 @@ pub const Mode = enum {
     }
 };
 
-/// 自動マスク選択で、ペナルティ評価の対象にする行列の種類。
+/// Kind of matrix that penalty evaluation is applied to during automatic mask selection.
 pub const MaskEval = enum {
-    /// 候補マスクの format 情報（および dark モジュール・version 情報）を書き込んだ
-    /// 「最終形のシンボル」を評価する。既定であり、規格 Annex I.2 の作業例を再現する。
+    /// Evaluates the "final symbol" with the candidate mask's format information (and the dark module
+    /// and version information) written in. This is the default and reproduces the worked example in the
+    /// standard's Annex I.2.
     final_symbol,
-    /// format/version 情報の領域を空（明）のまま評価する。segno 1.6.6 / python-qrcode 8.2
-    /// と同じ規約。Annex I.2 の作業例は再現しない。第三者実装との突き合わせ用。
+    /// Evaluates with the format/version information area left blank (light). The same convention as
+    /// segno 1.6.6 / python-qrcode 8.2. It does not reproduce the Annex I.2 worked example. Used for
+    /// cross-checking against third-party implementations.
     encoding_region_only,
 };
 
-/// エンコードのオプション。
+/// Encoding options.
 pub const Options = struct {
-    /// null なら入力長と EC レベルから最小バージョンを選ぶ。
+    /// If null, the smallest version is chosen from the input length and EC level.
     version: ?u8 = null,
-    /// null なら 8 種類のマスクを評価して自動選択する。
+    /// If null, the 8 masks are evaluated and one is chosen automatically.
     mask: ?u3 = null,
-    /// null なら入力から自動判定する（数字 → 英数字 → バイトの順に狭いモードを選ぶ）。
+    /// If null, it is detected from the input (choosing the narrowest mode: numeric, then alphanumeric, then byte).
     mode: ?Mode = null,
-    /// 自動マスク選択の評価規約。
+    /// Evaluation convention for automatic mask selection.
     mask_eval: MaskEval = .final_symbol,
 };
 
-/// エンコード結果のモジュール行列。
+/// Module matrix produced by encoding.
 ///
-/// `modules` は 1 モジュール 1 バイト（行優先、0 = 明 / 1 = 暗）で、UI 層の
-/// `screen.Bitmap`（`modules: []const u8`、0 以外は黒）へそのまま渡せる。
+/// `modules` holds one byte per module (row-major, 0 = light / 1 = dark) and can be passed straight to
+/// the UI layer's `screen.Bitmap` (`modules: []const u8`; anything non-zero is black).
 pub const Matrix = struct {
-    /// バージョン（1〜40）。
+    /// Version (1-40).
     version: u8,
-    /// 一辺のモジュール数（17 + 4 × version）。
+    /// Modules per side (17 + 4 * version).
     size: usize,
-    /// 誤り訂正レベル。
+    /// Error correction level.
     ec: EcLevel,
-    /// 実際に使ったマスク番号（0〜7）。
+    /// Mask number actually used (0-7).
     mask: u3,
-    /// 実際に使ったデータモード。
+    /// Data mode actually used.
     mode: Mode,
-    /// モジュール（1 バイト 1 モジュール、行優先、0 = 明 / 1 = 暗）。
+    /// Modules (one byte per module, row-major, 0 = light / 1 = dark).
     modules: []u8,
 
-    /// 幅（= 高さ。QR は正方形）。
+    /// Width (= height; a QR symbol is square).
     pub fn width(self: *const Matrix) usize {
         return self.size;
     }
 
-    /// 高さ（= 幅）。
+    /// Height (= width).
     pub fn height(self: *const Matrix) usize {
         return self.size;
     }
 
-    /// (x, y) のモジュール。範囲外は明（false）として扱う。
+    /// Module at (x, y). Out-of-range coordinates are treated as light (false).
     pub fn get(self: *const Matrix, x: usize, y: usize) bool {
         if (x >= self.size or y >= self.size) return false;
         return self.modules[y * self.size + x] != 0;
     }
 
-    /// 暗モジュールの総数。
+    /// Total number of dark modules.
     pub fn darkCount(self: *const Matrix) usize {
         var count: usize = 0;
         for (self.modules) |m| {
@@ -253,34 +260,34 @@ pub const Matrix = struct {
         return count;
     }
 
-    /// 行列が確保したメモリを解放する。以後 `self` は使えない。
+    /// Frees the memory allocated for the matrix. `self` must not be used afterwards.
     pub fn deinit(self: *const Matrix, allocator: std.mem.Allocator) void {
         allocator.free(self.modules);
     }
 };
 
-// ---------------------------------------------------------------- 公開 API
+// ---------------------------------------------------------------- public API
 
-/// 最小バージョン・自動マスクで行列を作る（もっとも一般的な入口）。
+/// Builds a matrix with the smallest version and an automatic mask (the most common entry point).
 pub fn encode(allocator: std.mem.Allocator, text: []const u8, ec: EcLevel) Error!Matrix {
     return encodeOptions(allocator, text, ec, .{});
 }
 
-/// マスクを固定して行列を作る（検証・比較用）。
+/// Builds a matrix with a fixed mask (for verification and comparison).
 pub fn encodeWithMask(allocator: std.mem.Allocator, text: []const u8, ec: EcLevel, mask: u3) Error!Matrix {
     return encodeOptions(allocator, text, ec, .{ .mask = mask });
 }
 
-/// バージョンを固定して行列を作る（収まらなければ `DataTooLong`）。
+/// Builds a matrix with a fixed version (returns `DataTooLong` if it does not fit).
 pub fn encodeVersion(allocator: std.mem.Allocator, text: []const u8, ec: EcLevel, version: u8) Error!Matrix {
     return encodeOptions(allocator, text, ec, .{ .version = version });
 }
 
-/// オプションを指定して行列を作る。
+/// Builds a matrix with the given options.
 pub fn encodeOptions(allocator: std.mem.Allocator, text: []const u8, ec: EcLevel, opts: Options) Error!Matrix {
     const mode = opts.mode orelse detectMode(text);
-    // モードを明示指定された場合は、そのモードで表せない文字を拒否する
-    // （黙って壊れたシンボルを作らない。表示専用でも誤った QR を出すより落とす）。
+    // When a mode is requested explicitly, characters that the mode cannot represent are rejected
+    // (never silently build a broken symbol; even for display only, failing is better than showing a wrong QR code).
     if (!mode.canEncode(text)) return Error.InvalidCharacter;
     const version = opts.version orelse try selectVersion(mode, text.len, ec);
     if (version < min_version or version > max_version) return Error.InvalidVersion;
@@ -294,7 +301,7 @@ pub fn encodeOptions(allocator: std.mem.Allocator, text: []const u8, ec: EcLevel
     const data_len = dataCodewords(ec, version);
     const raw_len = rawCodewords(version);
 
-    // データコードワード
+    // Data codewords
     const data = try allocator.alloc(u8, data_len);
     defer allocator.free(data);
     @memset(data, 0);
@@ -302,12 +309,12 @@ pub fn encodeOptions(allocator: std.mem.Allocator, text: []const u8, ec: EcLevel
     writeData(data, &bit_len, mode, text, version);
     writePadding(data, &bit_len, capacity_bits);
 
-    // 誤り訂正を付けてインターリーブした最終メッセージ
+    // Final message with error correction added and interleaved
     const message = try allocator.alloc(u8, raw_len);
     defer allocator.free(message);
     try buildMessage(allocator, data, message, ec, version);
 
-    // 行列本体と機能モジュールフラグ（フラグは 1 モジュール 1 ビットで持つ）
+    // The matrix itself and the function module flags (one bit per module)
     const modules = try allocator.alloc(u8, size * size);
     errdefer allocator.free(modules);
     const func = try allocator.alloc(u8, (size * size + 7) / 8);
@@ -328,40 +335,41 @@ pub fn encodeOptions(allocator: std.mem.Allocator, text: []const u8, ec: EcLevel
     };
 }
 
-/// 入力から最適な単一モードを選ぶ。
+/// Chooses the best single mode for the input.
 ///
-/// 数字だけなら数字モード、規格 Table 5 の英数字 45 文字だけなら英数字モード、
-/// それ以外（UTF-8 の日本語など）はバイトモード。モード混在の最適化はしない。
+/// Digits only means numeric mode, only the 45 alphanumeric characters of the standard's Table 5 means
+/// alphanumeric mode, and anything else (Japanese UTF-8, for example) means byte mode. No mixed-mode
+/// optimization is done.
 pub fn detectMode(text: []const u8) Mode {
     if (isNumeric(text)) return .numeric;
     if (isAlphanumeric(text)) return .alphanumeric;
     return .byte;
 }
 
-// ---------------------------------------------------------------- RGB565 描画
+// ---------------------------------------------------------------- RGB565 drawing
 
-/// RGB565 描画のオプション。
+/// RGB565 drawing options.
 pub const DrawOptions = struct {
-    /// 暗モジュールの色（既定は黒）。
+    /// Color of dark modules (black by default).
     dark: u16 = 0x0000,
-    /// 明モジュールと余白の色（既定は白）。
+    /// Color of light modules and the quiet zone (white by default).
     light: u16 = 0xFFFF,
-    /// 1 モジュールあたりのピクセル数（拡大倍率）。0 は描画しない。
+    /// Pixels per module (scale factor). 0 draws nothing.
     scale: u8 = 1,
-    /// 余白（クワイエットゾーン、モジュール数）。規格は 4 以上を要求する。
+    /// Quiet zone (in modules). The standard requires 4 or more.
     quiet_zone: u8 = min_quiet_zone,
-    /// 描画開始位置（左上のピクセル座標）。負の値も許し、はみ出しはクリップする。
+    /// Drawing origin (top-left pixel coordinate). Negative values are allowed and overflow is clipped.
     origin_x: i32 = 0,
     origin_y: i32 = 0,
 };
 
-/// 余白を含めた描画サイズ（一辺のピクセル数）。
+/// Drawing size including the quiet zone (pixels per side).
 pub fn pixelSize(m: *const Matrix, opts: DrawOptions) usize {
     if (opts.scale == 0) return 0;
     return (m.size + 2 * @as(usize, opts.quiet_zone)) * @as(usize, opts.scale);
 }
 
-/// 余白を含めた全体がフレームバッファに収まるか。負の原点（クリップ前提）は false。
+/// Whether the whole drawing including the quiet zone fits in the framebuffer. A negative origin (implying clipping) is false.
 pub fn fitsIn(m: *const Matrix, fb_width: usize, fb_height: usize, opts: DrawOptions) bool {
     if (opts.scale == 0) return false;
     if (opts.origin_x < 0 or opts.origin_y < 0) return false;
@@ -372,12 +380,12 @@ pub fn fitsIn(m: *const Matrix, fb_width: usize, fb_height: usize, opts: DrawOpt
     return px <= fb_width - x and px <= fb_height - y;
 }
 
-/// RGB565 のフレームバッファ（行優先、1 ピクセル 1 個の u16）へ行列を描く。
+/// Draws the matrix into an RGB565 framebuffer (row-major, one u16 per pixel).
 ///
-/// - 余白（`opts.quiet_zone`）と拡大倍率（`opts.scale`）を指定できる。
-/// - 描画するのは「余白 + シンボル」の正方形領域だけ。その外側のピクセルには触らない。
-/// - フレームバッファの外へはみ出す部分はクリップする（負の原点も可）。
-/// - `buffer.len` が `fb_width * fb_height` より小さい場合は、入る行だけ描く。
+/// - The quiet zone (`opts.quiet_zone`) and the scale factor (`opts.scale`) can be specified.
+/// - Only the square "quiet zone + symbol" area is drawn. Pixels outside it are left untouched.
+/// - Parts that overflow the framebuffer are clipped (a negative origin is allowed).
+/// - If `buffer.len` is smaller than `fb_width * fb_height`, only the rows that fit are drawn.
 pub fn drawRgb565(
     m: *const Matrix,
     buffer: []u16,
@@ -418,25 +426,25 @@ pub fn drawRgb565(
     }
 }
 
-/// 0 未満を 0 に、`limit` を超えるものを `limit` に丸める（クリップ開始位置）。
+/// Clamps values below 0 to 0 and values above `limit` to `limit` (clip start position).
 fn clipStart(value: i64, limit: usize) usize {
     if (value <= 0) return 0;
     const v: usize = @intCast(value);
     return @min(v, limit);
 }
 
-/// 0 未満を 0 に、`limit` を超えるものを `limit` に丸める（クリップ終了位置）。
+/// Clamps values below 0 to 0 and values above `limit` to `limit` (clip end position).
 fn clipEnd(value: i64, limit: usize) usize {
     if (value <= 0) return 0;
     const v: usize = @intCast(value);
     return @min(v, limit);
 }
 
-// ---------------------------------------------------------------- 容量テーブル
+// ---------------------------------------------------------------- capacity tables
 
-/// ブロックあたりの誤り訂正コードワード数（規格 Table 9）。添字は [EC][version]。
-/// version 0 は未使用（0）。値は segno 1.6.6 の `consts.ECC` と qrcodegen 1.8.0 の
-/// `_ECC_CODEWORDS_PER_BLOCK` が完全に一致することを確認済み。
+/// Error correction codewords per block (standard, Table 9). Indexed by [EC][version].
+/// version 0 is unused (0). The values were confirmed to match exactly between segno 1.6.6's
+/// `consts.ECC` and qrcodegen 1.8.0's `_ECC_CODEWORDS_PER_BLOCK`.
 const ecc_codewords_per_block = [4][max_version + 1]u8{
     .{ 0, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30 },
     .{ 0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28 },
@@ -444,7 +452,7 @@ const ecc_codewords_per_block = [4][max_version + 1]u8{
     .{ 0, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30 },
 };
 
-/// 誤り訂正ブロック数（規格 Table 9）。添字は [EC][version]。
+/// Number of error correction blocks (standard, Table 9). Indexed by [EC][version].
 const num_ec_blocks = [4][max_version + 1]u8{
     .{ 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25 },
     .{ 0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49 },
@@ -452,14 +460,14 @@ const num_ec_blocks = [4][max_version + 1]u8{
     .{ 0, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81 },
 };
 
-/// バージョンからシンボル一辺のモジュール数を求める。
+/// Returns the number of modules per side of the symbol for a version.
 pub fn versionSize(version: u8) usize {
     return 17 + 4 * @as(usize, version);
 }
 
-/// データと誤り訂正に使えるモジュール数（剰余ビットを含む）。
+/// Number of modules available for data and error correction (including remainder bits).
 ///
-/// 規格の配置規則から導かれる式（Nayuki qrcodegen の `getNumRawDataModules` と同じ）。
+/// Formula derived from the standard's placement rules (the same as Nayuki qrcodegen's `getNumRawDataModules`).
 fn numRawDataModules(version: u8) usize {
     const v: usize = version;
     var result: usize = (16 * v + 128) * v + 64;
@@ -471,40 +479,40 @@ fn numRawDataModules(version: u8) usize {
     return result;
 }
 
-/// 総コードワード数（データ + 誤り訂正）。
+/// Total number of codewords (data + error correction).
 pub fn rawCodewords(version: u8) usize {
     return numRawDataModules(version) / 8;
 }
 
-/// データコードワード数（誤り訂正を除く）。
+/// Number of data codewords (excluding error correction).
 pub fn dataCodewords(ec: EcLevel, version: u8) usize {
     const i = ec.index();
     return rawCodewords(version) - @as(usize, ecc_codewords_per_block[i][version]) * num_ec_blocks[i][version];
 }
 
-/// ビット数を格納するのに必要なデータコードワード数を超えない、最大のデータビット数。
+/// Largest number of data bits that fits within the data codewords available to hold them.
 pub fn capacityBits(ec: EcLevel, version: u8) usize {
     return dataCodewords(ec, version) * 8;
 }
 
-/// 指定モードで `len` 文字を格納するのに必要なデータビット数（モード・文字数指示子を含む）。
+/// Data bits needed to store `len` characters in the given mode (including the mode and character count indicators).
 pub fn requiredBits(mode: Mode, len: usize, version: u8) usize {
     return 4 + mode.charCountBits(version) + dataBitLength(mode, len);
 }
 
-/// 入力長と EC レベルから最小バージョンを選ぶ。
+/// Chooses the smallest version from the input length and EC level.
 fn selectVersion(mode: Mode, len: usize, ec: EcLevel) Error!u8 {
     var version: u8 = min_version;
     while (version <= max_version) : (version += 1) {
         const count_bits = mode.charCountBits(version);
-        // 文字数指示子に収まらない場合は、より広い指示子のバージョンまで飛ばす。
+        // If it does not fit in the character count indicator, skip ahead to a version with a wider indicator.
         if (len >= (@as(usize, 1) << @intCast(count_bits))) continue;
         if (requiredBits(mode, len, version) <= capacityBits(ec, version)) return version;
     }
     return Error.DataTooLong;
 }
 
-/// モードごとのデータビット数（モード指示子と文字数指示子を除く）。
+/// Data bits per mode (excluding the mode indicator and character count indicator).
 fn dataBitLength(mode: Mode, len: usize) usize {
     return switch (mode) {
         .numeric => 10 * (len / 3) + switch (len % 3) {
@@ -517,9 +525,9 @@ fn dataBitLength(mode: Mode, len: usize) usize {
     };
 }
 
-// ---------------------------------------------------------------- モード判定
+// ---------------------------------------------------------------- mode detection
 
-/// すべて ASCII 数字か（空列は true）。
+/// Whether all characters are ASCII digits (an empty slice is true).
 fn isNumeric(text: []const u8) bool {
     for (text) |c| {
         if (c < '0' or c > '9') return false;
@@ -527,7 +535,7 @@ fn isNumeric(text: []const u8) bool {
     return true;
 }
 
-/// すべて規格 Table 5 の英数字 45 文字か（空列は true）。
+/// Whether all characters are among the 45 alphanumeric characters of the standard's Table 5 (an empty slice is true).
 fn isAlphanumeric(text: []const u8) bool {
     for (text) |c| {
         if (alphanumericValue(c) == null) return false;
@@ -535,7 +543,7 @@ fn isAlphanumeric(text: []const u8) bool {
     return true;
 }
 
-/// 英数字モードの値（規格 Table 5）。0〜44。
+/// Value in alphanumeric mode (standard, Table 5). 0-44.
 fn alphanumericValue(c: u8) ?u6 {
     return switch (c) {
         '0'...'9' => @intCast(c - '0'),
@@ -553,9 +561,9 @@ fn alphanumericValue(c: u8) ?u6 {
     };
 }
 
-// ---------------------------------------------------------------- ビット列
+// ---------------------------------------------------------------- bit stream
 
-/// ビット列を書き込む。`buf` は 0 で初期化されていること。
+/// Appends to the bit stream. `buf` must be initialized to zero.
 fn appendBits(buf: []u8, bit_len: *usize, value: u32, count: usize) void {
     var i: usize = count;
     while (i > 0) {
@@ -568,7 +576,7 @@ fn appendBits(buf: []u8, bit_len: *usize, value: u32, count: usize) void {
     }
 }
 
-/// モード指示子・文字数指示子・データ本体を書く。
+/// Writes the mode indicator, the character count indicator and the data payload.
 fn writeData(buf: []u8, bit_len: *usize, mode: Mode, text: []const u8, version: u8) void {
     appendBits(buf, bit_len, mode.indicator(), 4);
     appendBits(buf, bit_len, @intCast(text.len), mode.charCountBits(version));
@@ -606,19 +614,19 @@ fn writeData(buf: []u8, bit_len: *usize, mode: Mode, text: []const u8, version: 
     }
 }
 
-/// ターミネータ・境界までの 0 詰め・パッドコードワード（規格 7.4.9 / 7.4.10）。
+/// Terminator, zero padding up to the boundary and pad codewords (standard, 7.4.9 / 7.4.10).
 fn writePadding(buf: []u8, bit_len: *usize, capacity: usize) void {
-    // ターミネータ（最大 4 ビット。残り容量が 4 未満ならそこで打ち切る）。
+    // Terminator (at most 4 bits; if less than 4 bits of capacity remain, stop there).
     const terminator = @min(@as(usize, 4), capacity - bit_len.*);
     appendBits(buf, bit_len, 0, terminator);
 
-    // コードワード境界まで 0 で埋める。**既に境界なら何もしない**（規格 7.4.10）。
-    // ここで 8 ビット追加してしまうのが segno 1.6.6 のバグ（heuer/segno#123）。
+    // Pad with zeros up to the codeword boundary. **Do nothing if already on the boundary** (standard, 7.4.10).
+    // Adding 8 bits here is the segno 1.6.6 bug (heuer/segno#123).
     if (bit_len.* % 8 != 0) {
         appendBits(buf, bit_len, 0, 8 - (bit_len.* % 8));
     }
 
-    // 残りはパッドコードワード 11101100 / 00010001 を交互に。
+    // The rest alternates the pad codewords 11101100 / 00010001.
     var pad: u8 = 0xEC;
     while (bit_len.* + 8 <= capacity) {
         appendBits(buf, bit_len, pad, 8);
@@ -626,9 +634,9 @@ fn writePadding(buf: []u8, bit_len: *usize, capacity: usize) void {
     }
 }
 
-// ---------------------------------------------------------------- 誤り訂正
+// ---------------------------------------------------------------- error correction
 
-/// GF(2^8)（原始多項式 0x11D）の演算。QR の誤り訂正はこの体のうえで行う。
+/// Arithmetic in GF(2^8) (primitive polynomial 0x11D). QR error correction is done over this field.
 const Gf = struct {
     const exp: [512]u8 = blk: {
         var table: [512]u8 = undefined;
@@ -656,7 +664,7 @@ const Gf = struct {
     }
 };
 
-/// 次数 `degree` の生成多項式 (x - α^0)(x - α^1)... の係数（先頭の 1 を除く）。
+/// Coefficients of the degree-`degree` generator polynomial (x - α^0)(x - α^1)... (excluding the leading 1).
 fn rsDivisor(degree: usize, out: []u8) void {
     std.debug.assert(out.len == degree);
     @memset(out, 0);
@@ -673,7 +681,7 @@ fn rsDivisor(degree: usize, out: []u8) void {
     }
 }
 
-/// データ `data` を生成多項式で割った剰余（= 誤り訂正コードワード）を `out` に書く。
+/// Writes the remainder of `data` divided by the generator polynomial (= the error correction codewords) to `out`.
 fn rsRemainder(data: []const u8, divisor: []const u8, out: []u8) void {
     std.debug.assert(out.len == divisor.len);
     @memset(out, 0);
@@ -687,7 +695,8 @@ fn rsRemainder(data: []const u8, divisor: []const u8, out: []u8) void {
     }
 }
 
-/// データコードワードをブロックに分け、誤り訂正を付け、規格 7.6 の順にインターリーブする。
+/// Splits the data codewords into blocks, adds error correction and interleaves them in the order of the
+/// standard's 7.6.
 fn buildMessage(
     allocator: std.mem.Allocator,
     data: []const u8,
@@ -699,7 +708,7 @@ fn buildMessage(
     const blocks: usize = num_ec_blocks[i][version];
     const ecc_len: usize = ecc_codewords_per_block[i][version];
     const raw_len = message.len;
-    const short_len = raw_len / blocks; // 短いブロックの「データ + EC」長
+    const short_len = raw_len / blocks; // "data + EC" length of a short block
     const num_short = blocks - raw_len % blocks;
 
     const ecc_all = try allocator.alloc(u8, blocks * ecc_len);
@@ -709,7 +718,7 @@ fn buildMessage(
     const divisor = divisor_buf[0..ecc_len];
     rsDivisor(ecc_len, divisor);
 
-    // ブロックごとのデータ長は、長いブロックが short_len - ecc_len + 1。
+    // Per-block data length: long blocks get short_len - ecc_len + 1.
     var offset: usize = 0;
     var b: usize = 0;
     while (b < blocks) : (b += 1) {
@@ -718,7 +727,7 @@ fn buildMessage(
         offset += data_len;
     }
 
-    // データコードワードのインターリーブ（短いブロックは最後の 1 バイトを飛ばす）。
+    // Interleave the data codewords (short blocks skip their last byte).
     var out: usize = 0;
     var k: usize = 0;
     const max_data_len = short_len - ecc_len + 1;
@@ -735,7 +744,7 @@ fn buildMessage(
         }
     }
 
-    // 誤り訂正コードワードのインターリーブ。
+    // Interleave the error correction codewords.
     k = 0;
     while (k < ecc_len) : (k += 1) {
         b = 0;
@@ -747,7 +756,7 @@ fn buildMessage(
     std.debug.assert(out == raw_len);
 }
 
-// ---------------------------------------------------------------- ビット操作
+// ---------------------------------------------------------------- bit operations
 
 fn getBit(buf: []const u8, index: usize) bool {
     return (buf[index >> 3] >> @intCast(7 - (index & 7))) & 1 != 0;
@@ -762,10 +771,10 @@ fn setBit(buf: []u8, index: usize, dark: bool) void {
     }
 }
 
-// ---------------------------------------------------------------- 行列の組み立て
+// ---------------------------------------------------------------- matrix construction
 
-/// 行列の組み立て中に使う作業構造体。`modules` は 1 モジュール 1 バイト、
-/// `func` は機能モジュール（マスク対象外）を 1 モジュール 1 ビットで持つ。
+/// Working struct used while building the matrix. `modules` holds one byte per module, and
+/// `func` holds one bit per module marking function modules (excluded from masking).
 const Builder = struct {
     size: usize,
     modules: []u8,
@@ -785,15 +794,15 @@ const Builder = struct {
         self.modules[y * self.size + x] = @intFromBool(dark);
     }
 
-    /// モジュールの明暗を反転する（マスク用）。
-    /// `modules` は 1 モジュール 1 バイトなので、ビット演算ではなく値そのものを入れ替える。
+    /// Flips a module between light and dark (for masking).
+    /// `modules` holds one byte per module, so the value itself is swapped rather than a bit being toggled.
     fn toggleModule(self: *const Builder, x: usize, y: usize) void {
         const i = y * self.size + x;
         self.modules[i] = if (self.modules[i] != 0) 0 else 1;
     }
 };
 
-/// 行列を組み立て、マスクを選んで適用し、format/version 情報を書き込む。
+/// Builds the matrix, chooses and applies a mask, and writes the format/version information.
 fn buildMatrix(b: *Builder, message: []const u8, ec: EcLevel, version: u8, opts: Options) void {
     drawFinderPatterns(b);
     drawTimingPatterns(b);
@@ -802,7 +811,7 @@ fn buildMatrix(b: *Builder, message: []const u8, ec: EcLevel, version: u8, opts:
     if (version >= 7) reserveVersionInfo(b);
     placeData(b, message);
 
-    // 最終形のシンボルを評価する規約では、version 情報（マスク非依存）を先に書く。
+    // Under the final-symbol evaluation convention, write the version information (mask-independent) first.
     if (version >= 7 and opts.mask_eval == .final_symbol) drawVersionInfo(b, version);
 
     b.mask = chooseMask(b, ec, opts);
@@ -811,7 +820,7 @@ fn buildMatrix(b: *Builder, message: []const u8, ec: EcLevel, version: u8, opts:
     drawFormatInfo(b, ec, b.mask);
 }
 
-/// 8 種類のマスクを試し、ペナルティが最小のものを返す（この時点では適用しない）。
+/// Tries the 8 masks and returns the one with the smallest penalty (not applied at this point).
 fn chooseMask(b: *Builder, ec: EcLevel, opts: Options) u3 {
     if (opts.mask) |forced| return forced;
 
@@ -826,13 +835,13 @@ fn chooseMask(b: *Builder, ec: EcLevel, opts: Options) u3 {
             best_score = score;
             best = candidate;
         }
-        applyMask(b, candidate); // XOR なのでもう一度適用すると元に戻る
+        applyMask(b, candidate); // XOR, so applying it once more restores the original
         if (candidate == mask_count - 1) break;
     }
     return best;
 }
 
-/// 規格 Table 10 のマスク条件（x = 列 = j、y = 行 = i）。真ならモジュールを反転する。
+/// Mask conditions of the standard's Table 10 (x = column = j, y = row = i). True means the module is flipped.
 fn maskCondition(mask: u3, x: usize, y: usize) bool {
     return switch (mask) {
         0 => (x + y) % 2 == 0,
@@ -846,7 +855,7 @@ fn maskCondition(mask: u3, x: usize, y: usize) bool {
     };
 }
 
-/// 符号化領域（機能モジュール以外）にマスクを XOR する。2 回呼ぶと元に戻る。
+/// XORs the mask onto the encoding region (everything except function modules). Calling it twice restores the original.
 fn applyMask(b: *Builder, mask: u3) void {
     var y: usize = 0;
     while (y < b.size) : (y += 1) {
@@ -858,7 +867,7 @@ fn applyMask(b: *Builder, mask: u3) void {
     }
 }
 
-/// 3 隅の位置検出パターン（セパレータ含む 8×8 領域）。
+/// Finder patterns in the three corners (8x8 areas including the separators).
 fn drawFinderPatterns(b: *Builder) void {
     const size = b.size;
     const corners = [3][2]usize{
@@ -885,7 +894,7 @@ fn drawFinderPatterns(b: *Builder) void {
     }
 }
 
-/// タイミングパターン（6 行目と 6 列目、偶数番目が暗）。
+/// Timing patterns (row 6 and column 6, even indices dark).
 fn drawTimingPatterns(b: *Builder) void {
     var i: usize = 0;
     while (i < b.size) : (i += 1) {
@@ -894,7 +903,7 @@ fn drawTimingPatterns(b: *Builder) void {
     }
 }
 
-/// 位置合わせパターン（規格 Annex E の位置。バージョン 1 には無い）。
+/// Alignment patterns (positions from the standard's Annex E; absent in version 1).
 fn drawAlignmentPatterns(b: *Builder, version: u8) void {
     if (version == 1) return;
     var positions: [7]usize = undefined;
@@ -907,7 +916,7 @@ fn drawAlignmentPatterns(b: *Builder, version: u8) void {
         while (j < count) : (j += 1) {
             const cx = positions[j];
             const cy = positions[i];
-            // 位置検出パターンと重なる 3 箇所には置かない。
+            // Do not place them at the three positions that overlap the finder patterns.
             const near_finder = (cx == 6 and cy == 6) or
                 (cx == 6 and cy == size - 7) or
                 (cx == size - 7 and cy == 6);
@@ -927,7 +936,7 @@ fn drawAlignmentPatterns(b: *Builder, version: u8) void {
     }
 }
 
-/// 位置合わせパターンの中心座標（規格 Annex E）。昇順で `out` に書き、個数を返す。
+/// Center coordinates of the alignment patterns (standard, Annex E). Writes them to `out` in ascending order and returns the count.
 fn alignmentPositions(version: u8, out: *[7]usize) usize {
     if (version == 1) return 0;
     const v: usize = version;
@@ -938,7 +947,7 @@ fn alignmentPositions(version: u8, out: *[7]usize) usize {
     else
         (v * 4 + num_align * 2 + 1) / (num_align * 2 - 2) * 2;
 
-    // 6 と、size-7 から step ずつ減らした値。最後に昇順へ直す。
+    // 6 and the values obtained by subtracting step repeatedly from size-7. Sorted into ascending order at the end.
     var buffer: [7]usize = undefined;
     buffer[0] = 6;
     var pos = size - 7;
@@ -952,7 +961,7 @@ fn alignmentPositions(version: u8, out: *[7]usize) usize {
     return num_align;
 }
 
-/// format 情報の領域を機能モジュールとして予約する（値は明。あとで書き込む）。
+/// Reserves the format information area as function modules (value light; written later).
 fn reserveFormatInfo(b: *Builder) void {
     const size = b.size;
     var i: usize = 0;
@@ -964,10 +973,10 @@ fn reserveFormatInfo(b: *Builder) void {
     while (i < 8) : (i += 1) b.setFunc(size - 1 - i, 8, false);
     i = 0;
     while (i < 7) : (i += 1) b.setFunc(8, size - 1 - i, false);
-    b.setFunc(8, size - 8, false); // dark モジュール（あとで必ず暗にする）
+    b.setFunc(8, size - 8, false); // dark module (always made dark later)
 }
 
-/// version 情報の領域（バージョン 7 以上）を機能モジュールとして予約する。
+/// Reserves the version information area (version 7 and above) as function modules.
 fn reserveVersionInfo(b: *Builder) void {
     const size = b.size;
     var i: usize = 0;
@@ -979,7 +988,7 @@ fn reserveVersionInfo(b: *Builder) void {
     }
 }
 
-/// データコードワードを規格 7.7 の順（右下から 2 列ずつ蛇行）に配置する。
+/// Places the data codewords in the order of the standard's 7.7 (two columns at a time, zigzagging from the bottom right).
 fn placeData(b: *Builder, message: []const u8) void {
     const size = b.size;
     const total_bits = message.len * 8;
@@ -987,7 +996,7 @@ fn placeData(b: *Builder, message: []const u8) void {
 
     var right: usize = size - 1;
     while (true) {
-        if (right == 6) right = 5; // タイミング列を飛ばす
+        if (right == 6) right = 5; // skip the timing column
         var vert: usize = 0;
         while (vert < size) : (vert += 1) {
             var j: usize = 0;
@@ -1007,7 +1016,7 @@ fn placeData(b: *Builder, message: []const u8) void {
     }
 }
 
-/// format 情報（15 ビット、規格 7.9）と dark モジュールを書き込む。
+/// Writes the format information (15 bits, the standard's 7.9) and the dark module.
 fn drawFormatInfo(b: *Builder, ec: EcLevel, mask: u3) void {
     const size = b.size;
     const bits = formatBits(ec, mask);
@@ -1025,11 +1034,11 @@ fn drawFormatInfo(b: *Builder, ec: EcLevel, mask: u3) void {
     i = 8;
     while (i < 15) : (i += 1) b.setFunc(8, size - 15 + i, getBit15(bits, i));
 
-    // 規格 6.9.1: (4V+9, 8) のモジュールは常に暗。
+    // Standard 6.9.1: the module at (4V+9, 8) is always dark.
     b.setFunc(8, size - 8, true);
 }
 
-/// version 情報（18 ビット、規格 7.10）。バージョン 7 未満では何もしない。
+/// Version information (18 bits, the standard's 7.10). Does nothing below version 7.
 fn drawVersionInfo(b: *Builder, version: u8) void {
     if (version < 7) return;
     const size = b.size;
@@ -1043,7 +1052,7 @@ fn drawVersionInfo(b: *Builder, version: u8) void {
     }
 }
 
-/// format 情報のビット列（5 データビット + 10 BCH ビット、0x5412 で XOR）。
+/// Bit sequence of the format information (5 data bits + 10 BCH bits, XORed with 0x5412).
 fn formatBits(ec: EcLevel, mask: u3) u15 {
     const data: u32 = (@as(u32, ec.formatBits()) << 3) | @as(u32, mask);
     var rem: u32 = data;
@@ -1051,7 +1060,7 @@ fn formatBits(ec: EcLevel, mask: u3) u15 {
     return @intCast(((data << 10) | rem) ^ 0x5412);
 }
 
-/// version 情報のビット列（6 データビット + 12 Golay ビット）。
+/// Bit sequence of the version information (6 data bits + 12 Golay bits).
 fn versionBits(version: u8) u18 {
     const data: u32 = version;
     var rem: u32 = data;
@@ -1067,15 +1076,15 @@ fn getBit18(bits: u18, index: usize) bool {
     return (bits >> @intCast(index)) & 1 != 0;
 }
 
-// ---------------------------------------------------------------- ペナルティ
+// ---------------------------------------------------------------- penalties
 
-/// 規格 Table 11 の 4 つのペナルティの合計。
+/// Total of the 4 penalties of the standard's Table 11.
 fn penaltyScore(size: usize, modules: []const u8) u32 {
     return penaltyRuns(size, modules) + penaltyBlocks(size, modules) +
         penaltyFinderLike(size, modules) + penaltyBalance(size, modules);
 }
 
-/// N1: 同色が 5 モジュール以上連続する行・列（5 で 3 点、1 個増えるごとに +1）。
+/// N1: rows and columns with 5 or more consecutive same-color modules (3 points at 5, +1 for each extra module).
 fn penaltyRuns(size: usize, modules: []const u8) u32 {
     var score: u32 = 0;
 
@@ -1112,7 +1121,7 @@ fn penaltyRuns(size: usize, modules: []const u8) u32 {
     return score;
 }
 
-/// N2: 同色 2×2 のブロック（1 箇所 3 点。重なりも数える）。
+/// N2: 2x2 blocks of the same color (3 points each; overlaps are also counted).
 fn penaltyBlocks(size: usize, modules: []const u8) u32 {
     var score: u32 = 0;
     var y: usize = 0;
@@ -1131,12 +1140,13 @@ fn penaltyBlocks(size: usize, modules: []const u8) u32 {
     return score;
 }
 
-/// N3: 1:1:3:1:1（1011101）の前後いずれかに 4 モジュールの明領域（1 箇所 40 点）。
-/// シンボル外はクワイエットゾーンなので明として扱う。
+/// N3: 1:1:3:1:1 (1011101) with four light modules either before or after it (40 points each).
+/// The area outside the symbol is the quiet zone, so it is treated as light.
 ///
-/// 走査は segno 1.6.6 と同じ「数えたら 7 進む / 条件を満たさなければ 4 進む」。
-/// 1011101 は 4 モジュール以上ずらすと重なって現れうる（例: 1011101 1101 の 0 と 4）が、
-/// 同じ 1:1:3:1:1 の領域を二重に数えないため、数えた出現の先へ読み進める。
+/// Scanning follows segno 1.6.6: advance 7 after a match, advance 4 when the condition is not met.
+/// 1011101 can appear overlapping itself when shifted by 4 or more modules (for example the 0 and 4 of
+/// 1011101 1101), but to avoid counting the same 1:1:3:1:1 region twice, reading advances past the
+/// occurrence that was counted.
 fn penaltyFinderLike(size: usize, modules: []const u8) u32 {
     var score: u32 = 0;
     var line: usize = 0;
@@ -1181,7 +1191,7 @@ fn penaltyFinderLikeLine(size: usize, modules: []const u8, line: usize, comptime
     return score;
 }
 
-/// `index` の直前 4 モジュール（存在する範囲だけ）がすべて明か。
+/// Whether the 4 modules immediately before `index` (only those that exist) are all light.
 fn lightBefore(size: usize, modules: []const u8, line: usize, index: usize, comptime row: bool) bool {
     const start = if (index >= 4) index - 4 else 0;
     var j = start;
@@ -1191,7 +1201,7 @@ fn lightBefore(size: usize, modules: []const u8, line: usize, index: usize, comp
     return true;
 }
 
-/// `from` から 4 モジュール（存在する範囲だけ）がすべて明か。
+/// Whether the 4 modules starting at `from` (only those that exist) are all light.
 fn lightAfter(size: usize, modules: []const u8, line: usize, from: usize, comptime row: bool) bool {
     const end = @min(from + 4, size);
     var j = from;
@@ -1201,8 +1211,8 @@ fn lightAfter(size: usize, modules: []const u8, line: usize, from: usize, compti
     return true;
 }
 
-/// N4: 暗モジュール比率の 50% からのずれ（5% ごとに 10 点）。
-/// `k = |暗% - 50%| / 5%` の整数除算（切り捨て）。
+/// N4: deviation of the dark module ratio from 50% (10 points for every 5%).
+/// Integer division (truncating): `k = |dark% - 50%| / 5%`.
 fn penaltyBalance(size: usize, modules: []const u8) u32 {
     const total = size * size;
     var dark: usize = 0;
@@ -1216,25 +1226,26 @@ fn penaltyBalance(size: usize, modules: []const u8) u32 {
     return @intCast(k * 10);
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 //
-// 期待値の出典は各テストに明記する。すべて第三者（規格そのもの、または独立実装）から
-// 取得した値で、本実装の出力をそのまま期待値にはしていない。
+// The source of each expectation is stated in the test. Every value was obtained from a third party
+// (the standard itself or an independent implementation); this implementation's own output is never
+// used as an expectation.
 
 const testing = std.testing;
 
-test "検出モード: 数字・英数字・バイトを入力から選ぶ" {
+test "detect mode: numeric, alphanumeric or byte is chosen from the input" {
     try testing.expectEqual(Mode.numeric, detectMode("0123456789"));
     try testing.expectEqual(Mode.alphanumeric, detectMode("HELLO WORLD $%*+-./:"));
     try testing.expectEqual(Mode.alphanumeric, detectMode("UR:BYTES/ABCDEFG"));
-    // UTF-8 の日本語はバイトモード
+    // Japanese UTF-8 goes to byte mode
     try testing.expectEqual(Mode.byte, detectMode("日本語"));
     try testing.expectEqual(Mode.byte, detectMode("hello"));
-    // 空入力は数字モード（最小）
+    // Empty input goes to numeric mode (the smallest)
     try testing.expectEqual(Mode.numeric, detectMode(""));
 }
 
-test "英数字モードの値は規格 Table 5 の 45 文字" {
+test "alphanumeric mode values are the 45 characters of the standard's Table 5" {
     try testing.expectEqual(@as(?u6, 0), alphanumericValue('0'));
     try testing.expectEqual(@as(?u6, 9), alphanumericValue('9'));
     try testing.expectEqual(@as(?u6, 10), alphanumericValue('A'));
@@ -1245,7 +1256,7 @@ test "英数字モードの値は規格 Table 5 の 45 文字" {
     try testing.expectEqual(@as(?u6, null), alphanumericValue('_'));
 }
 
-test "文字数指示子のビット数は規格 Table 3" {
+test "character count indicator widths follow the standard's Table 3" {
     try testing.expectEqual(@as(usize, 10), Mode.numeric.charCountBits(1));
     try testing.expectEqual(@as(usize, 12), Mode.numeric.charCountBits(10));
     try testing.expectEqual(@as(usize, 14), Mode.numeric.charCountBits(27));
@@ -1257,10 +1268,10 @@ test "文字数指示子のビット数は規格 Table 3" {
     try testing.expectEqual(@as(usize, 16), Mode.byte.charCountBits(40));
 }
 
-test "総コードワード数とデータコードワード数" {
-    // 規格 Table 1 / Table 9 の値（第三者: segno 1.6.6 の consts.ECC と
-    // qrcodegen 1.8.0 の _ECC_CODEWORDS_PER_BLOCK / _NUM_ERROR_CORRECTION_BLOCKS が
-    // 全 40 バージョン × 4 レベルで一致することを確認済み）
+test "total codewords and data codewords" {
+    // Values from the standard's Table 1 / Table 9 (third party: segno 1.6.6's consts.ECC and
+    // qrcodegen 1.8.0's _ECC_CODEWORDS_PER_BLOCK / _NUM_ERROR_CORRECTION_BLOCKS were confirmed
+    // to match for all 40 versions x 4 levels)
     try testing.expectEqual(@as(usize, 26), rawCodewords(1));
     try testing.expectEqual(@as(usize, 44), rawCodewords(2));
     try testing.expectEqual(@as(usize, 3706), rawCodewords(40));
@@ -1275,9 +1286,9 @@ test "総コードワード数とデータコードワード数" {
     try testing.expectEqual(@as(usize, 1276), dataCodewords(.h, 40));
 }
 
-test "バージョン自動選択の境界（規格 Table 7 の容量）" {
-    // 第三者: segno 1.6.6 / qrcodegen 1.8.0 / python-qrcode 8.2 が一致する境界。
-    // バージョン 1 のバイトモード容量は L=17, M=14, Q=11, H=7 バイト。
+test "automatic version selection boundaries (capacities of the standard's Table 7)" {
+    // Third party: boundaries on which segno 1.6.6 / qrcodegen 1.8.0 / python-qrcode 8.2 agree.
+    // Byte mode capacity at version 1 is L=17, M=14, Q=11, H=7 bytes.
     try testing.expectEqual(@as(u8, 1), try selectVersion(.byte, 17, .l));
     try testing.expectEqual(@as(u8, 2), try selectVersion(.byte, 18, .l));
     try testing.expectEqual(@as(u8, 1), try selectVersion(.byte, 14, .m));
@@ -1286,21 +1297,21 @@ test "バージョン自動選択の境界（規格 Table 7 の容量）" {
     try testing.expectEqual(@as(u8, 2), try selectVersion(.byte, 12, .q));
     try testing.expectEqual(@as(u8, 1), try selectVersion(.byte, 7, .h));
     try testing.expectEqual(@as(u8, 2), try selectVersion(.byte, 8, .h));
-    // 英数字モードのバージョン 1 容量は L=25, M=20, Q=16, H=10 文字。
+    // Alphanumeric mode capacity at version 1 is L=25, M=20, Q=16, H=10 characters.
     try testing.expectEqual(@as(u8, 1), try selectVersion(.alphanumeric, 25, .l));
     try testing.expectEqual(@as(u8, 2), try selectVersion(.alphanumeric, 26, .l));
     try testing.expectEqual(@as(u8, 1), try selectVersion(.alphanumeric, 20, .m));
-    // 数字モードのバージョン 1 容量は L=41, M=34, Q=27, H=17 桁。
+    // Numeric mode capacity at version 1 is L=41, M=34, Q=27, H=17 digits.
     try testing.expectEqual(@as(u8, 1), try selectVersion(.numeric, 41, .l));
     try testing.expectEqual(@as(u8, 2), try selectVersion(.numeric, 42, .l));
-    // バージョン 40-L のバイトモード容量は 2953 バイト。
+    // Byte mode capacity at version 40-L is 2953 bytes.
     try testing.expectEqual(@as(u8, 40), try selectVersion(.byte, 2953, .l));
     try testing.expectError(Error.DataTooLong, selectVersion(.byte, 2954, .l));
 }
 
-test "Reed-Solomon: 規格 Annex I.2 の誤り訂正コードワード" {
-    // ISO/IEC 18004:2006(E) Annex I.2（"01234567" をバージョン 1-M で符号化）。
-    // データコードワード 16 個（パッドコードワード含む）と、生成される EC 10 個。
+test "Reed-Solomon: error correction codewords of the standard's Annex I.2" {
+    // ISO/IEC 18004:2006(E) Annex I.2 (encoding "01234567" at version 1-M).
+    // 16 data codewords (including pad codewords) and the 10 EC codewords generated.
     const data = [16]u8{
         0x10, 0x20, 0x0C, 0x56, 0x61, 0x80, 0xEC, 0x11,
         0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11,
@@ -1315,10 +1326,10 @@ test "Reed-Solomon: 規格 Annex I.2 の誤り訂正コードワード" {
     try testing.expectEqualSlices(u8, &expected, &out);
 }
 
-test "データ符号化: 規格 Annex I.2 のデータコードワード列" {
-    // ISO/IEC 18004:2006(E) Annex I.2: "01234567" をバージョン 1-M で符号化すると
-    // 16 個のデータコードワード（6 個 + パッド 10 個）になる。
-    // 8 ビットへの区切りで「必要なときだけ」パディングビットを足すことも、この例が根拠。
+test "data encoding: data codeword sequence of the standard's Annex I.2" {
+    // ISO/IEC 18004:2006(E) Annex I.2: encoding "01234567" at version 1-M gives
+    // 16 data codewords (6 + 10 pad codewords).
+    // This example is also the basis for adding padding bits to the 8-bit boundary "only when needed".
     var buf: [16]u8 = @splat(0);
     var bit_len: usize = 0;
     writeData(&buf, &bit_len, .numeric, "01234567", 1);
@@ -1330,17 +1341,17 @@ test "データ符号化: 規格 Annex I.2 のデータコードワード列" {
     try testing.expectEqualSlices(u8, &expected, &buf);
 }
 
-test "format 情報: 規格 Table C.1 の 32 通り" {
-    // ISO/IEC 18004:2006(E) Table C.1「Valid format information bit sequences」の
-    // 「Sequence after masking (QR Code symbols)」列（16 進）。
-    // 添字は 5 データビットの値（上位 2 ビットが EC レベル、下位 3 ビットがマスク）。
+test "format information: the 32 cases of the standard's Table C.1" {
+    // The "Sequence after masking (QR Code symbols)" column (hexadecimal) of the
+    // ISO/IEC 18004:2006(E) Table C.1 "Valid format information bit sequences".
+    // The index is the value of the 5 data bits (the top 2 bits are the EC level, the bottom 3 the mask).
     const table = [32]u16{
         0x5412, 0x5125, 0x5E7C, 0x5B4B, 0x45F9, 0x40CE, 0x4F97, 0x4AA0,
         0x77C4, 0x72F3, 0x7DAA, 0x789D, 0x662F, 0x6318, 0x6C41, 0x6976,
         0x1689, 0x13BE, 0x1CE7, 0x19D0, 0x0762, 0x0255, 0x0D0C, 0x083B,
         0x355F, 0x3068, 0x3F31, 0x3A06, 0x24B4, 0x2183, 0x2EDA, 0x2BED,
     };
-    const levels = [4]EcLevel{ .m, .l, .h, .q }; // データビット上位 2 ビットの順（00, 01, 10, 11）
+    const levels = [4]EcLevel{ .m, .l, .h, .q }; // order of the top 2 data bits (00, 01, 10, 11)
     for (levels, 0..) |ec, ec_bits| {
         var mask: u3 = 0;
         while (true) : (mask += 1) {
@@ -1351,8 +1362,8 @@ test "format 情報: 規格 Table C.1 の 32 通り" {
     }
 }
 
-test "version 情報: 規格 Table D.1 の全 34 バージョン" {
-    // ISO/IEC 18004:2006(E) Table D.1「Version information bit stream for each version」。
+test "version information: all 34 versions of the standard's Table D.1" {
+    // ISO/IEC 18004:2006(E) Table D.1 "Version information bit stream for each version".
     const table = [41]u32{
         0,       0,       0,       0,       0,       0,       0,
         0x07C94, 0x085BC, 0x09A99, 0x0A4D3, 0x0BBF6, 0x0C762, 0x0D847,
@@ -1367,63 +1378,63 @@ test "version 情報: 規格 Table D.1 の全 34 バージョン" {
     }
 }
 
-test "エラー: 容量超過とバージョン範囲外" {
+test "errors: capacity exceeded and version out of range" {
     const allocator = testing.allocator;
-    // 0x80 は英数字でも数字でもないのでバイトモード。バージョン 40-L の 2953 バイトを超える。
+    // 0x80 is neither alphanumeric nor numeric, so byte mode is used. This exceeds the 2953 bytes of version 40-L.
     var too_long: [2954]u8 = @splat(0x80);
     try testing.expectError(Error.DataTooLong, encode(allocator, &too_long, .l));
     try testing.expectError(Error.InvalidVersion, encodeVersion(allocator, "A", .m, 0));
     try testing.expectError(Error.InvalidVersion, encodeVersion(allocator, "A", .m, 41));
-    // 指定バージョンに収まらない場合
+    // When it does not fit in the requested version
     try testing.expectError(Error.DataTooLong, encodeVersion(allocator, "0123456789ABCDEF", .h, 1));
-    // モードを明示指定した場合、そのモードで表せない文字は拒否する
-    // （英数字モードに小文字、数字モードに数字以外）
+    // When a mode is requested explicitly, characters that the mode cannot represent are rejected
+    // (lower-case letters in alphanumeric mode, non-digits in numeric mode)
     try testing.expectError(Error.InvalidCharacter, encodeOptions(allocator, "ur:bytes/abc", .m, .{ .mode = .alphanumeric }));
     try testing.expectError(Error.InvalidCharacter, encodeOptions(allocator, "12a", .m, .{ .mode = .numeric }));
-    // 同じ入力でもバイトモードなら通る
+    // The same input is accepted in byte mode
     var as_bytes = try encodeOptions(allocator, "ur:bytes/abc", .m, .{ .mode = .byte });
     defer as_bytes.deinit(allocator);
     try testing.expectEqual(as_bytes.size * as_bytes.size, as_bytes.modules.len);
 
-    // バイトモードを明示した場合も同じ境界（2953 は入り、2954 は入らない）
+    // The same boundary applies when byte mode is requested explicitly (2953 fits, 2954 does not)
     var max_byte: [2953]u8 = @splat(0x80);
     var m = try encodeOptions(allocator, &max_byte, .l, .{ .mode = .byte });
     defer m.deinit(allocator);
     try testing.expectEqual(@as(u8, 40), m.version);
 }
 
-test "描画: 余白・拡大倍率・クリップ" {
+test "drawing: quiet zone, scale and clipping" {
     const allocator = testing.allocator;
     var m = try encodeOptions(allocator, "HELLO", .m, .{ .version = 1, .mask = 0 });
     defer m.deinit(allocator);
 
-    // 21 モジュール + 余白 4 × 2 = 29 モジュール。倍率 1 なら 29×29 ピクセル。
+    // 21 modules + quiet zone 4 x 2 = 29 modules. At scale 1 that is 29x29 pixels.
     try testing.expectEqual(@as(usize, 29), pixelSize(&m, .{ .scale = 1, .quiet_zone = 4 }));
     try testing.expectEqual(@as(usize, 58), pixelSize(&m, .{ .scale = 2, .quiet_zone = 4 }));
     try testing.expect(fitsIn(&m, 240, 240, .{ .scale = 2, .quiet_zone = 4 }));
     try testing.expect(!fitsIn(&m, 240, 240, .{ .scale = 2, .quiet_zone = 4, .origin_x = 200 }));
 
-    // 29×29 の枠にちょうど収める。余白は明、位置検出パターンの角は暗、セパレータは明。
+    // Fit it exactly into a 29x29 area. The quiet zone is light, the corner of the finder pattern is dark and the separator is light.
     var buffer: [31 * 31]u16 = @splat(0x1234);
     drawRgb565(&m, &buffer, 31, 31, .{ .scale = 1, .quiet_zone = 4, .dark = 0x0000, .light = 0xFFFF });
     try testing.expectEqual(@as(u16, 0xFFFF), buffer[0]);
     try testing.expectEqual(@as(u16, 0x0000), buffer[4 * 31 + 4]);
     try testing.expectEqual(@as(u16, 0xFFFF), buffer[(4 + 7) * 31 + (4 + 7)]);
-    // 29 モジュールぶんを描いたので、30 列目・30 行目（枠の外）は触らない。
+    // Only 29 modules were drawn, so column 30 and row 30 (outside the area) are untouched.
     try testing.expectEqual(@as(u16, 0x1234), buffer[30]);
     try testing.expectEqual(@as(u16, 0x1234), buffer[30 * 31 + 0]);
-    // 原点をずらすと、その位置から描く。
+    // Shifting the origin draws from that position.
     var offset: [31 * 31]u16 = @splat(0x1234);
     drawRgb565(&m, &offset, 31, 31, .{ .scale = 1, .quiet_zone = 4, .origin_x = 2, .origin_y = 1 });
     try testing.expectEqual(@as(u16, 0x1234), offset[0]);
     try testing.expectEqual(@as(u16, 0xFFFF), offset[1 * 31 + 2]);
 
-    // 負の原点でもクリップして描ける（例外を出さない）。
+    // A negative origin is clipped and still draws (no exception is raised).
     var small: [4]u16 = @splat(0x1234);
     drawRgb565(&m, &small, 2, 2, .{ .scale = 4, .quiet_zone = 0, .origin_x = -8, .origin_y = -8 });
     try testing.expectEqual(@as(u16, 0x0000), small[0]);
 
-    // buffer がフレームバッファより小さい場合は入る行だけ描く。
+    // If buffer is smaller than the framebuffer, only the rows that fit are drawn.
     var tiny: [3]u16 = @splat(0x1234);
     drawRgb565(&m, &tiny, 3, 3, .{ .scale = 1, .quiet_zone = 4 });
     try testing.expectEqual(@as(u16, 0xFFFF), tiny[0]);
@@ -1569,7 +1580,7 @@ const expect_ur300_l_mask0 = [_][]const u8{
     "#######.#####.#######..##..###.##.##..#.#...#.#####.#",
 };
 
-/// 埋め込み行列と一致するか確かめる（'#' が暗、'.' が明）。
+/// Checks that it matches the embedded matrix ('#' is dark, '.' is light).
 fn expectMatrix(m: *const Matrix, expected: []const []const u8) !void {
     try testing.expectEqual(expected.len, m.size);
     for (expected, 0..) |row, y| {
@@ -1580,19 +1591,19 @@ fn expectMatrix(m: *const Matrix, expected: []const []const u8) !void {
     }
 }
 
-/// 2 つの行列が完全に同じか確かめる。
+/// Checks that two matrices are exactly the same.
 fn expectSameMatrix(a: *const Matrix, b: *const Matrix) !void {
     try testing.expectEqual(a.size, b.size);
     try testing.expectEqualSlices(u8, a.modules, b.modules);
 }
 
-/// 埋め込みベクタで使う UR 風の文字列（大文字の bytewords を QR に出す想定）。
+/// UR-like string used by the embedded vectors (assuming upper-case bytewords are shown as a QR code).
 const ur_long_vector = "UR:BYTES/71HFE86Y5R215DEW1ZCYQESH0ARLH9DL65O6MMG2TY7O5ZINC42EI5E6OHTNANMDH4AYFATOHZEK3E2KPH4DKDVPT9G8FZYGRPNE8WV5379AR4OOTXGZ07YHL7IRAT0GWBW6JWC9NAYX0KV17NJF3F55V4Y88UZAGXRDYCJPNSXS7FE4L1ZEE043E42L4WFHVDY8UFUQC66RMRQT363PL6FCCYS8RBHTF4SZ63Y05FAQVUDP3AO0OGTIRZV9CID3Y3K33UWXA3W5B44FP7F25QXKGDKFGP8JTK40T64YDWG8";
 
-test "行列: HELLO WORLD（英数字 / EC M / 自動マスク）" {
-    // 出典: Nayuki qrcodegen 1.8.0、python-qrcode 8.2、segno 1.6.6（パディングのみ
-    // 規格どおりに修正）の 3 実装が、いずれも version 1・マスク 0 を自動選択し、
-    // 同一の行列を出力することを確認している。
+test "matrix: HELLO WORLD (alphanumeric / EC M / automatic mask)" {
+    // Source: the 3 implementations Nayuki qrcodegen 1.8.0, python-qrcode 8.2 and segno 1.6.6 (with
+    // only the padding corrected to match the standard) were all confirmed to choose version 1 and
+    // mask 0 automatically and to output the same matrix.
     const allocator = testing.allocator;
     var m = try encode(allocator, "HELLO WORLD", .m);
     defer m.deinit(allocator);
@@ -1603,12 +1614,12 @@ test "行列: HELLO WORLD（英数字 / EC M / 自動マスク）" {
     try expectMatrix(&m, &expect_hello_world_m);
 }
 
-test "行列: 01234567（数字 / EC M / 規格 Annex I.2 の作業例）" {
-    // ISO/IEC 18004:2006(E) Annex I.2 は "01234567" をバージョン 1-M で符号化し、
-    // Step 4 で「選択されるデータマスクは 010（= 2）」と明記している。format 情報も
-    // Step 5 で 101111001111100（= 0x5E7C。Table C.1 のデータビット 00010）と明記。
-    // 期待する行列は、qrcodegen 1.8.0 / python-qrcode 8.2 / segno 1.6.6（パディング修正）が
-    // マスク 2 指定で一致して出力するもので、規格の作業例と同一のシンボル。
+test "matrix: 01234567 (numeric / EC M / worked example of the standard's Annex I.2)" {
+    // ISO/IEC 18004:2006(E) Annex I.2 encodes "01234567" at version 1-M and states in Step 4 that
+    // "the data mask selected is 010 (= 2)". It also states the format information in Step 5 as
+    // 101111001111100 (= 0x5E7C; data bits 00010 in Table C.1). The expected matrix is the one
+    // qrcodegen 1.8.0 / python-qrcode 8.2 / segno 1.6.6 (padding corrected) output identically with
+    // mask 2 forced, which is the same symbol as the worked example in the standard.
     const allocator = testing.allocator;
 
     var m = try encode(allocator, "01234567", .m);
@@ -1618,9 +1629,9 @@ test "行列: 01234567（数字 / EC M / 規格 Annex I.2 の作業例）" {
     try testing.expectEqual(Mode.numeric, m.mode);
     try expectMatrix(&m, &expect_iso_01234567_m_mask2);
 
-    // 参考: format/version 情報を空のまま評価する規約（`encoding_region_only`、
-    // segno 1.6.6 と同じ）ではマスク 3 が選ばれる。どちらの規約でも生成される
-    // シンボルは規格に適合し、復号できる（マスク番号は format 情報に入る）。
+    // Reference: under the convention that evaluates with the format/version information left blank
+    // (`encoding_region_only`, the same as segno 1.6.6) mask 3 is chosen. Under either convention the
+    // generated symbol conforms to the standard and can be decoded (the mask number goes into the format information).
     var compat = try encodeOptions(allocator, "01234567", .m, .{ .mask_eval = .encoding_region_only });
     defer compat.deinit(allocator);
     try testing.expectEqual(@as(u3, 3), compat.mask);
@@ -1629,10 +1640,10 @@ test "行列: 01234567（数字 / EC M / 規格 Annex I.2 の作業例）" {
     try expectSameMatrix(&compat, &forced);
 }
 
-test "行列: 日本語 UTF-8（バイト / EC Q / マスク 5 指定）" {
-    // 出典: qrcodegen 1.8.0 / python-qrcode 8.2 / segno 1.6.6（パディング修正）が
-    // マスク 5 指定で一致して出力する行列。バイトモード・version 3
-    // （位置合わせパターンを含む大きさ）。
+test "matrix: Japanese UTF-8 (byte / EC Q / mask 5 forced)" {
+    // Source: the matrix that qrcodegen 1.8.0 / python-qrcode 8.2 / segno 1.6.6 (padding corrected)
+    // output identically with mask 5 forced. Byte mode, version 3
+    // (a size that includes an alignment pattern).
     const allocator = testing.allocator;
     var m = try encodeWithMask(allocator, "日本語のテスト", .q, 5);
     defer m.deinit(allocator);
@@ -1642,10 +1653,10 @@ test "行列: 日本語 UTF-8（バイト / EC Q / マスク 5 指定）" {
     try expectMatrix(&m, &expect_jp_utf8_q_mask5);
 }
 
-test "行列: 長い UR 風文字列（英数字 / EC L / マスク 0 指定）" {
-    // 出典: 上と同じ 3 実装がマスク 0 指定で一致して出力する行列。
-    // version 9（version 情報ブロックと位置合わせパターンを含む）。
-    // zhww は QR 表示用に bytewords を大文字で出すため、英数字モードが選ばれる。
+test "matrix: long UR-like string (alphanumeric / EC L / mask 0 forced)" {
+    // Source: the matrix that the same 3 implementations output identically with mask 0 forced.
+    // version 9 (includes the version information blocks and alignment patterns).
+    // zhww displays bytewords in upper case for the QR code, so alphanumeric mode is chosen.
     const allocator = testing.allocator;
     var m = try encodeWithMask(allocator, ur_long_vector, .l, 0);
     defer m.deinit(allocator);

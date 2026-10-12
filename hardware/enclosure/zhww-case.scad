@@ -1,99 +1,106 @@
-// zhww の筐体（OpenSCAD・パラメトリック）
+// zhww enclosure (OpenSCAD, parametric)
 //
-// 構成: RP2350-PiZero（65 × 30mm）＋ Waveshare 1.3inch LCD HAT を上下 2 分割で収める。
-//       電池は積まない（USB 外部給電）。
+// Layout: an RP2350-PiZero (65 × 30mm) plus a Waveshare 1.3inch LCD HAT, in a two-part
+//         case split top and bottom. No battery (externally powered over USB).
 //
-// **座標の約束**: x は基板の長辺（0 = 左端、65 = 右端）、y は短辺（0 = 手前＝USB 側の辺、
-// 30 = 奥＝40pin ヘッダ側）、z は高さ（0 = 基板の下面）。
+// **Coordinate convention**: x is the board's long edge (0 = left end, 65 = right end),
+// y is the short edge (0 = front = the USB-side edge, 30 = rear = the 40-pin header side),
+// z is height (0 = the board's underside).
 //
-// ## 寸法の出所（重要）
+// ## Where the dimensions come from (important)
 //
-// 大半は**公式の寸法図と製品写真から読み取った値**で、ノギスでの実測はまだ。
-// 実測したら `MEASURED` の印がある値を更新すること。
+// Most of them are **values read off the official dimension drawings and product
+// photos**; nothing has been measured with calipers yet.
+// Once you measure, update the values marked `MEASURED`.
 //
-//   - 基板外形 65.00 × 30.00mm、取付穴 Φ3.00、40pin ヘッダ 2.54mm ピッチ
-//     … Waveshare RP2350-PiZero の寸法図（wiki の Dimensions 画像）
+//   - Board outline 65.00 × 30.00mm, mounting holes Φ3.00, 40-pin header 2.54mm pitch
+//     — the Waveshare RP2350-PiZero dimension drawing (the Dimensions image on the wiki)
 //     https://www.waveshare.com/wiki/RP2350-PiZero
-//   - コネクタの位置（手前の長辺に 3 つ、左の短辺に microSD、右の短辺に BAT 2pin）
-//     … 同じ寸法図。**図からの読み取り値**なので実測で確認する
-//   - HAT 65 × 30.2mm、表示領域 23.4 × 23.4mm
-//     … Waveshare 1.3inch LCD HAT の wiki（Dimension / Specification）
-//   - HAT 上の配置（左端に KEY が縦一列、中央に LCD、右端にジョイスティック）
-//     … 製品写真からの読み取り。**実測で確認する**
+//   - Connector positions (three on the front long edge, microSD on the left short edge,
+//     BAT 2-pin on the right short edge)
+//     — the same dimension drawing. **Values read off the drawing**, so confirm by measuring
+//   - HAT 65 × 30.2mm, display area 23.4 × 23.4mm
+//     — the Waveshare 1.3inch LCD HAT wiki (Dimension / Specification)
+//   - Layout on the HAT (a vertical column of KEY buttons at the left edge, the LCD in the
+//     center, the joystick at the right edge)
+//     — read off product photos. **Confirm by measuring**
 //
-// ## ライセンス
+// ## License
 //
-// CC-BY-SA-4.0（リポジトリの LICENSE-ENCLOSURE）
+// CC-BY-SA-4.0 (the repository's LICENSE-ENCLOSURE)
 
-// ---------------------------------------------------------------- 基板
+// ---------------------------------------------------------------- board
 
-board_w = 65.0;         // 長辺（公式図より）
-board_d = 30.0;         // 短辺（公式図より）
-board_t = 1.6;          // 基板の厚み（一般的な値）
-corner_r = 3.0;         // 基板の角の丸み（図から）
+board_w = 65.0;         // long edge (from the official drawing)
+board_d = 30.0;         // short edge (from the official drawing)
+board_t = 1.6;          // board thickness (a typical value)
+corner_r = 3.0;         // board corner radius (from the drawing)
 
-// 取付穴（Pi Zero と同じ配置と仮定。MEASURED: ノギスで確認する）
-hole_d = 3.0;           // Φ3.00（公式図より）
-hole_inset = 3.5;       // 端から穴中心まで（Pi Zero の標準。MEASURED）
+// Mounting holes (assumed to be in the same positions as the Pi Zero.
+// MEASURED: confirm with calipers)
+hole_d = 3.0;           // Φ3.00 (from the official drawing)
+hole_inset = 3.5;       // edge to hole center (the Pi Zero standard. MEASURED)
 
-// 40pin ヘッダ（奥の長辺に沿って）
-header_h = 8.5;         // メスソケットを挿したときの高さ（MEASURED）
-header_pitch = 2.54;    // 公式図より
+// 40-pin header (along the rear long edge)
+header_h = 8.5;         // height with the female socket mated (MEASURED)
+header_pitch = 2.54;    // from the official drawing
 
-// ---------------------------------------------------------------- コネクタ（手前の長辺）
+// ---------------------------------------------------------------- connectors (front long edge)
 
-// 公式図からの読み取り値（MEASURED: 実測で確認）
-usb_c_w = 9.0;          // USB-C の穴
+// Values read off the official drawing (MEASURED: confirm by measuring)
+usb_c_w = 9.0;          // USB-C cut-out
 usb_c_h = 3.6;
-usb_c1_x = 33.0;        // PIO-USB 側の左端
-usb_c2_x = 47.0;        // USB 側の左端
-hdmi_w = 11.0;          // mini HDMI（一番左）
+usb_c1_x = 33.0;        // left edge of the PIO-USB one
+usb_c2_x = 47.0;        // left edge of the USB one
+hdmi_w = 11.0;          // mini HDMI (leftmost)
 hdmi_h = 3.0;
 hdmi_x = 8.0;
 
-// 左の短辺の microSD スロット（カードは左から挿す）
-sd_h = 3.0;             // スロットの高さ
-sd_y0 = 6.0;            // スロットの前端
-sd_len = 14.0;          // スロットの長さ（y 方向）
+// microSD slot on the left short edge (the card is inserted from the left)
+sd_h = 3.0;             // slot height
+sd_y0 = 6.0;            // front edge of the slot
+sd_len = 14.0;          // slot length (along y)
 
-// 右の短辺の BAT コネクタ（任意改造で LiPo を使う場合に備えて開口しておく）
+// BAT connector on the right short edge (leave an opening in case an optional
+// LiPo mod is used)
 bat_w = 8.0;
 bat_h = 4.0;
 bat_y0 = 11.0;
 
-// ---------------------------------------------------------------- HAT（上に載る）
+// ---------------------------------------------------------------- HAT (sits on top)
 
-hat_w = 65.0;           // HAT の幅（wiki: 65 × 30.2mm）
-hat_d = 30.2;           // HAT の奥行き
+hat_w = 65.0;           // HAT width (wiki: 65 × 30.2mm)
+hat_d = 30.2;           // HAT depth
 hat_t = 1.6;
-// 表示窓（HAT の中央やや左。MEASURED）
-display_size = 23.4;    // 表示領域（wiki より）
-display_x = 13.0;       // HAT 左端から
-display_y = 3.3;        // HAT 前端から
+// Display window (slightly left of the HAT center. MEASURED)
+display_size = 23.4;    // display area (from the wiki)
+display_x = 13.0;       // from the HAT's left edge
+display_y = 3.3;        // from the HAT's front edge
 
-// 左端に縦一列の 3 ボタン（KEY1〜3。MEASURED: 写真からの読み取り）
+// 3 buttons in a vertical column at the left edge (KEY1–3.
+// MEASURED: read off photos)
 button_d = 5.2;
 button_x = 5.0;
 button_y = [7.0, 15.0, 23.0];
 
-// 右端のジョイスティック（MEASURED: 写真からの読み取り）
+// Joystick at the right edge (MEASURED: read off photos)
 joystick_d = 8.0;
 joystick_x = 55.0;
 joystick_y = 15.0;
 
-// ---------------------------------------------------------------- ケース
+// ---------------------------------------------------------------- case
 
-wall = 2.0;             // 肉厚
-clearance = 0.4;        // 基板とケースの遊び
-floor_t = 2.0;          // 底板
+wall = 2.0;             // wall thickness
+clearance = 0.4;        // clearance between the board and the case
+floor_t = 2.0;          // base plate
 inner_w = board_w + clearance * 2;
 inner_d = board_d + clearance * 2;
 inner_h = board_t + header_h + hat_t + 2.0;
-screw_d = 2.2;          // M2.5 の下穴
+screw_d = 2.2;          // M2.5 pilot hole
 
 $fn = 48;
 
-// ---------------------------------------------------------------- 部品
+// ---------------------------------------------------------------- parts
 
 module rounded_box(w, d, h, r = 2) {
     hull() {
@@ -102,7 +109,8 @@ module rounded_box(w, d, h, r = 2) {
     }
 }
 
-// 基板の四隅の取付穴に合わせたボス（上蓋をネジ止めする）
+// Bosses aligned with the mounting holes at the board's four corners
+// (the lid is screwed onto them)
 module bosses() {
     for (p = [[hole_inset, hole_inset],
               [board_w - hole_inset, hole_inset],
@@ -117,21 +125,21 @@ module bosses() {
     }
 }
 
-// 下側（トレイ）
+// Bottom (the tray)
 module tray() {
     difference() {
         union() {
             rounded_box(inner_w + wall * 2, inner_d + wall * 2, inner_h + floor_t, corner_r);
-            // 上蓋と噛み合う内側のリップ
+            // Inner lip that mates with the lid
             translate([wall + 0.6, wall + 0.6, inner_h + floor_t - 1.5])
                 rounded_box(inner_w - 1.2, inner_d - 1.2, 1.5, corner_r / 2);
         }
 
-        // 内側をくり抜く
+        // Hollow out the inside
         translate([wall, wall, floor_t])
             rounded_box(inner_w, inner_d, inner_h + 2, corner_r / 2);
 
-        // 手前の長辺: mini HDMI / USB-C ×2
+        // Front long edge: mini HDMI / USB-C ×2
         translate([wall + clearance + hdmi_x, -1, floor_t + 2.5])
             cube([hdmi_w, wall + 2, hdmi_h]);
         translate([wall + clearance + usb_c1_x, -1, floor_t + 2.5])
@@ -139,11 +147,11 @@ module tray() {
         translate([wall + clearance + usb_c2_x, -1, floor_t + 2.5])
             cube([usb_c_w, wall + 2, usb_c_h]);
 
-        // 左の短辺: microSD
+        // Left short edge: microSD
         translate([-1, wall + clearance + sd_y0, floor_t + 1.5])
             cube([wall + 2, sd_len, sd_h]);
 
-        // 右の短辺: BAT（任意の LiPo 用）
+        // Right short edge: BAT (for an optional LiPo)
         translate([inner_w + wall - 1, wall + clearance + bat_y0, floor_t + 1.5])
             cube([wall + 2, bat_w, bat_h]);
     }
@@ -151,7 +159,7 @@ module tray() {
     bosses();
 }
 
-// 上蓋
+// Lid
 module lid() {
     difference() {
         union() {
@@ -161,23 +169,23 @@ module lid() {
                 rounded_box(inner_w + 0.4, inner_d + 0.4, 1.5, corner_r / 2);
         }
 
-        // 表示窓
+        // Display window
         translate([wall + clearance + display_x, wall + clearance + display_y,
                    inner_h + floor_t - 1])
             cube([display_size, display_size, wall + 3]);
 
-        // 3 ボタン（左端に縦一列）
+        // 3 buttons (a vertical column at the left edge)
         for (y = button_y)
             translate([wall + clearance + button_x, wall + clearance + y,
                        inner_h + floor_t - 1])
                 cylinder(d = button_d, h = wall + 3);
 
-        // ジョイスティック
+        // Joystick
         translate([wall + clearance + joystick_x, wall + clearance + joystick_y,
                    inner_h + floor_t - 1])
             cylinder(d = joystick_d, h = wall + 3);
 
-        // ネジ穴（ボスに合わせる）
+        // Screw holes (aligned with the bosses)
         for (p = [[hole_inset, hole_inset],
                   [board_w - hole_inset, hole_inset],
                   [hole_inset, board_d - hole_inset],
@@ -188,36 +196,38 @@ module lid() {
     }
 }
 
-// ---------------------------------------------------------------- 内部（断面確認用）
+// ---------------------------------------------------------------- internals (cross-section check)
 
-// 基板・40pin ヘッダ・HAT・microSD カードを**実際の高さ**で置く。
-// 「穴とボタンが干渉して見える」という指摘を確かめるために、断面で高さ関係を示す。
+// Place the board, the 40-pin header, the HAT and the microSD card at their **actual
+// heights**. The cross-section shows the height relationships, to check the report that
+// "the cut-outs and the buttons look like they interfere".
 module internals() {
-    // 基板（65 × 30 × 1.6）
+    // Board (65 × 30 × 1.6)
     color("SteelBlue")
         translate([wall + clearance, wall + clearance, floor_t])
             cube([board_w, board_d, board_t]);
-    // 40pin ヘッダ（奥の長辺。基板の上に立つ）
+    // 40-pin header (the rear long edge; stands on the board)
     color("Green")
         translate([wall + clearance + corner_r, wall + clearance + board_d - 2.5,
                    floor_t + board_t])
             cube([board_w - corner_r * 2, 2.5, header_h]);
-    // HAT（65 × 30.2 × 1.6。ヘッダの上に載る）
+    // HAT (65 × 30.2 × 1.6; sits on the header)
     color("Orange")
         translate([wall + clearance, wall + clearance, floor_t + board_t + header_h])
             cube([hat_w, hat_d, hat_t]);
-    // microSD カード（左から挿さっている状態。基板の上面すれすれ）
+    // microSD card (inserted from the left; barely clear of the board's top face)
     color("Silver")
         translate([-1, wall + clearance + sd_y0 + 2, floor_t + board_t + 0.2])
             cube([12, 11, 0.8]);
 }
 
-// ---------------------------------------------------------------- 配置確認（2D）
+// ---------------------------------------------------------------- layout check (2D)
 
-// 基板と HAT を**別々のパネル**に描く平面図（重ねると高さの違いで誤解を招くため）。
-// 公式の寸法図と見比べて、位置のずれを見つけるためのもの。
+// A plan view that draws the board and the HAT on **separate panels** (overlaying them
+// would mislead because of the height difference).
+// For comparing against the official dimension drawing and spotting position errors.
 module layout_check() {
-    // --- 左のパネル: 基板（下の層） ---
+    // --- left panel: the board (lower layer) ---
     color("SteelBlue") difference() {
         offset(r = corner_r) offset(delta = -corner_r) square([board_w, board_d]);
         for (p = [[hole_inset, hole_inset],
@@ -226,16 +236,16 @@ module layout_check() {
                   [board_w - hole_inset, board_d - hole_inset]])
             translate([p[0], p[1]]) circle(d = hole_d);
     }
-    // 手前の長辺のコネクタ（HDMI / USB-C ×2）と 40pin ヘッダ
+    // Connectors on the front long edge (HDMI / USB-C ×2) and the 40-pin header
     color("Gray") translate([hdmi_x, -4]) square([hdmi_w, 4]);
     color("Gray") translate([usb_c1_x, -4]) square([usb_c_w, 4]);
     color("Gray") translate([usb_c2_x, -4]) square([usb_c_w, 4]);
     color("Green") translate([corner_r, board_d]) square([board_w - corner_r * 2, 2.5]);
-    // 左の短辺の microSD、右の短辺の BAT
+    // microSD on the left short edge, BAT on the right short edge
     color("DimGray") translate([-4, sd_y0]) square([4, sd_len]);
     color("DimGray") translate([board_w, bat_y0]) square([4, bat_w]);
 
-    // --- 右のパネル: HAT（上の層。x をずらして並べる） ---
+    // --- right panel: the HAT (upper layer; shifted in x to sit beside it) ---
     translate([board_w + 25, 0]) {
         color("SteelBlue") offset(r = corner_r) offset(delta = -corner_r) square([hat_w, hat_d]);
         color("Orange") translate([display_x, display_y]) square([display_size, display_size]);
@@ -251,9 +261,9 @@ module layout_check() {
     }
 }
 
-// ---------------------------------------------------------------- 出力
+// ---------------------------------------------------------------- output
 
-part = "all";   // "tray" / "lid" / "all" / "check" / "section"（-D で切り替え）
+part = "all";   // "tray" / "lid" / "all" / "check" / "section" (switch with -D)
 
 if (part == "all") {
     tray();
@@ -265,7 +275,7 @@ if (part == "all") {
 } else if (part == "check") {
     layout_check();
 } else if (part == "section") {
-    // 手前半分を切り取って、内部の高さ関係を見えるようにする
+    // Cut away the front half so the internal height relationships are visible
     difference() {
         union() {
             tray();

@@ -1,66 +1,68 @@
-//! ブロックデバイスの抽象（512 バイトセクタ単位の読み書き）。
+//! Block device abstraction (reads and writes in 512-byte sectors).
 //!
-//! 実機では microSD を SPI で駆動する HAL が、テストではメモリ上の実装
-//! （`MemoryDevice`）がこのインターフェースを満たす。FAT32 の実装はデバイスの
-//! 種類を知らない。
+//! On the real board an SPI-driven microSD HAL satisfies this interface; in tests an
+//! in-memory implementation (`MemoryDevice`) does. The FAT32 implementation does not
+//! know what kind of device it is talking to.
 //!
-//! **方針**
-//! - セクタ長は 512 バイト固定（SD カードのブロック長も 512 バイト）。
-//! - 転送長はセクタ長の倍数でなければならない。部分セクタの読み書きは実機で
-//!   できないため、端数は呼び出し側が 1 セクタに組み立てる。
-//! - 範囲チェックは `BlockDevice` 側で行う。各実装が自前で持つ必要はない。
-//! - 値渡しのコピーで受け渡してよい（実体は `context` が指す外部のメモリにある）。
+//! **Policy**
+//! - The sector size is fixed at 512 bytes (the SD card block length is 512 bytes too).
+//! - Transfer lengths must be a multiple of the sector size. Real hardware cannot
+//!   read or write partial sectors, so callers assemble remainders into one sector.
+//! - Range checks are done by `BlockDevice` itself. Implementations need not carry
+//!   their own.
+//! - Passing copies by value is fine (the actual state lives in external memory that
+//!   `context` points to).
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 
-/// セクタ長。SD カードのブロック長に合わせる。
+/// Sector size. Matches the SD card block length.
 pub const sector_size = 512;
 
-/// ブロックデバイスのエラー。FAT32 側のエラー集合（`fat32.Error`）に含まれる。
+/// Block device errors. Included in the FAT32 error set (`fat32.Error`).
 pub const Error = error{
-    /// デバイスが応答しない、または読み書きに失敗した
+    /// The device does not respond, or a read or write failed
     DeviceFailure,
-    /// セクタ番号がデバイスの範囲外
+    /// The sector number is outside the device
     OutOfRange,
-    /// 転送長が 0、またはセクタ長の倍数でない
+    /// The transfer length is zero or not a multiple of the sector size
     InvalidLength,
-    /// 書き込み禁止のデバイス
+    /// The device is write-protected
     ReadOnly,
 };
 
-/// セクタ単位の読み書き。実装は `context` + `vtable` で差し替える。
+/// Sector-granular reads and writes. Implementations are swapped in via `context` + `vtable`.
 pub const BlockDevice = struct {
     context: *anyopaque,
     vtable: *const VTable,
 
     pub const VTable = struct {
-        /// `lba` から `buffer.len / sector_size` セクタを読む。
+        /// Read `buffer.len / sector_size` sectors starting at `lba`.
         readSectors: *const fn (context: *anyopaque, lba: u32, buffer: []u8) Error!void,
-        /// `lba` から `data.len / sector_size` セクタを書く。
+        /// Write `data.len / sector_size` sectors starting at `lba`.
         writeSectors: *const fn (context: *anyopaque, lba: u32, data: []const u8) Error!void,
-        /// デバイスの総セクタ数。
+        /// Total number of sectors on the device.
         sectorCount: *const fn (context: *anyopaque) u64,
     };
 
-    /// `buffer.len` はセクタ長の倍数でなければならない（`error.InvalidLength`）。
+    /// `buffer.len` must be a multiple of the sector size (`error.InvalidLength`).
     pub fn readSectors(self: BlockDevice, lba: u32, buffer: []u8) Error!void {
         try checkTransfer(lba, buffer.len, self.sectorCount());
         return self.vtable.readSectors(self.context, lba, buffer);
     }
 
-    /// `data.len` はセクタ長の倍数でなければならない（`error.InvalidLength`）。
+    /// `data.len` must be a multiple of the sector size (`error.InvalidLength`).
     pub fn writeSectors(self: BlockDevice, lba: u32, data: []const u8) Error!void {
         try checkTransfer(lba, data.len, self.sectorCount());
         return self.vtable.writeSectors(self.context, lba, data);
     }
 
-    /// 1 セクタを読む便宜関数。
+    /// Convenience function that reads one sector.
     pub fn readSector(self: BlockDevice, lba: u32, buffer: *[sector_size]u8) Error!void {
         return self.readSectors(lba, buffer);
     }
 
-    /// 1 セクタを書く便宜関数。
+    /// Convenience function that writes one sector.
     pub fn writeSector(self: BlockDevice, lba: u32, data: *const [sector_size]u8) Error!void {
         return self.writeSectors(lba, data);
     }
@@ -69,8 +71,8 @@ pub const BlockDevice = struct {
         return self.vtable.sectorCount(self.context);
     }
 
-    /// 転送がデバイスの範囲に収まるかを調べる。`lba` とセクタ数は u64 で計算する
-    /// （u32 の加算が溢れると範囲外を見逃すため）。
+    /// Check that a transfer fits within the device. `lba` and the sector count are
+    /// computed as u64 (adding as u32 could overflow and miss an out-of-range transfer).
     fn checkTransfer(lba: u32, length: usize, count: u64) Error!void {
         if (length == 0 or length % sector_size != 0) return error.InvalidLength;
         const sectors: u64 = length / sector_size;
@@ -78,23 +80,23 @@ pub const BlockDevice = struct {
     }
 };
 
-/// テスト用のインメモリ実装。
+/// In-memory implementation for tests.
 ///
-/// `storage.len` はセクタ長の倍数であること（端数はセクタとして数えない）。
-/// 実機の代わりに、実イメージや合成イメージを載せて使う。
+/// `storage.len` must be a multiple of the sector size (a remainder is not counted as a sector).
+/// Used in place of real hardware, loaded with a real or synthetic image.
 pub const MemoryDevice = struct {
     storage: []u8,
-    /// 読み出したセクタ数の累計（テストで I/O の回数を確認するため）。
+    /// Cumulative number of sectors read (so tests can check the number of I/O operations).
     sectors_read: u64 = 0,
-    /// 書き込んだセクタ数の累計。
+    /// Cumulative number of sectors written.
     sectors_written: u64 = 0,
 
-    /// 既存のメモリをデバイスとして使う。
+    /// Use existing memory as a device.
     pub fn init(storage: []u8) MemoryDevice {
         return .{ .storage = storage };
     }
 
-    /// ゼロ初期化したストレージを確保して返す。`deinit` で解放する。
+    /// Allocate zero-initialized storage and return it. Free it with `deinit`.
     pub fn create(allocator: std.mem.Allocator, byte_len: usize) std.mem.Allocator.Error!MemoryDevice {
         const storage = try allocator.alloc(u8, byte_len);
         @memset(storage, 0);
@@ -108,8 +110,8 @@ pub const MemoryDevice = struct {
         self.sectors_written = 0;
     }
 
-    /// このデバイスを指す `BlockDevice` を作る。`self` は動かさないこと
-    /// （`context` が `self` を指すため）。
+    /// Build a `BlockDevice` pointing at this device. Do not move `self`
+    /// (because `context` points at `self`).
     pub fn device(self: *MemoryDevice) BlockDevice {
         return .{ .context = self, .vtable = &vtable };
     }
@@ -140,7 +142,7 @@ pub const MemoryDevice = struct {
     }
 };
 
-test "MemoryDevice は書いたものを読み戻す" {
+test "MemoryDevice reads back what was written" {
     const allocator = std.testing.allocator;
     var memory = try MemoryDevice.create(allocator, 4 * sector_size);
     defer memory.deinit(allocator);
@@ -155,12 +157,12 @@ test "MemoryDevice は書いたものを読み戻す" {
     try device.readSector(2, &read_back);
     try std.testing.expectEqualSlices(u8, &written, &read_back);
 
-    // 隣のセクタは変わらない
+    // The neighbouring sector is unchanged
     try device.readSector(1, &read_back);
     try std.testing.expectEqualSlices(u8, &zeros, &read_back);
 }
 
-test "MemoryDevice は複数セクタをまとめて読み書きできる" {
+test "MemoryDevice reads and writes several sectors at once" {
     const allocator = std.testing.allocator;
     var memory = try MemoryDevice.create(allocator, 8 * sector_size);
     defer memory.deinit(allocator);
@@ -175,7 +177,7 @@ test "MemoryDevice は複数セクタをまとめて読み書きできる" {
     try std.testing.expectEqualSlices(u8, &written, &read_back);
 }
 
-test "MemoryDevice は範囲外と不正な長さを拒否する" {
+test "MemoryDevice rejects out-of-range transfers and invalid lengths" {
     const allocator = std.testing.allocator;
     var memory = try MemoryDevice.create(allocator, 4 * sector_size);
     defer memory.deinit(allocator);
@@ -185,21 +187,21 @@ test "MemoryDevice は範囲外と不正な長さを拒否する" {
     try std.testing.expectError(error.OutOfRange, device.readSector(4, &sector));
     try std.testing.expectError(error.OutOfRange, device.writeSector(4, &sector));
 
-    // 端をまたぐ転送
+    // A transfer that crosses the end
     var two: [2 * sector_size]u8 = @splat(0);
     try std.testing.expectError(error.OutOfRange, device.readSectors(3, &two));
 
-    // セクタ長の倍数でない長さ
+    // A length that is not a multiple of the sector size
     var odd: [100]u8 = @splat(0);
     try std.testing.expectError(error.InvalidLength, device.readSectors(0, &odd));
     try std.testing.expectError(error.InvalidLength, device.writeSectors(0, &odd));
 
-    // 長さ 0
+    // Zero length
     var empty: [0]u8 = .{};
     try std.testing.expectError(error.InvalidLength, device.readSectors(0, &empty));
 }
 
-test "MemoryDevice は読み書きしたセクタ数を数える" {
+test "MemoryDevice counts the sectors read and written" {
     const allocator = std.testing.allocator;
     var memory = try MemoryDevice.create(allocator, 4 * sector_size);
     defer memory.deinit(allocator);
@@ -215,7 +217,7 @@ test "MemoryDevice は読み書きしたセクタ数を数える" {
     try std.testing.expectEqual(@as(u64, 4), device.sectorCount());
 }
 
-test "MemoryDevice はセクタ長に満たない端数を無視する" {
+test "MemoryDevice ignores a remainder shorter than the sector size" {
     const allocator = std.testing.allocator;
     var memory = try MemoryDevice.create(allocator, 3 * sector_size + 7);
     defer memory.deinit(allocator);
@@ -226,7 +228,7 @@ test "MemoryDevice はセクタ長に満たない端数を無視する" {
     try std.testing.expectError(error.OutOfRange, device.readSector(3, &sector));
 }
 
-test "BlockDevice は値渡しのコピーでも同じデバイスを指す" {
+test "A BlockDevice copied by value still points at the same device" {
     const allocator = std.testing.allocator;
     var memory = try MemoryDevice.create(allocator, 2 * sector_size);
     defer memory.deinit(allocator);

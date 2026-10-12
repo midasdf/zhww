@@ -1,101 +1,101 @@
-//! EVM の ABI（Application Binary Interface）デコードと関数セレクタ。
+//! EVM ABI (Application Binary Interface) decoding and function selectors.
 //!
-//! 参考: https://docs.soliditylang.org/en/latest/abi-spec.html
+//! Reference: https://docs.soliditylang.org/en/latest/abi-spec.html
 //!
-//! **設計方針（clear signing の前提）**
-//! - 画面に出す値は、**仕様どおりに正準（canonical）なエンコード**からのみ取り出す。
-//!   余分なデータ、範囲外・順序違いのオフセット、長さのあふれ、ゼロでないパディングは
-//!   すべて拒否する（`error.InvalidEncoding` / `error.Truncated`）。曖昧な入力は表示しない。
-//! - 動的な値は「ヘッド（オフセット語）＋テール（実データ）」が**隙間なくこの順に**
-//!   並んでいることを要求する。Solidity が出力する形だけを受け付ける。
-//! - 配列のオフセットは、その集約値の**要素ヘッド列の先頭**からの相対位置である
-//!   （動的配列では長さ語の直後、固定長配列では配列自身の先頭）。Solidity 仕様書の
-//!   例（`g(uint256[][],string[])`）で検算している。
-//! - `string` は UTF-8 の検証をしない（バイト列のまま返す）。表示側で検証する。
-//! - **tuple（構造体）型はデコードしない**。型の解析だけは行い、セレクタの計算には
-//!   含める（記述子の一致判定には必要）。デコードが必要になった時点で別途対応する。
-//! - 確保するメモリは動的な配列・可変長バイト列のときだけ。呼び出し側の `allocator`
-//!   （通常は `ArenaAllocator`）から確保し、呼び出し側が解放する。
+//! **Design policy (premises for clear signing)**
+//! - Values shown on screen are taken only from **canonical encodings that follow the spec**.
+//!   Extra data, out-of-range or out-of-order offsets, overflowing lengths and non-zero
+//!   padding are all rejected (`error.InvalidEncoding` / `error.Truncated`). Ambiguous input is never displayed.
+//! - A dynamic value requires its "head (offset word) + tail (actual data)" to be laid out
+//!   **contiguously and in that order**. Only the shape Solidity emits is accepted.
+//! - An array offset is relative to the **start of that aggregate's element head sequence**
+//!   (right after the length word for a dynamic array, the start of the array itself for a fixed-size array).
+//!   It is cross-checked against the example in the Solidity spec (`g(uint256[][],string[])`).
+//! - `string` is not UTF-8 validated (returned as a byte sequence). The display side validates it.
+//! - **tuple (struct) types are not decoded**. Their types are still parsed and included in
+//!   selector computation (needed to match descriptors). Decoding will be added when required.
+//! - Memory is allocated only for dynamic arrays and variable-length byte sequences. It comes from the
+//!   caller's `allocator` (usually an `ArenaAllocator`) and the caller frees it.
 //!
-//! テストの一部は Solidity 仕様書の公式例をそのまま埋め込んでいる（自前の期待値は
-//! 使わない）。セレクタは Keccak-256 の計算結果と既知の定数を突き合わせる。
+//! Some tests embed the official examples from the Solidity spec verbatim (no hand-written
+//! expected values are used). Selectors are checked against Keccak-256 results and known constants.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;
 const hashes = @import("../../core/crypto/hashes.zig");
 
-/// 語長。ABI のヘッドは 32 バイト単位。
+/// Word size. ABI heads are in 32-byte units.
 pub const word_size = 32;
 
-/// セレクタの長さ（`keccak256(signature)` の先頭 4 バイト）。
+/// Selector length (the first 4 bytes of `keccak256(signature)`).
 pub const selector_len = 4;
 
-/// ABI の型。
+/// An ABI type.
 ///
-/// `fixed_array` と `array` の要素型は再帰するため、アロケータ上に確保した
-/// `AbiType` へのポインタで表す（`parseTypeList` / `parseFragment` が構築する）。
+/// The element types of `fixed_array` and `array` recurse, so they are represented by a
+/// pointer to an `AbiType` allocated on the allocator (built by `parseTypeList` / `parseFragment`).
 pub const AbiType = union(enum) {
-    /// 符号なし整数。ビット幅（8..256、8 の倍数）。
+    /// Unsigned integer. Bit width (8..256, a multiple of 8).
     uint: u16,
-    /// 符号付き整数。ビット幅（8..256、8 の倍数）。
+    /// Signed integer. Bit width (8..256, a multiple of 8).
     int: u16,
     address,
     bool,
-    /// `bytes<M>`（1..32）。静的型。
+    /// `bytes<M>` (1..32). Static type.
     bytes_fixed: u16,
-    /// 動的 `bytes`。
+    /// Dynamic `bytes`.
     bytes,
-    /// 動的 `string`。
+    /// Dynamic `string`.
     string,
-    /// 固定長配列 `T[k]`。
+    /// Fixed-size array `T[k]`.
     fixed_array: Array,
-    /// 動的配列 `T[]`。
+    /// Dynamic array `T[]`.
     array: Array,
 
     pub const Array = struct {
         element: *const AbiType,
-        /// `null` は動的長（`T[]`）、数値は固定長（`T[k]`）。
+        /// `null` means dynamic length (`T[]`); a number means fixed length (`T[k]`).
         len: ?usize = null,
     };
 };
 
-/// デコード結果。
+/// A decode result.
 ///
-/// `bytes` / `string` / `bytes_fixed` は**入力バッファを指すスライス**である
-/// （コピーしない）。入力より長生きさせてはならない。
+/// `bytes` / `string` / `bytes_fixed` are **slices pointing into the input buffer**
+/// (they are not copied). They must not outlive the input.
 pub const Value = union(enum) {
     uint: u256,
     int: i256,
     address: [20]u8,
     boolean: bool,
-    /// `bytes<M>` と動的 `bytes` の両方。
+    /// Both `bytes<M>` and dynamic `bytes`.
     bytes: []const u8,
     string: []const u8,
     fixed_array: []Value,
     array: []Value,
 };
 
-// ---------------------------------------------------------------- セレクタ
+// ---------------------------------------------------------------- selectors
 
-/// calldata の先頭 4 バイト（関数セレクタ）。4 バイト未満は null。
+/// The first 4 bytes of calldata (the function selector). null if shorter than 4 bytes.
 pub fn selector(calldata: []const u8) ?[selector_len]u8 {
     if (calldata.len < selector_len) return null;
     return calldata[0..selector_len].*;
 }
 
-/// 型のみの正準シグネチャ（`transfer(address,uint256)`）からセレクタを計算する。
+/// Compute the selector from a types-only canonical signature (`transfer(address,uint256)`).
 pub fn computeSelector(signature: []const u8) [selector_len]u8 {
     var digest: [32]u8 = undefined;
     hashes.Keccak256.hash(signature, &digest, .{});
     return digest[0..selector_len].*;
 }
 
-/// 既知の関数（セレクタと引数型）。
+/// A known function (selector and argument types).
 pub const Known = struct {
-    /// 型のみの正準シグネチャ。
+    /// Types-only canonical signature.
     signature: []const u8,
-    /// 引数の型。
+    /// Argument types.
     types: []const AbiType,
 };
 
@@ -112,16 +112,16 @@ const known_functions = [_]Known{
     .{ .signature = "transferFrom(address,address,uint256)", .types = &[_]AbiType{ address_type, address_type, uint256_type } },
     // ERC-721 / ERC-1155
     .{ .signature = "setApprovalForAll(address,bool)", .types = &[_]AbiType{ address_type, bool_type } },
-    // ERC-2612（EIP-2612 permit）
+    // ERC-2612 (EIP-2612 permit)
     .{
         .signature = "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
         .types = &[_]AbiType{ address_type, address_type, uint256_type, uint256_type, uint8_type, bytes32_type, bytes32_type },
     },
 };
 
-/// 既知の関数セレクタなら、そのシグネチャと引数型を返す。
+/// If the selector is a known function, return its signature and argument types.
 ///
-/// 未知のセレクタに対しては null（**推測しない**）。
+/// null for unknown selectors (**never guess**).
 pub fn knownFunction(sel: [selector_len]u8) ?Known {
     for (known_functions) |function| {
         const computed = computeSelector(function.signature);
@@ -130,25 +130,25 @@ pub fn knownFunction(sel: [selector_len]u8) ?Known {
     return null;
 }
 
-/// 既知の関数の一覧（テストと UI 用）。
+/// The list of known functions (for tests and the UI).
 pub fn knownFunctions() []const Known {
     return &known_functions;
 }
 
-// ---------------------------------------------------------------- デコード
+// ---------------------------------------------------------------- decoding
 
-/// 引数をデコードする。
+/// Decode the arguments.
 ///
-/// `out.len` は `types.len` 以上でなければならない（足りなければ `error.BufferTooSmall`）。
-/// `out[0..types.len]` に書き込む。配列の要素は `allocator` から確保する。
+/// `out.len` must be at least `types.len` (otherwise `error.BufferTooSmall`).
+/// Writes to `out[0..types.len]`. Array elements are allocated from `allocator`.
 ///
-/// 拒否する条件:
-/// - `data` の長さが 32 の倍数でない / ヘッド領域に足りない（`error.InvalidEncoding` / `error.Truncated`）
-/// - 動的型のオフセットが正準の位置でない（順序違い・重複・範囲外）
-/// - 動的配列・`bytes`・`string` の長さがあふれている、データが足りない
-/// - デコード後に**余分なデータ**が残る
-/// - 正準でない値（`bool` が 0/1 以外、`uint<M>` の上位ビット、`address` の上位 12 バイト、
-///   `bytes<M>` や `bytes` のパディングが非ゼロ、`int<M>` の符号拡張が不一致）
+/// Rejected conditions:
+/// - `data` length is not a multiple of 32 / too short for the head area (`error.InvalidEncoding` / `error.Truncated`)
+/// - a dynamic type's offset is not at the canonical position (out of order, duplicated, out of range)
+/// - a dynamic array, `bytes` or `string` length overflows, or there is not enough data
+/// - **extra data** remains after decoding
+/// - non-canonical values (`bool` other than 0/1, upper bits of `uint<M>`, upper 12 bytes of `address`,
+///   non-zero padding of `bytes<M>` or `bytes`, inconsistent sign extension of `int<M>`)
 pub fn decodeParameters(
     allocator: std.mem.Allocator,
     types: []const AbiType,
@@ -167,7 +167,7 @@ pub fn decodeParameters(
     var tail: usize = head_len;
     for (types, 0..) |t, i| {
         if (isDynamic(t)) {
-            // 動的型のヘッドはオフセット語 1 つ。テールは隙間なく並んでいるはず。
+            // A dynamic type's head is a single offset word. Tails are expected to be laid out contiguously.
             const offset = try toLength(try readWord(data, head_at));
             if (offset != tail) return error.InvalidEncoding;
             const consumed = try decodeDynamic(t, data[offset..], &out[i], allocator);
@@ -179,11 +179,11 @@ pub fn decodeParameters(
         }
     }
 
-    // 余分なデータを許さない。
+    // Extra data is not allowed.
     if (tail != data.len) return error.InvalidEncoding;
 }
 
-/// 動的型か（親のヘッドではオフセット語 1 つになる型か）。
+/// Whether the type is dynamic (i.e. becomes a single offset word in the parent's head).
 pub fn isDynamic(t: AbiType) bool {
     return switch (t) {
         .bytes, .string, .array => true,
@@ -192,9 +192,9 @@ pub fn isDynamic(t: AbiType) bool {
     };
 }
 
-/// 親のヘッド領域でこの型が占めるバイト数。
+/// Number of bytes this type occupies in the parent's head area.
 ///
-/// 動的型はオフセット語 1 つ。静的型は符号化そのものの長さ（固定長配列は要素の和）。
+/// A dynamic type is one offset word. A static type is the length of its own encoding (a fixed-size array is the sum of its elements).
 fn headWords(t: AbiType) Error!usize {
     if (isDynamic(t)) return word_size;
     return switch (t) {
@@ -203,13 +203,13 @@ fn headWords(t: AbiType) Error!usize {
     };
 }
 
-/// 静的な値を `data` の先頭からデコードする（`data` は値の先頭を指す）。
+/// Decode a static value from the start of `data` (`data` points at the start of the value).
 fn decodeStatic(t: AbiType, data: []const u8, out: *Value, allocator: std.mem.Allocator) Error!void {
     switch (t) {
         .uint => |bits| {
             const word = try readWord(data, 0);
             if (bits < 256) {
-                // `uint<M>` の上位 (256-M) ビットはゼロでなければならない。
+                // The upper (256-M) bits of `uint<M>` must be zero.
                 if (word >> @intCast(bits) != 0) return error.InvalidEncoding;
             }
             out.* = .{ .uint = word };
@@ -222,8 +222,8 @@ fn decodeStatic(t: AbiType, data: []const u8, out: *Value, allocator: std.mem.Al
             }
             const shift: u8 = @intCast(bits);
             const sign = (word >> @intCast(bits - 1)) & 1;
-            const upper = word >> shift; // 上位 (256-M) ビット
-            // 符号拡張が一貫していること（M-1 ビット目が 1 なら上位はすべて 1）。
+            const upper = word >> shift; // upper (256-M) bits
+            // Sign extension must be consistent (if bit M-1 is 1, all upper bits are 1).
             const expected: u256 = if (sign == 1) @as(u256, std.math.maxInt(u256)) >> shift else 0;
             if (upper != expected) return error.InvalidEncoding;
             const low = word & maskBits(bits);
@@ -234,7 +234,7 @@ fn decodeStatic(t: AbiType, data: []const u8, out: *Value, allocator: std.mem.Al
         },
         .address => {
             const word = try readWord(data, 0);
-            // 上位 12 バイトはゼロでなければならない。
+            // The upper 12 bytes must be zero.
             if (word >> 160 != 0) return error.InvalidEncoding;
             var bytes: [32]u8 = undefined;
             std.mem.writeInt(u256, &bytes, word, .big);
@@ -248,10 +248,10 @@ fn decodeStatic(t: AbiType, data: []const u8, out: *Value, allocator: std.mem.Al
         .bytes_fixed => |m| {
             const word = try readWord(data, 0);
             if (m < 32) {
-                // 右側のパディングはゼロでなければならない。
+                // The padding on the right must be zero.
                 if (word & maskBytes(@intCast(32 - m)) != 0) return error.InvalidEncoding;
             }
-            // `bytes<M>` は語の左詰めなので先頭 M バイトが値（入力のスライスを返す）。
+            // `bytes<M>` is left-aligned in the word, so the first M bytes are the value (returns a slice of the input).
             out.* = .{ .bytes = data[0..m] };
         },
         .fixed_array => |a| {
@@ -264,12 +264,12 @@ fn decodeStatic(t: AbiType, data: []const u8, out: *Value, allocator: std.mem.Al
             }
             out.* = .{ .fixed_array = values };
         },
-        .bytes, .string, .array => unreachable, // 動的型は decodeDynamic が扱う
+        .bytes, .string, .array => unreachable, // dynamic types are handled by decodeDynamic
     }
 }
 
-/// 動的な値を、その値自身の符号化（`region` の先頭）からデコードし、
-/// 消費したバイト数を返す。
+/// Decode a dynamic value from its own encoding (the start of `region`) and
+/// return the number of bytes consumed.
 fn decodeDynamic(
     t: AbiType,
     region: []const u8,
@@ -282,7 +282,7 @@ fn decodeDynamic(
             const padded = try paddedLength(len);
             if (word_size + padded > region.len) return error.Truncated;
             const contents = region[word_size .. word_size + len];
-            // パディングはゼロでなければならない。
+            // Padding must be zero.
             if (!allZero(region[word_size + len .. word_size + padded])) return error.InvalidEncoding;
             out.* = if (t == .string) .{ .string = contents } else .{ .bytes = contents };
             return word_size + padded;
@@ -295,7 +295,7 @@ fn decodeDynamic(
             };
             const element = a.element.*;
 
-            // 動的配列は長さ語の直後、固定長配列は配列自身の先頭が「要素ヘッド列」。
+            // For a dynamic array the element head sequence starts right after the length word; for a fixed-size array it is the start of the array itself.
             var count: usize = 0;
             var base: usize = 0;
             if (t == .array) {
@@ -314,7 +314,7 @@ fn decodeDynamic(
             for (values, 0..) |*slot, i| {
                 const at = base + i * element_head;
                 if (isDynamic(element)) {
-                    // オフセットは要素ヘッド列の先頭（= base）からの相対位置。
+                    // The offset is relative to the start of the element head sequence (= base).
                     const offset = try toLength(try readWord(region, at));
                     if (offset != tail - base) return error.InvalidEncoding;
                     tail = try addChecked(tail, try decodeDynamic(element, region[base + offset ..], slot, allocator));
@@ -325,33 +325,33 @@ fn decodeDynamic(
             }
 
             out.* = if (t == .array) .{ .array = values } else .{ .fixed_array = values };
-            // `tail` は region の先頭からの消費バイト数（動的配列では長さ語を含む）。
+            // `tail` is the number of bytes consumed from the start of region (including the length word for a dynamic array).
             return tail;
         },
         else => unreachable,
     }
 }
 
-// ---------------------------------------------------------------- 型の解析
+// ---------------------------------------------------------------- type parsing
 
-/// ヒューマンリーダブルな ABI フラグメントの解析結果。
+/// The result of parsing a human-readable ABI fragment.
 pub const Fragment = struct {
-    /// 関数名（例 `transfer`）。
+    /// Function name (e.g. `transfer`).
     name: []const u8,
-    /// 型のみの正準シグネチャ（例 `transfer(address,uint256)`）。セレクタの計算対象。
+    /// Types-only canonical signature (e.g. `transfer(address,uint256)`). The target of selector computation.
     signature: []const u8,
-    /// 引数の型。**tuple（構造体）を含む場合は null**（セレクタの計算だけが可能）。
+    /// Argument types. **null when a tuple (struct) is included** (only selector computation is possible).
     types: ?[]const AbiType,
-    /// トップレベルの引数名。名前が無い引数は空文字列。
+    /// Top-level argument names. An argument without a name is the empty string.
     names: []const []const u8,
 };
 
-/// `transfer(address _to, uint256 _value)` のようなフラグメントを解析する。
+/// Parse a fragment such as `transfer(address _to, uint256 _value)`.
 ///
-/// ERC-7730 の `display.formats` のキーはこの形（型名＋引数名）をしている。
-/// 型のみの正準形（`transfer(address,uint256)`）に正規化して返すので、
-/// 空白の入れ方や `uint` / `int` の別名（`uint256` / `int256` に正規化）に依存しない。
-/// tuple は `(address,uint256)` と `tuple(address,uint256)` の両方を受け付ける。
+/// ERC-7730 `display.formats` keys have this shape (type name + argument name).
+/// It normalizes to the types-only canonical form (`transfer(address,uint256)`), so it
+/// does not depend on whitespace or on the `uint` / `int` aliases (normalized to `uint256` / `int256`).
+/// Tuples are accepted both as `(address,uint256)` and as `tuple(address,uint256)`.
 pub fn parseFragment(allocator: std.mem.Allocator, text: []const u8) Error!Fragment {
     var parser = Parser{ .allocator = allocator, .text = text };
     parser.skipSpace();
@@ -372,7 +372,7 @@ pub fn parseFragment(allocator: std.mem.Allocator, text: []const u8) Error!Fragm
         while (true) {
             const node = try parser.parseType();
             parser.skipSpace();
-            // 引数名は省略可能（正準形では省略される）。
+            // Argument names are optional (omitted in the canonical form).
             const parameter_name = if (parser.peekIsIdentStart()) try parser.parseName() else "";
             try nodes.append(allocator, node);
             try names.append(allocator, parameter_name);
@@ -393,7 +393,7 @@ pub fn parseFragment(allocator: std.mem.Allocator, text: []const u8) Error!Fragm
     parser.skipSpace();
     if (parser.pos != text.len) return error.InvalidEncoding;
 
-    // 型のみの正準シグネチャを組み立てる。
+    // Build the types-only canonical signature.
     var signature = std.ArrayList(u8).empty;
     defer signature.deinit(allocator);
     try signature.appendSlice(allocator, name);
@@ -404,7 +404,7 @@ pub fn parseFragment(allocator: std.mem.Allocator, text: []const u8) Error!Fragm
     }
     try signature.append(allocator, ')');
 
-    // デコード可能な型に変換する（tuple を含むなら null）。
+    // Convert to decodable types (null if a tuple is included).
     const slots = try allocator.alloc(AbiType, nodes.items.len);
     var decodable = true;
     for (nodes.items, 0..) |node, i| {
@@ -424,7 +424,7 @@ pub fn parseFragment(allocator: std.mem.Allocator, text: []const u8) Error!Fragm
     };
 }
 
-/// カンマ区切りの型リスト（`address,uint256`）を解析する。tuple は受け付けない。
+/// Parse a comma-separated type list (`address,uint256`). Tuples are not accepted.
 pub fn parseTypeList(allocator: std.mem.Allocator, text: []const u8) Error![]AbiType {
     var parser = Parser{ .allocator = allocator, .text = text };
     var list = std.ArrayList(AbiType).empty;
@@ -444,7 +444,7 @@ pub fn parseTypeList(allocator: std.mem.Allocator, text: []const u8) Error![]Abi
     return list.toOwnedSlice(allocator);
 }
 
-/// 型の構文木。`AbiType` に落とせない（tuple を含む）場合があるため別に持つ。
+/// Type syntax tree. Kept separately because it cannot always be lowered to `AbiType` (it may contain tuples).
 const TypeNode = union(enum) {
     uint: u16,
     int: u16,
@@ -492,11 +492,11 @@ const Parser = struct {
         return self.text[start..self.pos];
     }
 
-    /// 型 1 つ（配列の接尾辞を含む）を解析する。
+    /// Parse a single type (including array suffixes).
     fn parseType(self: *Parser) Error!*const TypeNode {
         self.skipSpace();
         var node = try self.parseBaseType();
-        // 配列の接尾辞（`[]` / `[N]`）は繰り返し付きうる（`T[][2]` など）。
+        // Array suffixes (`[]` / `[N]`) can be repeated (e.g. `T[][2]`).
         while (true) {
             self.skipSpace();
             if (self.peek() != '[') break;
@@ -558,7 +558,7 @@ const Parser = struct {
         return error.InvalidEncoding;
     }
 
-    /// `(` の直後から tuple の中身を解析する（`(` は消費済み）。
+    /// Parse the body of a tuple right after `(` (`(` has already been consumed).
     fn parseTupleBody(self: *Parser) Error!*const TypeNode {
         var elements = std.ArrayList(*const TypeNode).empty;
         defer elements.deinit(self.allocator);
@@ -570,7 +570,7 @@ const Parser = struct {
             while (true) {
                 const element = try self.parseType();
                 self.skipSpace();
-                // tuple の中の引数名は表示に使わないので読み飛ばす。
+                // Argument names inside a tuple are not used for display, so they are skipped.
                 if (self.peekIsIdentStart()) _ = try self.parseName();
                 try elements.append(self.allocator, element);
                 self.skipSpace();
@@ -599,23 +599,23 @@ const Parser = struct {
     }
 };
 
-/// `uint<M>` / `int<M>` の `<M>`（ビット幅）を検証する。空文字列は 256。
+/// Validate `<M>` (bit width) of `uint<M>` / `int<M>`. An empty string means 256.
 fn parseSized(digits: []const u8, min: u16, max: u16) Error!u16 {
     if (digits.len == 0) return max; // `uint` → 256
     const value = std.fmt.parseInt(u16, digits, 10) catch return error.InvalidEncoding;
     if (value < min or value > max) return error.InvalidEncoding;
-    if (value % 8 != 0) return error.InvalidEncoding; // ビット幅は 8 の倍数
+    if (value % 8 != 0) return error.InvalidEncoding; // the bit width must be a multiple of 8
     return value;
 }
 
-/// `bytes<M>` の `<M>`（バイト幅）を検証する。
+/// Validate `<M>` (byte width) of `bytes<M>`.
 fn parseByteSized(digits: []const u8) Error!u16 {
     const value = std.fmt.parseInt(u16, digits, 10) catch return error.InvalidEncoding;
     if (value < 1 or value > 32) return error.InvalidEncoding;
     return value;
 }
 
-/// 正準形（型のみ・空白なし）を出力する。
+/// Print the canonical form (types only, no whitespace).
 fn printType(allocator: std.mem.Allocator, node: *const TypeNode, out: *std.ArrayList(u8)) Error!void {
     switch (node.*) {
         .uint => |bits| try appendSized(allocator, out, "uint", bits),
@@ -646,14 +646,14 @@ fn printType(allocator: std.mem.Allocator, node: *const TypeNode, out: *std.Arra
     }
 }
 
-/// `uint256` のように接頭辞＋ビット幅／バイト幅を出力する。
+/// Print a prefix plus bit width / byte width, as in `uint256`.
 fn appendSized(allocator: std.mem.Allocator, out: *std.ArrayList(u8), prefix: []const u8, value: u16) Error!void {
     var buffer: [16]u8 = undefined;
     const text = std.fmt.bufPrint(&buffer, "{s}{d}", .{ prefix, value }) catch return error.BufferTooSmall;
     try out.appendSlice(allocator, text);
 }
 
-/// 構文木をデコード用の型に変換する。tuple を含む場合は null。
+/// Convert the syntax tree to decodable types. null if a tuple is included.
 fn toAbiType(allocator: std.mem.Allocator, node: *const TypeNode) Error!?AbiType {
     return switch (node.*) {
         .uint => |bits| AbiType{ .uint = bits },
@@ -674,7 +674,7 @@ fn toAbiType(allocator: std.mem.Allocator, node: *const TypeNode) Error!?AbiType
     };
 }
 
-// ---------------------------------------------------------------- 小物
+// ---------------------------------------------------------------- helpers
 
 fn isSpace(c: u8) bool {
     return c == ' ' or c == '\t' or c == '\n' or c == '\r';
@@ -696,31 +696,31 @@ fn mulChecked(a: usize, b: usize) Error!usize {
     return std.math.mul(usize, a, b) catch error.InvalidEncoding;
 }
 
-/// 32 バイト語をビッグエンディアンで読む。
+/// Read a 32-byte word as big-endian.
 fn readWord(data: []const u8, at: usize) Error!u256 {
     if (at > data.len or data.len - at < word_size) return error.Truncated;
     return std.mem.readInt(u256, data[at..][0..word_size], .big);
 }
 
-/// 長さの語を `usize` に落とす。範囲外は「長さのあふれ」として拒否する。
+/// Narrow a length word to `usize`. Out of range is rejected as an "overflowing length".
 fn toLength(word: u256) Error!usize {
     if (word > std.math.maxInt(usize)) return error.InvalidEncoding;
     return @intCast(word);
 }
 
-/// `bytes` / `string` のパディング込みの長さ。あふれたら拒否する。
+/// The padded length of `bytes` / `string`. Rejected if it overflows.
 fn paddedLength(len: usize) Error!usize {
     const words = try addChecked(len, word_size - 1);
     return mulChecked(words / word_size, word_size);
 }
 
-/// 下位 `bits` ビットが 1 のマスク。
+/// Mask with the low `bits` bits set.
 fn maskBits(bits: u16) u256 {
     if (bits >= 256) return std.math.maxInt(u256);
     return (@as(u256, 1) << @intCast(bits)) - 1;
 }
 
-/// 下位 `bytes` バイトが 1 のマスク（最大 32 バイト）。
+/// Mask with the low `bytes` bytes set (up to 32 bytes).
 fn maskBytes(bytes: u8) u256 {
     return maskBits(@as(u16, bytes) * 8);
 }
@@ -732,20 +732,20 @@ fn allZero(data: []const u8) bool {
     return true;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-/// 16 進文字列をバイト列にする（テスト用）。
+/// Turn a hex string into bytes (for tests).
 fn hexToBytes(comptime n: usize, hex: []const u8) [n]u8 {
     var out: [n]u8 = undefined;
     _ = std.fmt.hexToBytes(&out, hex) catch unreachable;
     return out;
 }
 
-test "関数セレクタは Keccak-256 の先頭 4 バイトである" {
-    // 期待値は EVM の仕様・実装で広く使われている既知の定数。
-    // ここでは Keccak-256 の計算結果と一致することを確認する（自前の定数を信用しない）。
+test "the function selector is the first 4 bytes of Keccak-256" {
+    // The expected values are known constants widely used by EVM specs and implementations.
+    // Here we check that they match the Keccak-256 computation (we do not trust our own constants).
     const vectors = [_]struct { signature: []const u8, selector: [4]u8 }{
         .{ .signature = "transfer(address,uint256)", .selector = hexToBytes(4, "a9059cbb") },
         .{ .signature = "approve(address,uint256)", .selector = hexToBytes(4, "095ea7b3") },
@@ -763,7 +763,7 @@ test "関数セレクタは Keccak-256 の先頭 4 バイトである" {
     }
 }
 
-test "既知の関数セレクタからシグネチャと引数型を引ける" {
+test "a known function selector yields its signature and argument types" {
     const transfer = knownFunction(hexToBytes(4, "a9059cbb")).?;
     try testing.expectEqualStrings("transfer(address,uint256)", transfer.signature);
     try testing.expectEqual(@as(usize, 2), transfer.types.len);
@@ -774,24 +774,24 @@ test "既知の関数セレクタからシグネチャと引数型を引ける" 
     try testing.expectEqual(@as(u16, 8), permit.types[4].uint);
     try testing.expectEqual(@as(u16, 32), permit.types[5].bytes_fixed);
 
-    // 未知のセレクタは推測しない。
+    // Unknown selectors are not guessed.
     try testing.expect(knownFunction(hexToBytes(4, "deadbeef")) == null);
     try testing.expect(knownFunction(hexToBytes(4, "00000000")) == null);
 }
 
-test "calldata の先頭 4 バイトをセレクタとして取り出す" {
+test "the first 4 bytes of calldata are taken as the selector" {
     const calldata = hexToBytes(68, "a9059cbb0000000000000000000000005aaeb6053f3e94c9b9a09f33669435e7ef1beaed00000000000000000000000000000000000000000000000000000000000003e8");
     try testing.expectEqualSlices(u8, &hexToBytes(4, "a9059cbb"), &selector(&calldata).?);
     try testing.expect(selector(&[_]u8{ 1, 2, 3 }) == null);
     try testing.expect(selector(&[_]u8{}) == null);
 }
 
-test "ERC-20 transfer の calldata をデコードする" {
+test "decodes ERC-20 transfer calldata" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 実在する calldata の形（セレクタ + 4 バイト未満の端数なし）。
+    // A realistic calldata shape (selector + no remainder shorter than 4 bytes).
     const calldata = hexToBytes(68, "a9059cbb" ++
         "0000000000000000000000005aaeb6053f3e94c9b9a09f33669435e7ef1beaed" ++
         "00000000000000000000000000000000000000000000000000000000000003e8");
@@ -808,12 +808,12 @@ test "ERC-20 transfer の calldata をデコードする" {
     try testing.expectEqual(@as(u256, 1000), values[1].uint);
 }
 
-test "Solidity 仕様書の g(uint256[][],string[]) の例をデコードする" {
+test "decodes the g(uint256[][],string[]) example from the Solidity spec" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // https://docs.soliditylang.org/en/latest/abi-spec.html の例をそのまま埋め込む。
+    // Embed the example from https://docs.soliditylang.org/en/latest/abi-spec.html verbatim.
     // g([[1, 2], [3]], ["one", "two", "three"])
     const blob = hexToBytes(640,
         "0000000000000000000000000000000000000000000000000000000000000040" ++
@@ -856,13 +856,13 @@ test "Solidity 仕様書の g(uint256[][],string[]) の例をデコードする"
     try testing.expectEqualStrings("three", strings[2].string);
 }
 
-test "固定長配列・bytes・bool・int・bytes32 をデコードする" {
+test "decodes fixed-size arrays, bytes, bool, int and bytes32" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // bytes4 は左詰め、bool は 1、int8 は -1（符号拡張）、bytes32 は全ビット。
-    // ヘッドは 4 語 + 動的配列のオフセット語。テール（`bytes3[]` の長さ語）が末尾に続く。
+    // bytes4 is left-aligned, bool is 1, int8 is -1 (sign-extended), bytes32 is all bits.
+    // The head is 4 words plus the dynamic array's offset word. The tail (the length word of `bytes3[]`) follows at the end.
     const data = hexToBytes(32 * 6,
         "deadbeef00000000000000000000000000000000000000000000000000000000" ++
         "0000000000000000000000000000000000000000000000000000000000000001" ++
@@ -878,18 +878,18 @@ test "固定長配列・bytes・bool・int・bytes32 をデコードする" {
     try testing.expectEqualSlices(u8, &hexToBytes(4, "deadbeef"), values[0].bytes);
     try testing.expect(values[1].boolean);
     try testing.expectEqual(@as(i256, -1), values[2].int);
-    // 動的配列 `bytes3[]` の長さは 0（ヘッドにオフセット、テールに長さ語）。
+    // The dynamic array `bytes3[]` has length 0 (an offset in the head, a length word in the tail).
     try testing.expectEqual(@as(usize, 0), values[3].array.len);
     const full = hexToBytes(32, "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
     try testing.expectEqualSlices(u8, &full, values[4].bytes);
 }
 
-test "静的型のオフセットの無い並び（値のみ）をデコードする" {
+test "decodes a sequence of static types without offsets (values only)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // `uint8[2]` は語 2 つぶんを 1 つのヘッドとして使う。
+    // `uint8[2]` uses two words as one head.
     const data = hexToBytes(32 * 4,
         "0000000000000000000000000000000000000000000000000000000000000007" ++
         "0000000000000000000000000000000000000000000000000000000000000008" ++
@@ -905,13 +905,13 @@ test "静的型のオフセットの無い並び（値のみ）をデコード�
     try testing.expectEqual(@as(u256, 10), values[1].fixed_array[1].uint);
 }
 
-test "固定長配列（動的要素）は配列自身の先頭を基準にオフセットを持つ" {
+test "a fixed-size array (with dynamic elements) has offsets relative to the start of the array itself" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // string[2] = ["a", "b"] を要素に持つ 1 引数（`f(string[2])`）。
-    // 固定長配列のオフセットは「配列自身の先頭」からの相対位置になる。
+    // One argument whose element is string[2] = ["a", "b"] (`f(string[2])`).
+    // The offset of a fixed-size array is relative to "the start of the array itself".
     const data = hexToBytes(32 * 7,
         "0000000000000000000000000000000000000000000000000000000000000020" ++
         "0000000000000000000000000000000000000000000000000000000000000040" ++
@@ -930,12 +930,12 @@ test "固定長配列（動的要素）は配列自身の先頭を基準にオ�
     try testing.expectEqualStrings("b", values[0].fixed_array[1].string);
 }
 
-test "独立実装（ethers 6.17.0）が生成した calldata をデコードする" {
+test "decodes calldata generated by an independent implementation (ethers 6.17.0)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 期待値は ethers 6.17.0 の AbiCoder.encode が出力したもの（自前の期待値ではない）。
+    // The expected values come from ethers 6.17.0's AbiCoder.encode (not hand-written expected values).
     // h(bytes,uint8[2],string,bytes4,int256,bool) = (0xdeadbeef, [7,8], "hello", 0x01020304, -12345, false)
     const h_data = hexToBytes(352,
         "00000000000000000000000000000000000000000000000000000000000000e0" ++
@@ -989,12 +989,12 @@ test "独立実装（ethers 6.17.0）が生成した calldata をデコードす
     try testing.expectEqual(@as(u256, 3), k_values[1].array[1].fixed_array[0].uint);
     try testing.expectEqual(@as(u256, 4), k_values[1].array[1].fixed_array[1].uint);
 
-    // セレクタも独立実装と一致する。
+    // The selector also matches the independent implementation.
     try testing.expectEqualSlices(u8, &hexToBytes(4, "397db75c"), &computeSelector("h(bytes,uint8[2],string,bytes4,int256,bool)"));
     try testing.expectEqualSlices(u8, &hexToBytes(4, "37e133c7"), &computeSelector("k(bytes32[],uint16[2][])"));
 }
 
-test "非正準なエンコードを拒否する" {
+test "rejects non-canonical encodings" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1011,74 +1011,74 @@ test "非正準なエンコードを拒否する" {
     var value: [1]Value = undefined;
     var two_values: [2]Value = undefined;
 
-    // 32 の倍数でない
+    // not a multiple of 32
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, uint256, &hexToBytes(31,
         "00000000000000000000000000000000000000000000000000000000000000"), &value));
-    // 途中で終わっている（32 の倍数だがヘッドに足りない）
+    // truncated (a multiple of 32, but too short for the head)
     try testing.expectError(error.Truncated, decodeParameters(allocator, two_uint256, &hexToBytes(32,
         "0000000000000000000000000000000000000000000000000000000000000001"), &two_values));
-    // 余分なデータ
+    // extra data
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, uint256, &hexToBytes(64,
         "0000000000000000000000000000000000000000000000000000000000000001" ++
             "0000000000000000000000000000000000000000000000000000000000000002"), &value));
-    // 出力バッファが足りない
+    // output buffer too small
     var empty: [0]Value = undefined;
     try testing.expectError(error.BufferTooSmall, decodeParameters(allocator, uint256, &[_]u8{}, &empty));
 
-    // uint8 の上位ビットが非ゼロ（正準でない）
+    // upper bits of uint8 are non-zero (not canonical)
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, uint8_arg, &hexToBytes(32,
         "0000000000000000000000000000000000000000000000000000000000000101"), &value));
-    // address の上位 12 バイトが非ゼロ
+    // upper 12 bytes of address are non-zero
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, address_arg, &hexToBytes(32,
         "0000000000000000000000010000000000000000000000000000000000000001"), &value));
-    // bool が 2
+    // bool is 2
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, bool_arg, &hexToBytes(32,
         "0000000000000000000000000000000000000000000000000000000000000002"), &value));
-    // bytes4 のパディングが非ゼロ
+    // padding of bytes4 is non-zero
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, bytes4_arg, &hexToBytes(32,
         "deadbeef000000000000000000000000000000000000000000000000000000ff"), &value));
 
-    // 動的型: オフセットが範囲外
+    // dynamic type: offset out of range
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, bytes_arg, &hexToBytes(64,
         "0000000000000000000000000000000000000000000000000000000000000040" ++
             "0000000000000000000000000000000000000000000000000000000000000000"), &value));
-    // 動的型: オフセットが正準の位置でない（先頭を指している）
+    // dynamic type: offset is not at the canonical position (it points at the start)
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, bytes_arg, &hexToBytes(64,
         "0000000000000000000000000000000000000000000000000000000000000000" ++
             "0000000000000000000000000000000000000000000000000000000000000000"), &value));
 
-    // bytes: 長さがあふれている（`usize` にも収まらない）
+    // bytes: the length overflows (it does not fit in `usize`)
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, bytes_arg, &hexToBytes(64,
         "0000000000000000000000000000000000000000000000000000000000000020" ++
             "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), &value));
-    // bytes: 実際の長さより短い（切り詰め）
+    // bytes: shorter than the actual length (truncated)
     try testing.expectError(error.Truncated, decodeParameters(allocator, bytes_arg, &hexToBytes(96,
         "0000000000000000000000000000000000000000000000000000000000000020" ++
             "0000000000000000000000000000000000000000000000000000000000000021" ++
             "0000000000000000000000000000000000000000000000000000000000000000"), &value));
-    // bytes: 長さは足りているがパディングが非ゼロ（値 1 バイト + 非ゼロの詰め物）
+    // bytes: the length is sufficient but the padding is non-zero (1 byte of value + non-zero filler)
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, bytes_arg, &hexToBytes(96,
         "0000000000000000000000000000000000000000000000000000000000000020" ++
             "0000000000000000000000000000000000000000000000000000000000000001" ++
             "00ff000000000000000000000000000000000000000000000000000000000000"), &value));
 
-    // 動的配列: 要素数が多すぎる（データが足りない）
+    // dynamic array: too many elements (not enough data)
     try testing.expectError(error.Truncated, decodeParameters(allocator, array_arg, &hexToBytes(64,
         "0000000000000000000000000000000000000000000000000000000000000020" ++
             "0000000000000000000000000000000000000000000000000000000000000040"), &value));
-    // 動的配列: 要素数があふれている（`usize` にも収まらない）
+    // dynamic array: the element count overflows (it does not fit in `usize`)
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, array_arg, &hexToBytes(64,
         "0000000000000000000000000000000000000000000000000000000000000020" ++
             "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), &value));
-    // 動的配列: 要素のオフセットが正準の位置でない（`uint256[]` なので要素は静的だが、
-    // 要素数 1 で余分な語が残るため末尾で拒否される）
+    // dynamic array: the element offset is not at the canonical position (`uint256[]` has static elements,
+    // so with a single element an extra word remains and it is rejected at the end)
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, array_arg, &hexToBytes(128,
         "0000000000000000000000000000000000000000000000000000000000000020" ++
             "0000000000000000000000000000000000000000000000000000000000000001" ++
             "0000000000000000000000000000000000000000000000000000000000000001" ++
             "0000000000000000000000000000000000000000000000000000000000000002"), &value));
 
-    // 動的配列（動的要素）: 要素オフセットがテールの先頭を指していない
+    // dynamic array (dynamic elements): the element offset does not point at the start of the tail
     const nested = try parseTypeList(allocator, "bytes[],bytes[]");
     try testing.expectError(error.InvalidEncoding, decodeParameters(allocator, nested, &hexToBytes(160,
         "0000000000000000000000000000000000000000000000000000000000000040" ++
@@ -1088,12 +1088,12 @@ test "非正準なエンコードを拒否する" {
             "0000000000000000000000000000000000000000000000000000000000000000"), &two_values));
 }
 
-test "ヒューマンリーダブルな ABI フラグメントを正準形に変換する" {
+test "converts a human-readable ABI fragment to the canonical form" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 空白の入れ方（カンマの後ろの空白）に依存しない。
+    // Independent of whitespace placement (spaces after commas).
     const transfer = try parseFragment(allocator, "transfer(address _to, uint256 _value)");
     try testing.expectEqualStrings("transfer", transfer.name);
     try testing.expectEqualStrings("transfer(address,uint256)", transfer.signature);
@@ -1102,19 +1102,19 @@ test "ヒューマンリーダブルな ABI フラグメントを正準形に変
     try testing.expectEqualStrings("_value", transfer.names[1]);
     try testing.expectEqualSlices(u8, &hexToBytes(4, "a9059cbb"), &computeSelector(transfer.signature));
 
-    // 引数名が無い正準形、別名 `uint` → `uint256`、配列。
+    // A canonical form without argument names, the `uint` → `uint256` alias, and arrays.
     const canonical = try parseFragment(allocator, "airdrop(address[],uint)");
     try testing.expectEqualStrings("airdrop(address[],uint256)", canonical.signature);
     try testing.expectEqual(@as(usize, 2), canonical.types.?.len);
     try testing.expect(isDynamic(canonical.types.?[0]));
     try testing.expectEqual(@as(usize, 256), canonical.types.?[1].uint);
 
-    // 固定長配列・入れ子の配列。
+    // Fixed-size arrays and nested arrays.
     const nested = try parseFragment(allocator, "f(uint16[3][],bytes32)");
     try testing.expectEqualStrings("f(uint16[3][],bytes32)", nested.signature);
     try testing.expectEqual(@as(usize, 3), nested.types.?[0].array.element.fixed_array.len);
 
-    // tuple はセレクタの計算だけ行い、デコード用の型は作らない。
+    // For tuples only the selector is computed; no decodable type is created.
     const tuple = try parseFragment(
         allocator,
         "submitOrder((address token,uint256 amount) order,bytes32 salt)",
@@ -1125,22 +1125,22 @@ test "ヒューマンリーダブルな ABI フラグメントを正準形に変
     try testing.expectEqualStrings("salt", tuple.names[1]);
 }
 
-test "壊れたフラグメントを拒否する" {
+test "rejects malformed fragments" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     const bad = [_][]const u8{
-        "transfer(address,uint256", // 閉じ括弧が無い
-        "transfer(address,)", // 空の引数
-        "transfer(uint7)", // 8 の倍数でない
-        "transfer(uint264)", // 256 を超える
-        "transfer(bytes33)", // 32 を超える
-        "transfer(function)", // 未対応の型
-        "transfer(uint256)extra", // 余分な文字
-        "transfer(address[)", // 配列の書式が不正
-        "transfer", // 引数リストが無い
-        "transfer(address))", // 閉じ括弧が余分
+        "transfer(address,uint256", // missing closing parenthesis
+        "transfer(address,)", // empty argument
+        "transfer(uint7)", // not a multiple of 8
+        "transfer(uint264)", // greater than 256
+        "transfer(bytes33)", // greater than 32
+        "transfer(function)", // unsupported type
+        "transfer(uint256)extra", // extra characters
+        "transfer(address[)", // malformed array notation
+        "transfer", // no argument list
+        "transfer(address))", // extra closing parenthesis
     };
     for (bad) |text| {
         try testing.expectError(error.InvalidEncoding, parseFragment(allocator, text));

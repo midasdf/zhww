@@ -1,17 +1,17 @@
-//! 240×240 の LCD に描くためのフレームバッファ（RGB565）。
+//! Framebuffer for drawing on the 240×240 LCD (RGB565).
 //!
-//! **なぜ最初にこれを作るのか**: 実機が無くても画面の中身を組み立てて検証できるようにするため。
-//! PC 上で同じコードを走らせて画像に書き出せるので、UI を先に固められる
-//! （プロジェクトの原則「表示できないものには署名しない」の土台）。
+//! **Why build this first**: so the screen contents can be assembled and checked without real
+//! hardware. The same code runs on a PC and can be written out as an image, which lets the UI be
+//! settled first (the foundation for the project's principle "do not sign anything that cannot be displayed").
 //!
-//! 色は RGB565（16bit）。LCD へはこのバッファをそのまま SPI で送る。
-//! 描画は**範囲外を無視する**（クリップする）ので、呼び出し側で座標を気にしすぎなくてよい。
+//! Colors are RGB565 (16 bit). The LCD takes this buffer as-is over SPI.
+//! Drawing **ignores anything out of range** (it clips), so callers need not fret over coordinates.
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;
 const font = @import("font.zig");
 
-/// RGB565 の色。
+/// An RGB565 color.
 pub const Color = u16;
 
 pub const black: Color = 0x0000;
@@ -24,12 +24,12 @@ pub const orange: Color = 0xFD20;
 pub const gray: Color = 0x8410;
 pub const dark_gray: Color = 0x4208;
 
-/// RGB888 から RGB565 を作る（デザイン時に色を指定しやすくするため）。
+/// Build an RGB565 color from RGB888 (makes colors easier to pick while designing).
 pub fn rgb(r: u8, g: u8, b: u8) Color {
     return (@as(u16, r >> 3) << 11) | (@as(u16, g >> 2) << 5) | @as(u16, b >> 3);
 }
 
-/// テキスト描画の 1 文字あたりの幅（8 ドット + 1 ドットの間隔）。
+/// Width taken by one character of text (8 dots + 1 dot of spacing).
 pub const char_advance = font.glyph_width + 1;
 
 pub const Framebuffer = struct {
@@ -46,7 +46,7 @@ pub const Framebuffer = struct {
         @memset(self.pixels, color);
     }
 
-    /// 1 ドット。範囲外は無視する。
+    /// One dot. Out-of-range coordinates are ignored.
     pub fn setPixel(self: *Framebuffer, x: usize, y: usize, color: Color) void {
         if (x >= self.width or y >= self.height) return;
         self.pixels[y * self.width + x] = color;
@@ -57,7 +57,7 @@ pub const Framebuffer = struct {
         return self.pixels[y * self.width + x];
     }
 
-    /// 矩形を塗る。範囲外はクリップする。
+    /// Fill a rectangle. Out-of-range parts are clipped.
     pub fn fillRect(self: *Framebuffer, x: usize, y: usize, w: usize, h: usize, color: Color) void {
         if (x >= self.width or y >= self.height) return;
         const x_end = @min(self.width, x + w);
@@ -68,16 +68,16 @@ pub const Framebuffer = struct {
         }
     }
 
-    /// 矩形の枠線を描く。
+    /// Stroke the outline of a rectangle.
     pub fn strokeRect(self: *Framebuffer, x: usize, y: usize, w: usize, h: usize, color: Color) void {
         if (w == 0 or h == 0) return;
-        self.fillRect(x, y, w, 1, color); // 上
-        self.fillRect(x, y + h - 1, w, 1, color); // 下
-        self.fillRect(x, y, 1, h, color); // 左
-        self.fillRect(x + w - 1, y, 1, h, color); // 右
+        self.fillRect(x, y, w, 1, color); // top
+        self.fillRect(x, y + h - 1, w, 1, color); // bottom
+        self.fillRect(x, y, 1, h, color); // left
+        self.fillRect(x + w - 1, y, 1, h, color); // right
     }
 
-    /// 1 文字を描く。`background` が null なら背景を塗らない（重ね書き）。
+    /// Draw one character. If `background` is null the background is not painted (it draws over instead).
     pub fn drawGlyph(
         self: *Framebuffer,
         x: usize,
@@ -102,7 +102,7 @@ pub const Framebuffer = struct {
         }
     }
 
-    /// 文字列を描く。描いた次の x 座標を返す。
+    /// Draw a string. Returns the x coordinate just past what was drawn.
     pub fn drawText(
         self: *Framebuffer,
         x: usize,
@@ -121,7 +121,7 @@ pub const Framebuffer = struct {
         return cursor;
     }
 
-    /// 改行（`\n`）を考慮して文字列を描く。描いた行数を返す。
+    /// Draw a string, honoring newlines (`\n`). Returns the number of lines drawn.
     pub fn drawTextLines(
         self: *Framebuffer,
         x: usize,
@@ -143,15 +143,15 @@ pub const Framebuffer = struct {
         return lines;
     }
 
-    /// 文字列の幅（ドット数）。
+    /// Width of a string in dots.
     pub fn textWidth(text: []const u8, scale: usize) usize {
         const s = if (scale == 0) 1 else scale;
         return text.len * char_advance * s;
     }
 
-    /// 白黒のドット列を `scale` 倍で描く（QR コードの描画に使う）。
+    /// Draw a black-and-white dot matrix at `scale`× (used to draw QR codes).
     ///
-    /// `sample` は「(x, y) が黒かどうか」を返す関数。QR モジュール側の型に依存しないため。
+    /// `sample` returns whether (x, y) is dark. It keeps this code independent of the QR module's type.
     pub fn drawBitmap(
         self: *Framebuffer,
         x: usize,
@@ -176,7 +176,7 @@ pub const Framebuffer = struct {
     }
 };
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -184,31 +184,31 @@ fn testBuffer(storage: []u16) Framebuffer {
     return Framebuffer.init(storage, 240, 240) catch unreachable;
 }
 
-test "範囲外の書き込みは無視され、クリップされる" {
+test "out-of-range writes are ignored and clipped" {
     var storage: [16]u16 = @splat(black);
     var fb = try Framebuffer.init(&storage, 4, 4);
 
     fb.setPixel(0, 0, white);
     try testing.expectEqual(white, fb.getPixel(0, 0));
-    fb.setPixel(10, 10, white); // 範囲外 → 無視
+    fb.setPixel(10, 10, white); // out of range → ignored
     try testing.expectEqual(black, fb.getPixel(3, 3));
 
-    fb.fillRect(3, 3, 10, 10, blue); // はみ出す → クリップ
+    fb.fillRect(3, 3, 10, 10, blue); // overflows → clipped
     try testing.expectEqual(blue, fb.getPixel(3, 3));
     try testing.expectEqual(black, fb.getPixel(2, 2));
     try testing.expectEqual(blue, storage[15]);
 }
 
-test "init はサイズ不足を拒否する" {
+test "init rejects a buffer that is too small" {
     var storage: [4]u16 = @splat(black);
     try testing.expectError(error.BufferTooSmall, Framebuffer.init(&storage, 240, 240));
 }
 
-test "文字の描画（'A' の 1 行目は bit2 と bit3）" {
+test "drawing a character (row 0 of 'A' is bit2 and bit3)" {
     var storage: [240 * 240]u16 = @splat(black);
     var fb = testBuffer(&storage);
 
-    // 'A' の 1 行目は 0x0C（bit2, bit3）
+    // row 0 of 'A' is 0x0C (bit2, bit3)
     fb.drawGlyph(0, 0, 'A', white, null, 1);
     try testing.expectEqual(black, fb.getPixel(0, 0));
     try testing.expectEqual(black, fb.getPixel(1, 0));
@@ -216,18 +216,18 @@ test "文字の描画（'A' の 1 行目は bit2 と bit3）" {
     try testing.expectEqual(white, fb.getPixel(3, 0));
     try testing.expectEqual(black, fb.getPixel(4, 0));
 
-    // 2 倍で描くと 2×2 ドットになる
+    // at 2× each dot becomes a 2×2 block
     fb.clear(black);
     fb.drawGlyph(0, 0, 'A', white, null, 2);
     try testing.expectEqual(white, fb.getPixel(4, 0));
     try testing.expectEqual(white, fb.getPixel(5, 0));
     try testing.expectEqual(white, fb.getPixel(4, 1));
-    // bit2 は x=4〜5、bit3 は x=6〜7 を占める。その次は塗られない
+    // bit2 covers x=4-5 and bit3 covers x=6-7; the next dot is not painted
     try testing.expectEqual(white, fb.getPixel(6, 0));
     try testing.expectEqual(black, fb.getPixel(8, 0));
 }
 
-test "文字列は 9 ドットずつ進み、幅が計算できる" {
+test "a string advances 9 dots at a time and its width can be computed" {
     var storage: [240 * 240]u16 = @splat(black);
     var fb = testBuffer(&storage);
 
@@ -236,31 +236,31 @@ test "文字列は 9 ドットずつ進み、幅が計算できる" {
     try testing.expectEqual(@as(usize, 18), Framebuffer.textWidth("AB", 1));
     try testing.expectEqual(@as(usize, 36), Framebuffer.textWidth("AB", 2));
 
-    // 最初の文字は (10, 20) から描かれる
-    try testing.expectEqual(white, fb.getPixel(12, 20)); // 'A' の bit2
+    // the first character is drawn from (10, 20)
+    try testing.expectEqual(white, fb.getPixel(12, 20)); // bit2 of 'A'
 }
 
-test "改行つきの文字列と、背景の塗りつぶし" {
+test "strings with newlines, and background filling" {
     var storage: [240 * 240]u16 = @splat(black);
     var fb = testBuffer(&storage);
 
     const lines = fb.drawTextLines(0, 0, "A\nB", white, black, 1);
-    try testing.expectEqual(@as(usize, 2), lines); // "A" と "B"
+    try testing.expectEqual(@as(usize, 2), lines); // "A" and "B"
     try testing.expectEqual(white, fb.getPixel(2, 0)); // 'A'
-    try testing.expectEqual(white, fb.getPixel(2, 9)); // 'B' は 9 ドット下
+    try testing.expectEqual(white, fb.getPixel(2, 9)); // 'B' is 9 dots lower
 
-    // 背景を指定すると、字形でない部分も塗られる
+    // with a background, the parts that are not the glyph are painted too
     fb.clear(black);
     _ = fb.drawText(0, 0, "A", white, red, 1);
     try testing.expectEqual(red, fb.getPixel(0, 0));
     try testing.expectEqual(white, fb.getPixel(2, 0));
 }
 
-test "drawBitmap でドット列を描ける（QR 用の入口）" {
+test "drawBitmap draws a dot matrix (the entry point for QR)" {
     var storage: [240 * 240]u16 = @splat(black);
     var fb = testBuffer(&storage);
 
-    // 市松模様（2×2 モジュール）を 4 倍で描く
+    // draw a checkerboard (2×2 modules) at 4×
     const Sample = struct {
         fn get(x: usize, y: usize) bool {
             return (x + y) % 2 == 0;
@@ -271,6 +271,6 @@ test "drawBitmap でドット列を描ける（QR 用の入口）" {
     try testing.expectEqual(black, fb.getPixel(4, 0));
     try testing.expectEqual(black, fb.getPixel(0, 4));
     try testing.expectEqual(white, fb.getPixel(4, 4));
-    // モジュールの外は触らない
+    // nothing outside the modules is touched
     try testing.expectEqual(black, fb.getPixel(8, 8));
 }

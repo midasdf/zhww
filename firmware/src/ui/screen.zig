@@ -1,11 +1,11 @@
-//! 画面（240×240）のレイアウト。
+//! Screen layout (240×240).
 //!
-//! 実機の LCD に何をどう出すかを、ハードウェアから切り離して組み立てる層。
-//! PC 上で `framebuffer` と一緒に走らせれば、画像として確認できる
-//! （開発用 CLI の `screen` コマンド）。
+//! The layer that assembles what the real LCD shows, decoupled from the hardware.
+//! Run it together with `framebuffer` on a PC and it can be checked as an image
+//! (the development CLI's `screen` command).
 //!
-//! 画面の文字は **ASCII** で扱う（240×240 に日本語を出すにはフォント同梱が必要なため。
-//! 方針は [docs/08-rp2350-pizero.md] を参照）。
+//! On-screen text is **ASCII** (showing Japanese on a 240×240 screen would require bundling a font;
+//! see [docs/08-rp2350-pizero.md] for the policy).
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;
@@ -25,7 +25,7 @@ pub const title_height = 26;
 pub const footer_height = 20;
 pub const margin = 6;
 
-/// モノクロのドット列（QR コードなど）。1 バイト 1 モジュール（0 以外は黒）。
+/// Monochrome dot matrix (QR codes and the like). One byte per module (any non-zero is dark).
 pub const Bitmap = struct {
     width: usize,
     height: usize,
@@ -57,36 +57,36 @@ pub const Screen = struct {
     title: []const u8,
     lines: []const Line = &.{},
     warnings: []const []const u8 = &.{},
-    /// 画面下部に出す QR（あれば）。
+    /// QR to show at the bottom of the screen (if any).
     qr: ?Bitmap = null,
     footer_left: []const u8 = "",
     footer_right: []const u8 = "",
 
-    /// 描画する。`fb` は 240×240 を想定するが、他の大きさでも破綻しない。
+    /// Render. `fb` is assumed to be 240×240, but other sizes do not fall apart.
     pub fn render(self: *const Screen, fb: *Framebuffer) void {
         fb.clear(background);
 
-        // タイトル
+        // title
         fb.fillRect(0, 0, fb.width, title_height, title_background);
         const title_scale: usize = if (fb.width >= 200) 2 else 1;
         const title_width = Framebuffer.textWidth(self.title, title_scale);
         const title_x = if (title_width < fb.width) (fb.width - title_width) / 2 else margin;
         _ = fb.drawText(title_x, 5, self.title, framebuffer.white, null, title_scale);
 
-        // 本文
+        // body
         var y: usize = title_height + margin;
         for (self.lines) |line| {
             y = drawLine(fb, y, line);
             if (y >= fb.height - footer_height) return self.drawFooter(fb);
         }
 
-        // 警告（赤字）
+        // warnings (in red)
         for (self.warnings) |warning| {
             y = wrapText(fb, margin, y, warning, warning_color, 1) + 2;
             if (y >= fb.height - footer_height) return self.drawFooter(fb);
         }
 
-        // QR（フッターの上に、中央寄せで最大サイズ）
+        // QR (above the footer, centered, as large as it fits)
         if (self.qr) |bitmap| {
             const available_top = y + 2;
             const available_height = fb.height - footer_height - margin - available_top;
@@ -102,7 +102,7 @@ pub const Screen = struct {
                 else
                     available_top;
 
-                // 白地（静穏域）
+                // white backing (quiet zone)
                 fb.fillRect(qr_x -| 2, qr_y -| 2, drawn_width + 4, drawn_height + 4, framebuffer.white);
                 var row: usize = 0;
                 while (row < bitmap.height) : (row += 1) {
@@ -152,7 +152,7 @@ pub const Screen = struct {
     }
 };
 
-/// 幅に収まるように折り返して描く。描いた次の y を返す。
+/// Wrap to fit the width and draw. Returns the y coordinate after drawing.
 fn wrapText(
     fb: *Framebuffer,
     x: usize,
@@ -169,7 +169,7 @@ fn wrapText(
     var rest = text;
     while (rest.len > 0) {
         var take = @min(rest.len, per_line);
-        // 収まる範囲に空白があれば、そこで折る（単語の途中で切らない）
+        // if there is a space within what fits, break there (never split a word)
         if (take < rest.len) {
             if (std.mem.lastIndexOfScalar(u8, rest[0..take], ' ')) |at| {
                 if (at > 0) take = at;
@@ -183,7 +183,7 @@ fn wrapText(
     return y;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -191,7 +191,7 @@ fn testFramebuffer(storage: []u16) Framebuffer {
     return Framebuffer.init(storage, 240, 240) catch unreachable;
 }
 
-test "タイトル・本文・フッターが描かれる" {
+test "title, body and footer are drawn" {
     var storage: [240 * 240]u16 = @splat(0);
     var fb = testFramebuffer(&storage);
 
@@ -206,11 +206,11 @@ test "タイトル・本文・フッターが描かれる" {
     };
     screen.render(&fb);
 
-    // タイトルバーとフッターが塗られている
+    // the title bar and the footer are filled
     try testing.expectEqual(title_background, fb.getPixel(0, 0));
     try testing.expectEqual(footer_background, fb.getPixel(0, 239));
 
-    // 本文に何か描かれている（タイトルバーの下）
+    // something is drawn in the body (below the title bar)
     var body_pixels: usize = 0;
     var y: usize = title_height + 1;
     while (y < 200) : (y += 1) {
@@ -222,7 +222,7 @@ test "タイトル・本文・フッターが描かれる" {
     try testing.expect(body_pixels > 200);
 }
 
-test "長い値は折り返され、画面外にはみ出さない" {
+test "a long value wraps and does not run off screen" {
     var storage: [240 * 240]u16 = @splat(0);
     var fb = testFramebuffer(&storage);
 
@@ -234,8 +234,9 @@ test "長い値は折り返され、画面外にはみ出さない" {
     };
     screen.render(&fb);
 
-    // 右端の 1 列と下端のフッター内以外は背景のまま（＝はみ出していない）
-    // 文字が右端を越えないことを、右端 4 ドットの本文領域で確認する
+    // apart from the rightmost column and the footer strip at the bottom, everything stays
+    // background (= nothing overflows)
+    // check that text does not cross the right edge, using the 4-dot body strip at the right edge
     var y: usize = title_height + 1;
     var overflow: usize = 0;
     while (y < 240 - footer_height) : (y += 1) {
@@ -247,11 +248,11 @@ test "長い値は折り返され、画面外にはみ出さない" {
     try testing.expectEqual(@as(usize, 0), overflow);
 }
 
-test "QR が描かれ、黒モジュールの数が合う" {
+test "the QR is drawn and the dark module count matches" {
     var storage: [240 * 240]u16 = @splat(0);
     var fb = testFramebuffer(&storage);
 
-    // 3×3 で四隅と中心が黒のドット列
+    // a 3×3 dot matrix with dark corners and center
     const modules = [_]u8{
         1, 0, 1,
         0, 1, 0,
@@ -266,7 +267,7 @@ test "QR が描かれ、黒モジュールの数が合う" {
 
     try testing.expectEqual(@as(usize, 5), screen.qr.?.darkCount());
 
-    // 画面に黒いドットが描かれている（QR の黒モジュール × 拡大率^2）
+    // dark dots are drawn on screen (QR dark modules × scale^2)
     var black_pixels: usize = 0;
     var y: usize = title_height;
     while (y < 240 - footer_height) : (y += 1) {
@@ -278,7 +279,7 @@ test "QR が描かれ、黒モジュールの数が合う" {
     try testing.expect(black_pixels >= 5);
 }
 
-test "警告は赤で描かれる" {
+test "warnings are drawn in red" {
     var storage: [240 * 240]u16 = @splat(0);
     var fb = testFramebuffer(&storage);
 

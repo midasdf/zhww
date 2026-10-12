@@ -1,37 +1,37 @@
-//! UR で必要な範囲の CBOR（RFC 8949）と、その決定性プロファイル dCBOR。
+//! The part of CBOR (RFC 8949) that UR needs, plus its deterministic profile dCBOR.
 //!
-//! **対応する範囲**
-//! - エンコード: 符号なし整数・バイト文字列・テキスト文字列・配列・タグ付き型。
-//!   整数と長さは常に最短表現で書く（dCBOR / RFC 8949 §4.1 の決定性）。
-//! - デコード: 上記に加えて、マップ・負数・単純値/浮動小数点を **読み飛ばす** ことができる
-//!   （`skipItem` / `isWellFormed`）。UR のメッセージ（PSBT など）の中身を解釈しないまま
-//!   「dCBOR として壊れていないか」を検査するために使う。
-//! - 不定長（indefinite length, 追加情報 31）は未対応。UR のメッセージは dCBOR であり、
-//!   dCBOR は不定長を禁止しているため、現れることはない。
+//! **Scope**
+//! - Encoding: unsigned integers, byte strings, text strings, arrays, and tagged types.
+//!   Integers and lengths are always written in the shortest form (dCBOR / RFC 8949 §4.1 determinism).
+//! - Decoding: besides the above, maps, negative integers, and simple values/floats can be
+//!   **skipped over** (`skipItem` / `isWellFormed`). Used to check that a UR message (a PSBT, say)
+//!   is not broken as dCBOR, without interpreting its contents.
+//! - Indefinite length (additional information 31) is not supported. UR messages are dCBOR, and
+//!   dCBOR forbids indefinite length, so it never occurs.
 //!
-//! **設計方針**
-//! - 決定性に厳格: `Reader.strict`（既定 true）のとき、最短表現でない整数・長さは
-//!   error.InvalidEncoding で拒否する。同じ値に複数の表現があると、UR の型や
-//!   チェックサムの検証をすり抜ける余地が生まれるため。
-//! - 深いネストでスタックを食い潰さないよう、`skipItem` は深さの上限（`max_depth`）で拒否する。
-//! - 秘密情報を扱わないため、メモリ確保は行わない（出力先は呼び出し側が用意する）。
+//! **Design policy**
+//! - Strict about determinism: with `Reader.strict` (true by default), an integer or length that is
+//!   not in the shortest form is rejected with error.InvalidEncoding. Several encodings of the same
+//!   value would leave room to slip past UR type or checksum verification.
+//! - So that deep nesting does not eat the stack, `skipItem` rejects past a depth limit (`max_depth`).
+//! - No memory allocation, because no secrets are handled (the caller provides the output).
 //!
-//! 参考: https://www.rfc-editor.org/rfc/rfc8949.html
-//!       https://datatracker.ietf.org/doc/draft-mcnally-deterministic-cbor/
-//! テストベクタの出典: RFC 8949 §Appendix A（診断記法と十六進の対応表）と、
-//! BCR-2020-012 / BCR-2024-001 の CBOR 例。
+//! Reference: https://www.rfc-editor.org/rfc/rfc8949.html
+//!            https://datatracker.ietf.org/doc/draft-mcnally-deterministic-cbor/
+//! Test vector sources: RFC 8949 §Appendix A (the diagnostic notation / hex table) and the CBOR
+//! examples in BCR-2020-012 / BCR-2024-001.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;
 
-/// ヘッダ（型 + 引数）の最大バイト数。ヘッダだけを書く一時バッファの大きさに使える。
+/// Maximum byte length of a header (type + argument). Size of a header-only temporary buffer.
 pub const max_header_len = 9;
 
-/// ネストの深さの上限。これを超える入力は error.InvalidEncoding で拒否する。
+/// Maximum nesting depth. Input deeper than this is rejected with error.InvalidEncoding.
 pub const max_depth = 32;
 
-/// 主要型（RFC 8949 §3.1 の major type）。
+/// Major type (RFC 8949 §3.1).
 pub const MajorType = enum(u3) {
     unsigned_int = 0,
     negative_int = 1,
@@ -43,7 +43,7 @@ pub const MajorType = enum(u3) {
     simple = 7,
 };
 
-/// `value` を最短表現で書くのに必要なヘッダのバイト数。
+/// Number of header bytes needed to write `value` in the shortest form.
 pub fn headLength(value: u64) usize {
     if (value < 24) return 1;
     if (value <= 0xff) return 2;
@@ -52,12 +52,12 @@ pub fn headLength(value: u64) usize {
     return 9;
 }
 
-/// バイト文字列として符号化したときの長さ（ヘッダ + 本体）。
+/// Length when encoded as a byte string (header + body).
 pub fn bytesLength(data_len: usize) usize {
     return headLength(data_len) + data_len;
 }
 
-/// n バイトで表現された値が取りうる最小値（決定性の検査に使う）。
+/// Smallest value that n bytes can represent (used for the determinism check).
 fn minimalValueForWidth(width: usize) u64 {
     return switch (width) {
         1 => 24,
@@ -74,12 +74,12 @@ fn writeBigEndian(out: []u8, value: u64, width: usize) void {
     @memcpy(out[0..width], buf[8 - width ..]);
 }
 
-// ---------------------------------------------------------------- エンコード
+// ---------------------------------------------------------------- encoding
 
-/// ヘッダ（型 + 最短表現の引数）を書く。
+/// Writes a header (type + argument in the shortest form).
 ///
-/// タグ付き型は `writeTag` のあとに続けて中身を書く（CBOR ではタグは「次の 1 項目」に
-/// かかるため、中身の長さをヘッダに含めない）。
+/// For a tagged type, write the contents after `writeTag` (in CBOR a tag applies to
+/// "the next single item", so the length of the contents is not part of the header).
 pub fn writeHead(out: []u8, major: MajorType, value: u64) Error![]u8 {
     const width = headLength(value);
     if (out.len < width) return error.BufferTooSmall;
@@ -108,32 +108,32 @@ pub fn writeHead(out: []u8, major: MajorType, value: u64) Error![]u8 {
     return out[0..width];
 }
 
-/// 符号なし整数（主要型 0）。
+/// Unsigned integer (major type 0).
 pub fn writeUint(out: []u8, value: u64) Error![]u8 {
     return writeHead(out, .unsigned_int, value);
 }
 
-/// タグ（主要型 6）。`6.40300` なら `writeTag(out, 40300)` のあとに中身を書く。
+/// Tag (major type 6). For `6.40300`, write the contents after `writeTag(out, 40300)`.
 pub fn writeTag(out: []u8, tag: u64) Error![]u8 {
     return writeHead(out, .tag, tag);
 }
 
-/// 配列のヘッダ（主要型 4）。中身は呼び出し側が `length` 個書く。
+/// Array header (major type 4). The caller writes `length` items as the contents.
 pub fn writeArrayHeader(out: []u8, length: usize) Error![]u8 {
     return writeHead(out, .array, length);
 }
 
-/// バイト文字列のヘッダ（主要型 2）。中身は呼び出し側が書く。
+/// Byte string header (major type 2). The caller writes the contents.
 pub fn writeBytesHeader(out: []u8, length: usize) Error![]u8 {
     return writeHead(out, .byte_string, length);
 }
 
-/// テキスト文字列のヘッダ（主要型 3）。
+/// Text string header (major type 3).
 pub fn writeTextHeader(out: []u8, length: usize) Error![]u8 {
     return writeHead(out, .text_string, length);
 }
 
-/// バイト文字列（主要型 2）。
+/// Byte string (major type 2).
 pub fn writeBytes(out: []u8, data: []const u8) Error![]u8 {
     const header = try writeBytesHeader(out, data.len);
     if (out.len < header.len + data.len) return error.BufferTooSmall;
@@ -141,7 +141,7 @@ pub fn writeBytes(out: []u8, data: []const u8) Error![]u8 {
     return out[0 .. header.len + data.len];
 }
 
-/// テキスト文字列（主要型 3）。UTF-8 の妥当性は検査しない。
+/// Text string (major type 3). UTF-8 validity is not checked.
 pub fn writeText(out: []u8, text: []const u8) Error![]u8 {
     const header = try writeTextHeader(out, text.len);
     if (out.len < header.len + text.len) return error.BufferTooSmall;
@@ -149,41 +149,41 @@ pub fn writeText(out: []u8, text: []const u8) Error![]u8 {
     return out[0 .. header.len + text.len];
 }
 
-// ---------------------------------------------------------------- デコード
+// ---------------------------------------------------------------- decoding
 
-/// 読み取ったヘッダ。
+/// A header that has been read.
 pub const Head = struct {
     major: MajorType,
-    /// 引数の値（整数値・長さ・タグ番号）。
+    /// The argument value (integer value, length, or tag number).
     value: u64,
-    /// ヘッダのバイト数。
+    /// Byte length of the header.
     len: usize,
 };
 
-/// 先頭から順に読む CBOR デコーダ。
+/// CBOR decoder that reads forward from the beginning.
 pub const Reader = struct {
     data: []const u8,
     pos: usize = 0,
-    /// true なら最短表現でない整数・長さを拒否する（dCBOR の決定性）。
+    /// If true, an integer or length not in the shortest form is rejected (dCBOR determinism).
     strict: bool = true,
 
     pub fn init(data: []const u8) Reader {
         return .{ .data = data };
     }
 
-    /// 入力全体を読み終えているか。
+    /// Whether the whole input has been read.
     pub fn atEnd(self: *const Reader) bool {
         return self.pos >= self.data.len;
     }
 
-    /// 入力全体を読み終えたことを確認する（余分なデータを許さない）。
+    /// Confirms the whole input has been read (trailing data is not allowed).
     pub fn finish(self: *const Reader) Error!void {
         if (self.pos != self.data.len) return error.InvalidEncoding;
     }
 
-    /// 次のヘッダを読む。
+    /// Reads the next header.
     ///
-    /// 追加情報 31（不定長）と 28〜30（予約）は error.InvalidEncoding。
+    /// Additional information 31 (indefinite length) and 28-30 (reserved) give error.InvalidEncoding.
     pub fn readHead(self: *Reader) Error!Head {
         if (self.pos >= self.data.len) return error.Truncated;
 
@@ -208,8 +208,8 @@ pub const Reader = struct {
                 value = 0;
                 for (self.data[self.pos + 1 ..][0..width]) |byte| value = (value << 8) | byte;
                 len = 1 + width;
-                // dCBOR: もっと短く書ける値は拒否する。
-                // 主要型 7（単純値・浮動小数点）の引数は長さではないので除外する。
+                // dCBOR: a value that could be written in fewer bytes is rejected.
+                // Major type 7 (simple values/floats) has an argument that is not a length, so it is excluded.
                 if (self.strict and major != .simple and value < minimalValueForWidth(width)) {
                     return error.InvalidEncoding;
                 }
@@ -221,21 +221,21 @@ pub const Reader = struct {
         return .{ .major = major, .value = value, .len = len };
     }
 
-    /// 符号なし整数（主要型 0）を読む。
+    /// Reads an unsigned integer (major type 0).
     pub fn readUint(self: *Reader) Error!u64 {
         const head = try self.readHead();
         if (head.major != .unsigned_int) return error.InvalidEncoding;
         return head.value;
     }
 
-    /// タグ（主要型 6）を読む。中身は続けて読む。
+    /// Reads a tag (major type 6). Read the contents that follow.
     pub fn readTag(self: *Reader) Error!u64 {
         const head = try self.readHead();
         if (head.major != .tag) return error.InvalidEncoding;
         return head.value;
     }
 
-    /// 配列のヘッダ（主要型 4）を読み、要素数を返す。
+    /// Reads an array header (major type 4) and returns the element count.
     pub fn readArrayHeader(self: *Reader) Error!usize {
         const head = try self.readHead();
         if (head.major != .array) return error.InvalidEncoding;
@@ -243,7 +243,7 @@ pub const Reader = struct {
         return @intCast(head.value);
     }
 
-    /// マップのヘッダ（主要型 5）を読み、組の数を返す。
+    /// Reads a map header (major type 5) and returns the pair count.
     pub fn readMapHeader(self: *Reader) Error!usize {
         const head = try self.readHead();
         if (head.major != .map) return error.InvalidEncoding;
@@ -261,12 +261,12 @@ pub const Reader = struct {
         return body;
     }
 
-    /// バイト文字列（主要型 2）を読む。返るスライスは入力の一部を指す。
+    /// Reads a byte string (major type 2). The returned slice points into the input.
     pub fn readBytes(self: *Reader) Error![]const u8 {
         return self.readString(.byte_string);
     }
 
-    /// テキスト文字列（主要型 3）を読む。返るスライスは入力の一部を指す。
+    /// Reads a text string (major type 3). The returned slice points into the input.
     pub fn readText(self: *Reader) Error![]const u8 {
         return self.readString(.text_string);
     }
@@ -288,30 +288,30 @@ pub const Reader = struct {
             .map => {
                 var i: u64 = 0;
                 while (i < head.value) : (i += 1) {
-                    try self.skipItemDepth(depth + 1); // キー
-                    try self.skipItemDepth(depth + 1); // 値
+                    try self.skipItemDepth(depth + 1); // key
+                    try self.skipItemDepth(depth + 1); // value
                 }
             },
             .tag => try self.skipItemDepth(depth + 1),
         }
     }
 
-    /// 次の 1 項目を読み飛ばす（中身は解釈しない）。
+    /// Skips the next single item (its contents are not interpreted).
     pub fn skipItem(self: *Reader) Error!void {
         return self.skipItemDepth(0);
     }
 };
 
-/// 入力全体が「ちょうど 1 つの CBOR 項目」として壊れていないかを検査する。
+/// Checks that the whole input is intact as "exactly one CBOR item".
 ///
-/// `strict` が true なら dCBOR の最短表現も要求する。
+/// If `strict` is true, the dCBOR shortest form is required as well.
 pub fn isWellFormed(data: []const u8, strict: bool) bool {
     var reader = Reader{ .data = data, .strict = strict };
     reader.skipItem() catch return false;
     return reader.pos == data.len;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -328,8 +328,8 @@ fn expectEncoded(expected_hex: []const u8, actual: []const u8) !void {
     try testing.expectEqualStrings(asHex(&buf, expected_hex), actual);
 }
 
-test "RFC 8949 Appendix A の整数表現と一致する" {
-    // 診断記法 → 十六進（RFC 8949 §Appendix A）
+test "matches the RFC 8949 Appendix A integer encodings" {
+    // Diagnostic notation -> hex (RFC 8949 §Appendix A)
     const vectors = [_]struct { value: u64, hex: []const u8 }{
         .{ .value = 0, .hex = "00" },
         .{ .value = 10, .hex = "0a" },
@@ -354,14 +354,14 @@ test "RFC 8949 Appendix A の整数表現と一致する" {
         const encoded = try writeUint(&out, vector.value);
         try expectEncoded(vector.hex, encoded);
 
-        // ラウンドトリップ
+        // round trip
         var reader = Reader.init(encoded);
         try testing.expectEqual(vector.value, try reader.readUint());
         try reader.finish();
     }
 }
 
-test "RFC 8949 Appendix A の配列・バイト文字列・テキスト・タグと一致する" {
+test "matches the RFC 8949 Appendix A arrays, byte strings, text and tags" {
     var out: [64]u8 = undefined;
 
     // h'' / h'01020304'
@@ -394,7 +394,7 @@ test "RFC 8949 Appendix A の配列・バイト文字列・テキスト・タグ
 
     try expectEncoded("a0", try writeHead(&out, .map, 0));
 
-    // タグ: 0("2013-03-21T20:04:00Z") と 40300（BCR-2020-012 の seed）
+    // Tags: 0("2013-03-21T20:04:00Z") and 40300 (the BCR-2020-012 seed)
     try expectEncoded("c0", try writeTag(&out, 0));
     try expectEncoded("d99d6c", try writeTag(&out, 40300));
 
@@ -406,9 +406,9 @@ test "RFC 8949 Appendix A の配列・バイト文字列・テキスト・タグ
     try expectEncoded("d99d6ca10144deadbeef", out[0..pos]);
 }
 
-test "BCR-2024-001 のパート CBOR を読み取れる" {
+test "reads the part CBOR of BCR-2024-001" {
     // FountainEncoder::Part(seqNum: 1, seqLen: 9, messageLen: 256, checksum: 0x0167aa07,
-    // data: 29 バイト) の CBOR（BCR-2024-001 §5 の testEncoderCBOR より）。
+    // data: 29 bytes) in CBOR (from testEncoderCBOR in BCR-2024-001 §5).
     var buf: [128]u8 = undefined;
     const part = asHex(
         &buf,
@@ -427,11 +427,11 @@ test "BCR-2024-001 のパート CBOR を読み取れる" {
     try testing.expectEqual(@as(u8, 0x3c), data[28]);
     try reader.finish();
 
-    // 全体としても壊れていない。
+    // The document as a whole is intact as well.
     try testing.expect(isWellFormed(part, true));
 }
 
-test "タグ付き型を読み取れる（BCR-2020-012 の seed）" {
+test "reads a tagged type (the BCR-2020-012 seed)" {
     var buf: [64]u8 = undefined;
     const seed = asHex(&buf, "d99d6ca20150c7098580125e2ab0981253468b2dbc5202c11947da");
 
@@ -446,7 +446,7 @@ test "タグ付き型を読み取れる（BCR-2020-012 の seed）" {
     try reader.finish();
 }
 
-test "マップ・負数・単純値・浮動小数点を読み飛ばせる" {
+test "skips over maps, negative integers, simple values and floats" {
     // {"a": 1, "b": [-1, null, true, 1.5]}
     var out: [64]u8 = undefined;
     var pos: usize = 0;
@@ -460,11 +460,11 @@ test "マップ・負数・単純値・浮動小数点を読み飛ばせる" {
     pos += (try writeHead(out[pos..], .simple, 21)).len; // true
     out[pos] = 0xf9;
     out[pos + 1] = 0x3e;
-    out[pos + 2] = 0x00; // 1.5（float16）
+    out[pos + 2] = 0x00; // 1.5 (float16)
     pos += 3;
     const document = out[0..pos];
 
-    // RFC 8949 の表現どおり（-1 は 0x20、null は 0xf6、true は 0xf5、1.5 は 0xf93e00）。
+    // Exactly as RFC 8949 represents them (-1 is 0x20, null is 0xf6, true is 0xf5, 1.5 is 0xf93e00).
     try expectEncoded("a261610161628420f6f5f93e00", document);
 
     try testing.expect(isWellFormed(document, true));
@@ -472,54 +472,54 @@ test "マップ・負数・単純値・浮動小数点を読み飛ばせる" {
     try reader.skipItem();
     try reader.finish();
 
-    // 浮動小数点（主要型 7）は最短表現の検査対象外。
+    // Floats (major type 7) are not subject to the shortest-form check.
     var float_buf: [16]u8 = undefined;
-    const float32 = asHex(&float_buf, "fa00000000"); // 0.0 を float32 で書いたもの
+    const float32 = asHex(&float_buf, "fa00000000"); // 0.0 written as float32
     var float_reader = Reader.init(float32);
     try testing.expectEqual(@as(u64, 0), (try float_reader.readHead()).value);
     try float_reader.finish();
 }
 
-test "非最短表現を拒否する（dCBOR の決定性）" {
+test "rejects non-shortest forms (dCBOR determinism)" {
     var buf_a: [16]u8 = undefined;
     var buf_b: [16]u8 = undefined;
     var buf_c: [16]u8 = undefined;
 
-    // 0 を 2 バイトで書いたもの（正しくは 0x00）
+    // 0 written in two bytes (correctly 0x00)
     const non_minimal_zero = asHex(&buf_a, "1800");
     var reader = Reader.init(non_minimal_zero);
     try testing.expectError(error.InvalidEncoding, reader.readHead());
     try testing.expect(!isWellFormed(non_minimal_zero, true));
-    // 緩めれば読める（相互運用のために strict = false も選べる）。
+    // Readable when relaxed (strict = false is available for interoperability).
     try testing.expect(isWellFormed(non_minimal_zero, false));
 
-    // 255 を 4 バイトで書いたもの（正しくは 0x18ff）
+    // 255 written in four bytes (correctly 0x18ff)
     reader = Reader.init(asHex(&buf_b, "1a000000ff"));
     try testing.expectError(error.InvalidEncoding, reader.readHead());
 
-    // 長さ 2 のバイト文字列を 2 バイトの長さで書いたもの（正しくは 0x42）
+    // A byte string of length 2 written with a two-byte length (correctly 0x42)
     reader = Reader.init(asHex(&buf_c, "58020203"));
     try testing.expectError(error.InvalidEncoding, reader.readHead());
 }
 
-test "不定長と予約値を拒否する" {
+test "rejects indefinite lengths and reserved values" {
     var buf: [16]u8 = undefined;
 
-    // 不定長のバイト文字列（0x5f ... 0xff）と不定長の配列（0x9f ... 0xff）
+    // An indefinite-length byte string (0x5f ... 0xff) and an indefinite-length array (0x9f ... 0xff)
     var reader = Reader.init(asHex(&buf, "5f420102ff"));
     try testing.expectError(error.InvalidEncoding, reader.readHead());
     reader = Reader.init(asHex(&buf, "9f0102ff"));
     try testing.expectError(error.InvalidEncoding, reader.readHead());
 
-    // 追加情報 28（予約）
+    // Additional information 28 (reserved)
     reader = Reader.init(asHex(&buf, "1c"));
     try testing.expectError(error.InvalidEncoding, reader.readHead());
 }
 
-test "切り詰め・型違い・余分なデータを拒否する" {
+test "rejects truncation, wrong types and trailing data" {
     var buf: [16]u8 = undefined;
 
-    // ヘッダだけあって本体がない
+    // Header only, no body
     var reader = Reader.init(asHex(&buf, "44"));
     try testing.expectError(error.Truncated, reader.readBytes());
     var reader2 = Reader.init(asHex(&buf, "58"));
@@ -528,7 +528,7 @@ test "切り詰め・型違い・余分なデータを拒否する" {
     try testing.expectError(error.Truncated, reader3.readHead());
     try testing.expect(!isWellFormed(asHex(&buf, "1901"), true));
 
-    // 型違い
+    // Wrong type
     var reader4 = Reader.init(asHex(&buf, "6161"));
     try testing.expectError(error.InvalidEncoding, reader4.readUint());
     var reader5 = Reader.init(asHex(&buf, "4401020304"));
@@ -536,26 +536,26 @@ test "切り詰め・型違い・余分なデータを拒否する" {
     var reader6 = Reader.init(asHex(&buf, "00"));
     try testing.expectError(error.InvalidEncoding, reader6.readTag());
 
-    // 余分なデータ
+    // Trailing data
     try testing.expect(!isWellFormed(asHex(&buf, "0000"), true));
     var reader7 = Reader.init(asHex(&buf, "0000"));
     try testing.expectEqual(@as(u64, 0), try reader7.readUint());
     try testing.expectError(error.InvalidEncoding, reader7.finish());
 }
 
-test "ネストが深すぎる入力を拒否する" {
-    // 0x81（要素 1 の配列）を 64 段重ねたあとに 0x00
+test "rejects input that nests too deeply" {
+    // 0x81 (one-element array) stacked 64 deep, followed by 0x00
     var deep: [65]u8 = @splat(0x81);
     deep[64] = 0x00;
     try testing.expect(!isWellFormed(&deep, true));
 
-    // max_depth 以内なら通る
+    // Within max_depth it passes
     var shallow: [max_depth + 1]u8 = @splat(0x81);
     shallow[max_depth] = 0x00;
     try testing.expect(isWellFormed(&shallow, true));
 }
 
-test "出力バッファが足りない場合は BufferTooSmall" {
+test "BufferTooSmall when the output buffer is too small" {
     var short: [2]u8 = undefined;
     try testing.expectError(error.BufferTooSmall, writeUint(&short, 65536));
     try testing.expectError(error.BufferTooSmall, writeHead(&short, .tag, 40300));

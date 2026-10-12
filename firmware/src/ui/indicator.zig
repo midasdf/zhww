@@ -1,49 +1,50 @@
-//! 状態表示（LED と画面バックライト）の方針。
+//! Policy for status indication (LED and screen backlight).
 //!
-//! **なぜ「方針」をコードにするのか**: 実機の LED が GPIO で制御できるかは
-//! 基板の回路図待ちで未確定（RP2350-PiZero には「Power LED」があるが、電源レールに
-//! 直結されている可能性が高い）。一方で「どの状態でどう光らせるか」はハードに依存しない
-//! ので、先に決めてテストできる形にしておけば、実機が来たら GPIO を繋ぐだけで済む。
+//! **Why put a "policy" in code**: whether the board LED can be controlled over GPIO is still
+//! undecided while we wait for the board schematic (the RP2350-PiZero has a "Power LED", but it is
+//! likely wired straight to the power rail). How each state should light up, on the other hand, does
+//! not depend on the hardware, so deciding it up front in a testable form means that once the board
+//! arrives, all that is left is connecting the GPIO.
 //!
-//! **乾電池駆動なので消費電力が重要**: 待機中は「たまに一瞬光る」程度に抑え、
-//! 平均の点灯率を数 % 以下にする（点滅の平均電流を計算できるよう、パターンは
-//! 点灯/消灯と時間の列で表す）。
+//! **Power consumption matters because it runs on dry cells**: idle is limited to "a brief flash now
+//! and then", and the average duty cycle is kept to a few percent or less (so that the average blinking
+//! current can be computed, the patterns are expressed as a sequence of on/off states and durations).
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;
 
-/// 端末の状態。
+/// State of the device.
 pub const State = enum {
-    /// 待機（画面オフ・たまに心拍のように光る）
+    /// Idle (screen off; a heartbeat-like flash now and then)
     idle,
-    /// 処理中（署名の計算など）
+    /// Busy (computing a signature, for example)
     busy,
-    /// 利用者の確認待ち（画面に内容を出している）
+    /// Waiting for the user to confirm (the details are shown on screen)
     confirm,
-    /// エラー（画面に理由を出している）。`error` は Zig の予約語なので failure とする
+    /// Error (the reason is shown on screen). Named failure because `error` is a Zig keyword
     failure,
-    /// 電池が少ない見込み（推定。実測ではない）
+    /// Battery expected to be low (an estimate, not a measurement)
     battery_low,
 };
 
-/// 点滅パターンの 1 段階。
+/// One step of a blink pattern.
 pub const Step = struct {
     on: bool,
     ms: u32,
 };
 
-/// 1 周期のパターン。
+/// One full period of a pattern.
 pub const Pattern = struct {
     steps: []const Step,
 
-    /// 周期の長さ（ミリ秒）。
+    /// Period length (milliseconds).
     pub fn periodMs(self: Pattern) u32 {
         var total: u32 = 0;
         for (self.steps) |step| total += step.ms;
         return total;
     }
 
-    /// 点灯している時間の合計（ミリ秒）。
+    /// Total time lit (milliseconds).
     pub fn onMs(self: Pattern) u32 {
         var total: u32 = 0;
         for (self.steps) |step| {
@@ -52,14 +53,14 @@ pub const Pattern = struct {
         return total;
     }
 
-    /// 平均の点灯率（%）。乾電池の持ちを評価するために使う。
+    /// Average duty cycle (%). Used to evaluate battery life.
     pub fn dutyPercent(self: Pattern) u32 {
         const period = self.periodMs();
         if (period == 0) return 0;
         return self.onMs() * 100 / period;
     }
 
-    /// `elapsed_ms` の時点で点灯しているか。
+    /// Whether it is lit at `elapsed_ms`.
     pub fn isOnAt(self: Pattern, elapsed_ms: u64) bool {
         const period = self.periodMs();
         if (period == 0) return false;
@@ -72,31 +73,31 @@ pub const Pattern = struct {
     }
 };
 
-// 待機: 3 秒ごとに 20ms だけ光る（心拍）。平均点灯率 0.7% 未満。
+// Idle: lights for 20ms every 3 seconds (heartbeat). Average duty cycle below 0.7%.
 const idle_steps = [_]Step{
     .{ .on = true, .ms = 20 },
     .{ .on = false, .ms = 2980 },
 };
 
-// 処理中: 点灯したまま（利用者が見ている）。
+// Busy: stays lit (the user is watching).
 const busy_steps = [_]Step{
     .{ .on = true, .ms = 1000 },
     .{ .on = false, .ms = 0 },
 };
 
-// 確認待ち: ゆっくり点滅（画面を見てもらう合図）。
+// Confirming: slow blink (a cue to look at the screen).
 const confirm_steps = [_]Step{
     .{ .on = true, .ms = 400 },
     .{ .on = false, .ms = 600 },
 };
 
-// エラー: 速く点滅。
+// Error: fast blink.
 const error_steps = [_]Step{
     .{ .on = true, .ms = 100 },
     .{ .on = false, .ms = 100 },
 };
 
-// 電池少: 2 回点滅して長く消える（待機の心拍と区別できる）。
+// Battery low: two flashes then a long off period (distinguishable from the idle heartbeat).
 const battery_low_steps = [_]Step{
     .{ .on = true, .ms = 60 },
     .{ .on = false, .ms = 140 },
@@ -104,7 +105,7 @@ const battery_low_steps = [_]Step{
     .{ .on = false, .ms = 3740 },
 };
 
-/// 状態に対応する点滅パターン。
+/// The blink pattern for a state.
 pub fn patternFor(state: State) Pattern {
     return switch (state) {
         .idle => .{ .steps = &idle_steps },
@@ -115,14 +116,14 @@ pub fn patternFor(state: State) Pattern {
     };
 }
 
-/// 画面のバックライトを点けるか。
+/// Whether to turn the screen backlight on.
 ///
-/// **待機中は消す**（バックライトが一番電気を食うため）。
+/// **Turned off while idle** (the backlight draws the most power).
 pub fn backlightOn(state: State) bool {
     return state != .idle;
 }
 
-/// 状態を日本語で表す（画面に出す用。文字は ASCII 前提の画面では英字を使う）。
+/// Human-readable label for a state (for on-screen display; an ASCII-only screen uses Latin letters).
 pub fn label(state: State) []const u8 {
     return switch (state) {
         .idle => "STAND BY",
@@ -133,29 +134,29 @@ pub fn label(state: State) []const u8 {
     };
 }
 
-/// 状態を切り替えたときに「何か光らせる必要があるか」を返す。
+/// Returns whether anything needs to light up when the state changes.
 ///
-/// 状態が変わった直後だけ光らせると、待機中の平均消費をさらに下げられる。
+/// Lighting up only right after a state change lowers the average consumption while idle even further.
 pub fn shouldPulseOnChange(previous: State, next: State) bool {
     if (previous == next) return false;
     return next == .battery_low or next == .failure;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "待機は点灯率が非常に低い（乾電池の持ちを優先する）" {
+test "idle has a very low duty cycle (battery life comes first)" {
     const pattern = patternFor(.idle);
     try testing.expect(pattern.dutyPercent() <= 1);
     try testing.expect(pattern.isOnAt(0));
     try testing.expect(!pattern.isOnAt(20));
     try testing.expect(!pattern.isOnAt(1500));
-    // 3 秒後にはもう一度光る
+    // It lights again after 3 seconds
     try testing.expect(pattern.isOnAt(3000));
 }
 
-test "処理中と確認待ちは消えない／ゆっくり点滅する" {
+test "busy does not go out and confirming blinks slowly" {
     const busy = patternFor(.busy);
     try testing.expectEqual(@as(u32, 100), busy.dutyPercent());
     try testing.expect(busy.isOnAt(0));
@@ -168,25 +169,25 @@ test "処理中と確認待ちは消えない／ゆっくり点滅する" {
     try testing.expectEqual(@as(u32, 40), confirm.dutyPercent());
 }
 
-test "エラーは速く点滅し、電池少は待機と区別できる" {
+test "error blinks fast and battery low is distinguishable from idle" {
     const error_pattern = patternFor(.failure);
     try testing.expect(error_pattern.isOnAt(0));
     try testing.expect(!error_pattern.isOnAt(100));
     try testing.expect(error_pattern.isOnAt(200));
 
     const low = patternFor(.battery_low);
-    // 2 回光ってから長く消える
+    // Two flashes, then a long off period
     try testing.expect(low.isOnAt(0));
     try testing.expect(!low.isOnAt(60));
     try testing.expect(low.isOnAt(200));
     try testing.expect(!low.isOnAt(260));
     try testing.expect(!low.isOnAt(2000));
     try testing.expect(low.isOnAt(4000));
-    // 待機（0.7%）よりは目立つが、点灯しっぱなしではない
+    // More noticeable than idle (0.7%) but not lit continuously
     try testing.expect(low.dutyPercent() < 10);
 }
 
-test "バックライトは待機中だけ消す" {
+test "the backlight is off only while idle" {
     try testing.expect(!backlightOn(.idle));
     try testing.expect(backlightOn(.busy));
     try testing.expect(backlightOn(.confirm));
@@ -194,14 +195,14 @@ test "バックライトは待機中だけ消す" {
     try testing.expect(backlightOn(.battery_low));
 }
 
-test "状態が変わったときだけ合図する" {
+test "it signals only when the state changes" {
     try testing.expect(!shouldPulseOnChange(.idle, .idle));
     try testing.expect(!shouldPulseOnChange(.idle, .confirm));
     try testing.expect(shouldPulseOnChange(.confirm, .failure));
     try testing.expect(shouldPulseOnChange(.confirm, .battery_low));
 }
 
-test "周期が 0 のパターンでも落ちない" {
+test "a pattern with period 0 does not crash" {
     const empty = Pattern{ .steps = &.{} };
     try testing.expectEqual(@as(u32, 0), empty.periodMs());
     try testing.expectEqual(@as(u32, 0), empty.dutyPercent());
