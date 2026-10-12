@@ -237,21 +237,31 @@ fn resolveUtxo(
     const input = psbt.inputs[index];
     const prevout = psbt.unsigned_tx.inputs[index].prevout;
 
-    // witness 入力なら witness_utxo を優先する
+    // witness 入力なら witness_utxo を使う。
+    // P2SH でも redeemScript が P2WPKH なら witness 入力（P2SH-P2WPKH）である。
     if (input.witness_utxo) |utxo| {
         const kind = detectScriptKind(utxo.script_pubkey);
-        if (kind.isWitness()) {
-            return .{ .script_pubkey = utxo.script_pubkey, .amount = utxo.value };
+        const is_witness_input = kind.isWitness() or (kind == .p2sh and
+            input.redeem_script != null and
+            detectScriptKind(input.redeem_script.?) == .p2wpkh);
+        if (is_witness_input) {
+            return .{
+                .script_pubkey = utxo.script_pubkey,
+                .amount = utxo.value,
+                .redeem_script = input.redeem_script,
+            };
         }
     }
 
-    // non-witness utxo から該当する出力を探す
+    // non-witness utxo から該当する出力を探す。
+    // **witness_utxo しか無い非 witness 入力は署名しない**（BIP174 の規定）。
     if (input.non_witness_utxo) |prev_tx| {
+        // txid の一致を確認する（差し替え攻撃の防止）
+        const txid = try prev_tx.txid(allocator);
+        if (!std.mem.eql(u8, &txid, &prevout.txid)) return error.InvalidPsbt;
+
         for (prev_tx.outputs, 0..) |out, vout| {
             if (vout != prevout.vout) continue;
-            // txid の一致を確認する（差し替え攻撃の防止）
-            const txid = try prev_tx.txid(allocator);
-            if (!std.mem.eql(u8, &txid, &prevout.txid)) return error.InvalidPsbt;
             return .{
                 .script_pubkey = out.script_pubkey,
                 .amount = out.value,
@@ -396,7 +406,10 @@ fn sighashForInput(
     }
 }
 
-/// 出力が自分の鍵（お釣り）に属するかを判定し、該当する index を返す。
+/// 出力が自分の**お釣り用**の鍵に属するかを判定し、該当する index を返す。
+///
+/// 判定は BIP84/49/44 の change 鎖（`.../1/i`）のみを対象にする。
+/// **受取アドレス（`.../0/i`）への送金はお釣りとして扱わない**（誤判定を避けるため）。
 fn findChangeOutputs(
     allocator: std.mem.Allocator,
     psbt: psbt_mod.Psbt,
@@ -409,32 +422,29 @@ fn findChangeOutputs(
     for (psbt.unsigned_tx.outputs, 0..) |output, index| {
         const kind = detectScriptKind(output.script_pubkey);
         if (kind == .unknown) continue;
-        if (try outputMatchesAnyKey(keys, output.script_pubkey, kind)) {
+        if (try outputMatchesChangeKey(keys, output.script_pubkey, kind)) {
             try result.append(allocator, index);
         }
     }
     return result.toOwnedSlice(allocator);
 }
 
-fn outputMatchesAnyKey(keys: KeySource, script: []const u8, kind: ScriptKind) Error!bool {
+fn outputMatchesChangeKey(keys: KeySource, script: []const u8, kind: ScriptKind) Error!bool {
     const purposes = [_]u32{ 84, 49, 44 };
     for (purposes) |purpose| {
-        // お釣り（change = 1）を優先し、受取（change = 0）も確認する
-        for ([_]u32{ 1, 0 }) |change| {
-            var i: u32 = 0;
-            while (i <= keys.max_index) : (i += 1) {
-                const path = [_]u32{
-                    purpose | bip32.hardened,
-                    0 | bip32.hardened,
-                    0 | bip32.hardened,
-                    change,
-                    i,
-                };
-                const node = keys.derive(&path) catch continue;
-                const pub_key = try node.publicKey();
-                if (matchesKey(.{ .script_pubkey = script, .amount = 0 }, kind, pub_key)) {
-                    return true;
-                }
+        var i: u32 = 0;
+        while (i <= keys.max_index) : (i += 1) {
+            const path = [_]u32{
+                purpose | bip32.hardened,
+                0 | bip32.hardened,
+                0 | bip32.hardened,
+                1, // change
+                i,
+            };
+            const node = keys.derive(&path) catch continue;
+            const pub_key = try node.publicKey();
+            if (matchesKey(.{ .script_pubkey = script, .amount = 0 }, kind, pub_key)) {
+                return true;
             }
         }
     }
@@ -459,11 +469,15 @@ fn finalize(
         const utxo = resolved[index] orelse return error.InvalidPsbt;
         const kind = detectScriptKind(utxo.script_pubkey);
 
+        // 公開鍵は安定した領域にコピーしてから witness に入れる。
+        // ローカル変数のアドレスを渡すと、ループを抜けた時点で不正な参照になる。
+        const pub_key_copy = try allocator.dupe(u8, &key.public_key);
+
         switch (kind) {
             .p2wpkh => {
                 const witness = try allocator.alloc([]const u8, 2);
                 witness[0] = signature;
-                witness[1] = &key.public_key;
+                witness[1] = pub_key_copy;
                 input.script_sig = &.{};
                 input.witness = witness;
             },
@@ -478,7 +492,7 @@ fn finalize(
                 input.script_sig = try pushData(allocator, &redeem);
                 const witness = try allocator.alloc([]const u8, 2);
                 witness[0] = signature;
-                witness[1] = &key.public_key;
+                witness[1] = pub_key_copy;
                 input.witness = witness;
             },
             .p2pkh => {
@@ -528,6 +542,46 @@ fn pushData(allocator: std.mem.Allocator, data: []const u8) Error![]const u8 {
     }
     try out.appendSlice(allocator, data);
     return out.toOwnedSlice(allocator);
+}
+
+/// 署名済み PSBT を含む一連の結果。
+pub const SignedPsbt = struct {
+    /// 署名の詳細（手数料・お釣り・署名できなかった入力など）。
+    result: SignResult,
+    /// ホストに返す署名済み PSBT（元のフィールドを保持する）。
+    signed_psbt: []const u8,
+};
+
+/// PSBT のバイト列を受け取り、署名して署名済み PSBT を返す。
+///
+/// エアギャップ運用では「バイト列を受けてバイト列を返す」形が基本になるため、
+/// 入出力をここで完結させる（QR / SD / USB のどの経路でも同じ関数を使う）。
+pub fn signPsbtBytes(
+    allocator: std.mem.Allocator,
+    psbt_bytes: []const u8,
+    keys: KeySource,
+) Error!SignedPsbt {
+    const psbt = try psbt_mod.Psbt.parse(allocator, psbt_bytes);
+    const result = try sign(allocator, psbt, keys);
+
+    // 入力ごとの追加署名をまとめる。
+    // 公開鍵は `result.partial_sigs` の要素を指す（安定した領域）ので、
+    // ループのローカル変数のアドレスを渡してはならない。
+    const sigs = try allocator.alloc([]const psbt_mod.PartialSig, psbt.inputs.len);
+    for (sigs) |*slot| slot.* = &.{};
+    for (result.partial_sigs, 0..) |partial, i| {
+        const one = try allocator.alloc(psbt_mod.PartialSig, 1);
+        one[0] = .{
+            .pubkey = &result.partial_sigs[i].pubkey,
+            .signature = partial.signature,
+        };
+        sigs[partial.index] = one;
+    }
+
+    return .{
+        .result = result,
+        .signed_psbt = try psbt_mod.Psbt.serialize(allocator, psbt, sigs),
+    };
 }
 
 // ---------------------------------------------------------------- テスト

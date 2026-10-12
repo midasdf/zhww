@@ -265,11 +265,15 @@ test "BIP143: PSBT 経由で署名しても公式ベクタの署名と一致す�
     try testing.expectEqual(@as(u64, 335_790_000), result.total_output);
 
     // --- 署名済み PSBT を書き出し、読み直しても署名が残っていること ---
+    // 公開鍵は result.partial_sigs の要素を指す（ループ変数のアドレスを渡さない）
     const sigs = try allocator.alloc([]const zhww.btc_psbt.PartialSig, psbt.inputs.len);
     for (sigs) |*slot| slot.* = &.{};
-    for (result.partial_sigs) |partial| {
+    for (result.partial_sigs, 0..) |partial, i| {
         const one = try allocator.alloc(zhww.btc_psbt.PartialSig, 1);
-        one[0] = .{ .pubkey = &partial.pubkey, .signature = partial.signature };
+        one[0] = .{
+            .pubkey = &result.partial_sigs[i].pubkey,
+            .signature = partial.signature,
+        };
         sigs[partial.index] = one;
     }
     const signed_psbt = try zhww.btc_psbt.Psbt.serialize(allocator, psbt, sigs);

@@ -11,10 +11,10 @@
 |---|---|
 | 言語 | **Zig**（0.17 以降） |
 | 楕円曲線 | **libsecp256k1**（C ライブラリをリンク） |
-| 実装済み（暗号・エンコード） | Base58 / Bech32・Bech32m / RIPEMD-160 / SHA-256 / HMAC-SHA512 / PBKDF2 / ECDSA 署名（RFC6979・low-s・DER） |
-| 実装済み（Bitcoin） | BIP39 / BIP32 / アドレス生成（P2PKH・P2SH-P2WPKH・P2WPKH・P2TR） / トランザクション解析・直列化 / Legacy・BIP143 sighash / **PSBT 解析と検証（BIP174）** |
-| テスト | **71 件すべて成功**（BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件） |
-| 未実装 | PSBT からの署名と最終化、画面 UI、QR 送受信、お釣り判定、EVM 署名、開発用 CLI |
+| 実装済み（暗号・エンコード） | Base58 / Bech32・Bech32m / RIPEMD-160 / SHA-256 / HMAC-SHA512 / PBKDF2 / HKDF-SHA256 / ECDSA 署名と検証（RFC6979・low-s・DER） |
+| 実装済み（Bitcoin） | BIP39（ダイス・カメラ等の entropy 結合を含む） / BIP32 / アドレス生成（P2PKH・P2SH-P2WPKH・P2WPKH・P2TR） / トランザクション解析・直列化 / Legacy・BIP143 sighash / PSBT の解析・検証・書き出し（BIP174） / **PSBT からの署名と最終化（P2WPKH・P2PKH・P2SH-P2WPKH・P2PK）** / **手数料計算とお釣り判定** / バイト列入出力のワークフロー（`signPsbtBytes`） |
+| テスト | **87 件すべて成功**（BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件・3 種類の入力を持つ PSBT の署名と最終化） |
+| 未実装 | 画面 UI、QR 送受信、EVM 署名、開発用 CLI |
 
 ```bash
 zig build test     # 公式テストベクタを含む全テスト

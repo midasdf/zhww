@@ -13,4 +13,5 @@ test {
     _ = @import("tests/address_vectors_test.zig");
     _ = @import("tests/bip143_test.zig");
     _ = @import("tests/bip174_test.zig");
+    _ = @import("tests/sign_test.zig");
 }
