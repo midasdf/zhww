@@ -335,6 +335,26 @@ So the light signal has to reach an **ADC pin** through the 0.1 inch header, and
 jumpers are what does it. The Qwiic port is still useful for the things I2C is good at - extra buttons,
 a rotary encoder, a slow environment sensor - and the Qwiic cable is worth having for those.
 
+**Do the jumpers physically fit?** Pitch is not the problem: the board's 40-pin header, the LM393
+module's pins and female-to-female Dupont jumpers are all **2.54 mm (0.1 inch)**, so they mate. (Check
+the module anyway: a few boards ship with 2.0 mm or 1.27 mm headers.) The real question is whether
+**any pins are still reachable once the display is plugged in**, and that depends on how much of the
+header the Mini PiTFT's socket covers - which is **not yet confirmed** and must be checked against
+Adafruit's guide or the board itself.
+
+| If the socket covers | Then |
+|---|---|
+| the first 26 pins (the usual PiTFT footprint, so pins 27-40 stay free) | use the free pins. **ADC0 is GPIO26 = physical pin 35**, inside that range, so the analog signal reaches an ADC. The free pins include GND but **no 3V3**, so power the module from the **Qwiic port**: a Qwiic-to-male-header cable is exactly the "STEMMA QT / Qwiic to Premium Male Headers" cable Adafruit sells, and it was offered as an add-on on the display's own product page |
+| all 40 pins | the display has to come off the header: a 40-pin female-female ribbon with the display at the far end, or a 40-pin breakout/T-splitter. Both are cable-only, no soldering |
+
+A Dupont housing is about **5.8 mm tall and 10 mm long per 4-way plug**, which is why the wires should
+be **10-20 cm**: they have to come out from under the display's edge and route to the sensor bay. The
+case has room for that (16 mm bay, internal height 19.5 mm), but the routing is the thing to check
+first when the parts arrive.
+
+Powering the module from a spare GPIO driven high instead of 3V3 also works (the LM393 board draws a
+couple of milliamps) and has a side benefit: the firmware can switch the sensor off between uses.
+
 Check the silkscreen for the pin order before connecting: the 4-pin boards come in both
 `VCC GND DO AO` and mirror-image orders. Nothing here has been bought or measured in this session, and
 no specific product page could be verified - the specification above is what matters.
