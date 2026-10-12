@@ -34,3 +34,6 @@ secrets/
 
 # 一時的な検証用ファイル（実装中に作られる。コミットしない）
 firmware/tmp_*.zig
+firmware/tmp_*.bin
+firmware/tmp_*.json
+firmware/tmp_*.png
