@@ -150,8 +150,13 @@ No app installation, which is what makes this practical for other people.
 
 ## 7. How to physically connect anything at all
 
-The problem: the 1.3inch LCD HAT plugs onto the 40-pin header and covers the whole board
-(65 x 30 mm). **Every free GPIO is on that header, and the HAT hides all of them.** Nothing can be
+**This section is mostly resolved by the display decision**: the chosen Adafruit Mini PiTFT (#4393)
+is only 38.6 x 24.5 mm, leaves the rest of the 40-pin header reachable, and adds a Qwiic/STEMMA QT
+port that sensors can plug into directly. The options below remain relevant if the Waveshare HAT is
+ever used again.
+
+The problem (with the old Waveshare LCD HAT): it plugs onto the 40-pin header and covers the whole
+board (65 x 30 mm). **Every free GPIO is on that header, and the HAT hides all of them.** Nothing can be
 plugged underneath, so a sensor or camera has nowhere to go as the build stands today.
 
 Options, in order of how little they change the project:

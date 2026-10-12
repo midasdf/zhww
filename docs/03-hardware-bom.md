@@ -11,7 +11,7 @@
 | # | Part | Spec / model number | Approx. cost | Example source |
 |---|---|---|---|---|
 | 1 | SBC | **Raspberry Pi Zero 2 WH (header pre-installed)** | ¥3,500–4,400 | スイッチサイエンス (Switch Science), 千石電商 (Sengoku Denshi), Amazon |
-| 2 | Display HAT | **Waveshare 1.3inch LCD HAT** (240×240, ST7789, joystick + 3 buttons, SKU:14972) | $13.99 | Waveshare direct, Amazon |
+| 2 | Display | **Adafruit Mini PiTFT 135×240** (product 4393, 1.14", ST7789, **two tactile buttons on the board**, **Qwiic/STEMMA QT port**, 38.6×24.5 mm, pre-assembled) | $9.95 | Adafruit (US) |
 | 3 | Camera | OV5647 5MP (**the version with the 22-pin FPC for Pi Zero**; Aokin / AuviPal, etc.) | ¥1,000–1,800 | Amazon |
 | 4 | microSD | 8–32GB (A1 or better; compatibility varies) | ¥800 | Consumer electronics retailer |
 | 5 | Power | **Not onboard (external power)**. USB power cable + a power source you already own (PC / mobile battery pack / dry-cell box) | ¥0–3,000 | — |
@@ -128,15 +128,28 @@ Moving to an RP2350 board makes "rewriting the HAL + deciding how to handle came
 
 | Option | Size | Pros | Cons |
 |---|---|---|---|
-| A: Waveshare 1.3" LCD HAT (**default**) | 1.3" / 240×240 | Plugs directly into the Zero's 40-pin header. SeedSigner's track record and enclosure STL can be used as-is | Displaying EVM calldata requires paging. **It covers the whole board (65×30 mm), so every free GPIO is hidden** — no sensor or camera can be added (see [09-light-audio-input.md](09-light-audio-input.md) §7) |
+| ~~A: Waveshare 1.3" LCD HAT~~ (rejected, see below) | 1.3" / 240×240 | Plugs directly into the Zero's 40-pin header. SeedSigner's track record and enclosure STL can be used as-is | Displaying EVM calldata requires paging. **It covers the whole board (65×30 mm), so every free GPIO is hidden** — no sensor or camera can be added (see [09-light-audio-input.md](09-light-audio-input.md) §7) |
 | B: 2.4–3.5" SPI panel (ILI9341 / ST7789) | 2.4–3.5" | Addresses and amounts are easier to take in at a glance | Not a HAT form factor, so jumper wiring is needed and the enclosure STL must be custom |
-| **C: same 1.3" 240×240 panel as a module + separate buttons** | 1.3" / 240×240 | **The same panel and the same ST7789 driver**, so the screen design and the firmware's display layer are unchanged. A module with a 0.1" header is wired with jumpers (no soldering) and **leaves the rest of the 40-pin header reachable**, which is what a camera or light sensor needs. Cheaper than the HAT | The joystick is gone, so the UI simplifies to about three buttons; the enclosure must be redrawn around the module |
-| D: connectorised display (Grove / STEMMA QT) | 0.96–1.14" | One cable, no soldering at all | Small (128×64 or 135×240) and I²C refresh rate is a question mark for animated QR output |
-| E: 1.3" HAT + confirmation on the host side | — | Minimal implementation | Requires trusting the host, which violates principle 2 (not recommended) |
+| **C: Adafruit Mini PiTFT 135×240 (#4393) — CHOSEN** | 1.14" / **240×135** | Covers only 38.6×24.5 mm of the 65×30 mm board, so the rest of the 40-pin header stays reachable. Uses SPI plus a few control pins (~8-9), and brings **two tactile buttons** and a **Qwiic/STEMMA QT (I2C) port** for sensors. Pre-assembled, $9.95, ~15 FPS (fine for animated QR). Same ST7789 controller as before | **The resolution is 240×135, not 240×240**, so the screen layout has to be redesigned for half the height |
+| D: same 1.3" 240×240 panel as a module + separate buttons | 1.3" / 240×240 | **The same panel and the same ST7789 driver**, so the screen design and the firmware's display layer are unchanged. A module with a 0.1" header is wired with jumpers (no soldering) and **leaves the rest of the 40-pin header reachable**, which is what a camera or light sensor needs. Cheaper than the HAT | The joystick is gone, so the UI simplifies to about three buttons; the enclosure must be redrawn around the module |
+| E: connectorised display (Grove / STEMMA QT) | 0.96–1.14" | One cable, no soldering at all | Small (128×64 or 135×240) and I²C refresh rate is a question mark for animated QR output |
+| F: 1.3" HAT + confirmation on the host side | — | Minimal implementation | Requires trusting the host, which violates principle 2 (not recommended) |
 
-Implement with A first, and move to B if the UX proves painful. Female-to-female jumpers can do the wiring, so B also requires no soldering.
+**C is the choice**: it is the only option that keeps enough of the 40-pin header reachable for a camera or a
+light sensor while still being a single pre-assembled board that plugs in. Jumpers do the wiring, so no
+soldering is needed. Option B (a bigger panel) remains the answer if the 135 px height proves too cramped
+in use, and option D is the fallback if a square 240×240 screen becomes essential.
 
-**Note on option C**: if a camera or a light sensor is wanted later, C is the cheapest way to make room for
+**Note on the chosen display (#4393)**:
+
+The square 240×240 version of the same family (Adafruit 4484) would have needed no screen-layout
+change at all, but it is hard to obtain in Japan, so **the 240×135 #4393 was chosen instead**. That
+means the screen layout must be reworked for a 135 px tall panel (13 text lines at the 8x8 font,
+against 26 before); the safety requirement that every error screen states in red that *no signature
+was made* applies unchanged at the smaller size. The exact GPIOs the module uses for SPI, the two
+buttons and the backlight have to be confirmed against Adafruit's guide when ordering.
+
+**Note on option C form factors**: if a camera or a light sensor is wanted later, C is the cheapest way to make room for
 it. The concrete parts seen while looking into this: the [Waveshare Pico LCD 1.3](https://www.waveshare.net/shop/Pico-LCD-1.3.htm)
 module (240×240, SPI, the same panel as the HAT) and connectorised buttons such as
 [Grove – Button](https://www.taiwaniot.com.tw/product/grove-button-%e6%8c%89%e9%88%95%e6%8e%a7%e5%88%b6%e5%99%a8%e6%94%af%e6%8f%b4arduino%e8%88%87%e6%a8%b9%e8%8e%93%e6%b4%be/) with
