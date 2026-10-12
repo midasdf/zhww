@@ -159,7 +159,7 @@ Exact pinouts and stock have to be confirmed against the vendor's wiki when orde
 been bought or measured yet.
 
 
-### 4c. Build recipes (pick one; "easy to assemble" comes first)
+### 2.5 Build recipes (pick one; "easy to assemble" comes first)
 
 The project's first promise is that a person can put this together in minutes without soldering.
 Three recipes keep that promise, in order of how little they add. They differ only in the display and
@@ -201,7 +201,7 @@ firmware. A light receiver or camera is an optional extra, documented in
 measured, and whether the Grove shield's female headers can coexist with the chosen display has to be
 checked on the real boards.
 
-### 2.5 Camera (deferred — the light receiver was chosen instead)
+### 2.6 Camera (deferred — the light receiver was chosen instead)
 
 The camera was the alternative **input** path. It is **not** being bought: it costs about $25 against
 ¥300–600 for the light receiver, and the light path reuses the same payload (UR strings) and the same
@@ -229,7 +229,7 @@ and its two buttons use roughly nine, so the 28 GPIOs are not a constraint.
 **Unconfirmed**: exact pin assignments, whether each module ships with a header soldered (the no-soldering
 rule), and Japanese stock. Nothing here has been bought or measured.
 
-### 2.6 GPIO header
+### 2.7 GPIO header
 
 **The Pi Zero 2 WH comes with the header pre-installed, so this step itself is unnecessary** (just plug it in).
 Only when using a Pi Zero 2 W / 1.3 does one of the following become necessary.
@@ -238,7 +238,7 @@ Only when using a Pi Zero 2 W / 1.3 does one of the following become necessary.
 - **Soldering**: reliable, but requires tools and skill (not recommended by this project)
 
 
-### 2.7 Power options (dry cells / LiPo / USB)
+### 2.8 Power options (dry cells / LiPo / USB)
 
 **Adopted (decided 2026-10-12): no battery in the device; power is supplied externally over USB.**
 
