@@ -27,6 +27,41 @@ encoding, the key search and the finalization all mesh. The PSBT used for verifi
 expected values are pinned in `tests/vectors/core_psbt.json` (see the explanation in that file for
 the reproduction steps).
 
+## Verified against a local EVM node (anvil)
+
+For EVM the equivalent of the Bitcoin Core check is to make a **real node accept the signed
+transactions**. This was done against `anvil` (Foundry's local EVM node, v1.8.5), which uses the
+standard test mnemonic `test test test test test test test test test test test junk` at
+`m/44'/60'/0'/0/` — exactly the derivation path this firmware uses.
+
+```bash
+anvil --port 8545 --chain-id 31337          # 10 funded accounts, base fee 1 gwei
+cd firmware && zig build
+SIGNED=$(printf '%s' '{"chainId":31337,"nonce":0,"gasPrice":2000000000,"gasLimit":21000,
+  "to":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8","value":1000000000000000000,"data":"0x"}' \
+  | ./zig-out/bin/zhww evm-sign --mnemonic "test test test test test test test test test test test junk")
+curl -s -X POST -H 'Content-Type: application/json' \
+  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_sendRawTransaction\",\"params\":[\"$SIGNED\"]}" \
+  http://127.0.0.1:8545
+```
+
+| Check | Result |
+|---|---|
+| Our derived address vs anvil's account 0 | identical (`0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`) |
+| Legacy (EIP-155) transaction | accepted, mined, receipt `status: 0x1`, `type: 0x0`, gasUsed 21000 |
+| EIP-1559 (type 2) transaction | accepted, mined, receipt `status: 0x1`, `type: 0x2`, gasUsed 21000 |
+| Transaction carrying ERC-20 calldata | accepted, mined, receipt `status: 0x1`, gasUsed 22490 (calldata cost) |
+| Receipt `from` / `to` | our account 0 / the intended recipient, as signed |
+| Tampered signature (one nibble changed) | **rejected** by the node — the recovered sender is an unfunded address, so it cannot spend account 0's funds |
+| Control: the same transaction with the correct signature | accepted |
+
+Independently of the node, `eth-account` recovers the expected sender from all three signed
+transactions (3/3).
+
+This is a local, throwaway chain: it proves that the signature, the RLP encoding and the transaction
+type are accepted by a real EVM implementation. It says nothing about fees or congestion on a public
+network, and nothing has ever been broadcast to a public chain.
+
 ## The result must not change when the optimization mode changes
 
 Integer-overflow and undefined-behaviour checks are enabled in Debug and ReleaseSafe and disabled in
