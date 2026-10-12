@@ -63,6 +63,15 @@ jobs:
           test "$MINE" = "$EXPECTED"
           echo "署名 OK（Bitcoin Core の出力と一致）"
 
+      - name: 表示（show）の確認
+        working-directory: firmware
+        run: |
+          PSBT=$(jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json)
+          OUT=$(printf '%s' "$PSBT" | ./zig-out/bin/zhww show --network regtest 2>/dev/null)
+          echo "$OUT"
+          echo "$OUT" | grep -q '手数料: 10000 sats'
+          echo "show OK（手数料を Core と同じ 10000 sats と表示）"
+
       - name: UR（QR 転送）の往復
         working-directory: firmware
         run: |

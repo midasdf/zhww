@@ -18,6 +18,7 @@ const usage =
     \\
     \\コマンド:
     \\  address    アドレスを表示する
+    \\  show       PSBT の中身を人間可読で表示する（画面の代わり）
     \\  sign       PSBT（base64）に署名する。標準入力から読む
     \\  mnemonic   ダイスの出目から mnemonic を作る（記録の検証用）
     \\  ur         PSBT（base64）を UR（QR 転送用）に変換する
@@ -30,6 +31,10 @@ const usage =
     \\  --path "m/84'/0'/0'/0/0"   派生パス（既定: m/84'/0'/0'/0/0）
     \\  --network mainnet|testnet|signet|regtest （既定: mainnet）
     \\  --kind p2wpkh|p2pkh|p2sh-p2wpkh|p2tr （既定: p2wpkh）
+    \\
+    \\show のオプション:
+    \\  --network mainnet|testnet|signet|regtest （アドレス表示用。既定: mainnet）
+    \\  --mnemonic "..."         渡すとお釣りを判定する（任意）
     \\
     \\sign のオプション:
     \\  --mnemonic "..."           署名に使う mnemonic（必須）
@@ -104,6 +109,10 @@ fn run(init: std.process.Init.Minimal, stdout: anytype) !void {
     }
     if (std.mem.eql(u8, command, "sign")) {
         try commandSign(allocator, args.items[1..], stdout);
+        return;
+    }
+    if (std.mem.eql(u8, command, "show")) {
+        try commandShow(allocator, args.items[1..], stdout);
         return;
     }
     if (std.mem.eql(u8, command, "mnemonic")) {
@@ -317,6 +326,133 @@ fn commandMnemonic(
     }
 
     try stdout.interface.print("{s}\n", .{text});
+}
+
+// ---------------------------------------------------------------- show（表示）
+
+/// PSBT の中身を人間可読で表示する。
+///
+/// 実機の画面が無くても「何に署名しようとしているか」を確認できるようにする。
+/// 署名は行わない（表示だけ）。
+fn commandShow(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdout: anytype,
+) !void {
+    const network = try networkOf(args);
+
+    const input = try readAllStdin(allocator);
+    const trimmed = std.mem.trim(u8, input, " \t\r\n");
+    if (trimmed.len == 0) {
+        stderrPrint("PSBT（base64）を標準入力から渡してください\n", .{});
+        return error.Usage;
+    }
+
+    const decoder = std.base64.standard.Decoder;
+    const raw = try allocator.alloc(u8, try decoder.calcSizeForSlice(trimmed));
+    try decoder.decode(raw, trimmed);
+
+    const psbt = try zhww.btc_psbt.Psbt.parse(allocator, raw);
+    const tx = psbt.unsigned_tx;
+
+    // --- 入力 ---
+    var total_input: u64 = 0;
+    var unknown_value = false;
+    try stdout.interface.print("入力:\n", .{});
+    for (tx.inputs, 0..) |_, i| {
+        const info = try inputInfo(allocator, psbt, i);
+        if (info) |utxo| {
+            total_input += utxo.value;
+            try stdout.interface.print("  {d}: {d} sats", .{ i, utxo.value });
+            var buffer: [90]u8 = undefined;
+            if (try zhww.btc_address.fromScriptPubKey(&buffer, utxo.script_pubkey, network)) |address| {
+                try stdout.interface.print("  {s}", .{address});
+            } else {
+                try stdout.interface.print("  (未対応の script)", .{});
+            }
+        } else {
+            unknown_value = true;
+            try stdout.interface.print("  {d}: 金額不明（UTXO 情報がありません）", .{i});
+        }
+        if (psbt.inputs[i].partial_sigs.len > 0) {
+            try stdout.interface.print("  [署名あり]", .{});
+        }
+        try stdout.interface.print("\n", .{});
+    }
+
+    // --- 出力 ---
+    const change = try changeOutputs(allocator, psbt, args);
+    var total_output: u64 = 0;
+    try stdout.interface.print("出力:\n", .{});
+    for (tx.outputs, 0..) |output, i| {
+        total_output += output.value;
+        try stdout.interface.print("  {d}: {d} sats", .{ i, output.value });
+        var buffer: [90]u8 = undefined;
+        if (try zhww.btc_address.fromScriptPubKey(&buffer, output.script_pubkey, network)) |address| {
+            try stdout.interface.print("  {s}", .{address});
+        } else {
+            try stdout.interface.print("  (未対応の script)", .{});
+        }
+        var is_change = false;
+        for (change) |index| {
+            if (index == i) is_change = true;
+        }
+        try stdout.interface.print("  {s}\n", .{if (is_change) "お釣り" else "送金"});
+    }
+    try stdout.interface.print("出力合計: {d} sats\n", .{total_output});
+
+    // --- 手数料と警告 ---
+    if (unknown_value) {
+        try stdout.interface.print("手数料: 計算できません（入力額が不明）\n", .{});
+        stderrPrint("警告: 入力額が分からないため手数料を確認できません\n", .{});
+    } else if (total_input >= total_output) {
+        const fee = total_input - total_output;
+        try stdout.interface.print(
+            "手数料: {d} sats ({d}.{d:0>2}%)\n",
+            .{ fee, fee * 100 / total_input, (fee * 10000 / total_input) % 100 },
+        );
+        if (fee * 100 > total_input) {
+            stderrPrint("警告: 手数料が入力合計の 1% を超えています\n", .{});
+        }
+    } else {
+        stderrPrint("警告: 出力合計が入力合計を超えています\n", .{});
+    }
+
+    if (change.len == 0 and psbt.outputs.len > 1) {
+        stderrPrint("注意: お釣りを判定できませんでした（--mnemonic を渡すと判定します）\n", .{});
+    }
+    stderrPrint("これは表示のみで、署名は行っていません\n", .{});
+}
+
+/// 入力の UTXO 情報（金額と scriptPubKey）を解決する。分からなければ null。
+fn inputInfo(
+    allocator: std.mem.Allocator,
+    psbt: zhww.btc_psbt.Psbt,
+    index: usize,
+) !?zhww.btc_transaction.TxOut {
+    if (psbt.inputs[index].witness_utxo) |utxo| return utxo;
+    if (psbt.inputs[index].non_witness_utxo) |prev_tx| {
+        const prevout = psbt.unsigned_tx.inputs[index].prevout;
+        const txid = try prev_tx.txid(allocator);
+        if (!std.mem.eql(u8, &txid, &prevout.txid)) return null;
+        for (prev_tx.outputs, 0..) |output, vout| {
+            if (vout == prevout.vout) return output;
+        }
+    }
+    return null;
+}
+
+/// mnemonic が渡されていればお釣りを判定する。
+fn changeOutputs(
+    allocator: std.mem.Allocator,
+    psbt: zhww.btc_psbt.Psbt,
+    args: []const []const u8,
+) ![]const usize {
+    const mnemonic = option(args, "--mnemonic") orelse return &.{};
+    const passphrase = option(args, "--passphrase") orelse "";
+    const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, passphrase);
+    const result = try zhww.btc_sign.sign(allocator, psbt, keys);
+    return result.change_outputs;
 }
 
 fn toHex(bytes: []const u8, out: []u8) []const u8 {

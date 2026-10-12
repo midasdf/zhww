@@ -122,6 +122,10 @@ cat psbt.txt | ./zig-out/bin/zhww sign --mnemonic "…"
 ./zig-out/bin/zhww mnemonic --dice "123456123456…" --words 12
 ./zig-out/bin/zhww mnemonic --dice "…" --words 24 --camera aabbccdd
 
+# 署名の前に「何に署名しようとしているか」を確認する（画面の代わり）
+cat psbt.txt | ./zig-out/bin/zhww show --network regtest --mnemonic "…"
+#   → 入力（金額・アドレス）・出力（送金/お釣り）・手数料を表示する
+
 # PSBT を UR（QR 転送用）にして、1 行 1 パートで表示する
 cat psbt.txt | ./zig-out/bin/zhww ur --fragment 40
 #   → ur:crypto-psbt/1-4/… のように出力される（アニメーション QR の各コマ）

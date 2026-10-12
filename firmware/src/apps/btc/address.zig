@@ -112,6 +112,37 @@ pub fn wif(out: []u8, priv: [32]u8, network: Network, compressed: bool) Error![]
     return base58.checkEncode(out, payload[0..33]);
 }
 
+
+/// scriptPubKey からアドレスを求める（表示用。分からない種類は null）。
+///
+/// 対応: P2PKH / P2SH / P2WPKH / P2WSH / P2TR。
+pub fn fromScriptPubKey(out: []u8, script: []const u8, network: Network) Error!?[]u8 {
+    // P2PKH: 76 a9 14 {20} 88 ac
+    if (script.len == 25 and script[0] == 0x76 and script[1] == 0xa9 and
+        script[2] == 0x14 and script[23] == 0x88 and script[24] == 0xac)
+    {
+        const payload = [_]u8{network.p2pkhPrefix()} ++ script[3..23].*;
+        return try base58.checkEncode(out, &payload);
+    }
+    // P2SH: a9 14 {20} 87
+    if (script.len == 23 and script[0] == 0xa9 and script[1] == 0x14 and script[22] == 0x87) {
+        const payload = [_]u8{network.p2shPrefix()} ++ script[2..22].*;
+        return try base58.checkEncode(out, &payload);
+    }
+    // P2WPKH / P2WSH（witness v0）
+    if (script.len == 22 and script[0] == 0x00 and script[1] == 0x14) {
+        return try bech32.encodeSegwit(out, network.hrp(), 0, script[2..22]);
+    }
+    if (script.len == 34 and script[0] == 0x00 and script[1] == 0x20) {
+        return try bech32.encodeSegwit(out, network.hrp(), 0, script[2..34]);
+    }
+    // P2TR（witness v1）
+    if (script.len == 34 and script[0] == 0x51 and script[1] == 0x20) {
+        return try bech32.encodeSegwit(out, network.hrp(), 1, script[2..34]);
+    }
+    return null;
+}
+
 // ---------------------------------------------------------------- テスト
 
 const testing = std.testing;
@@ -153,4 +184,42 @@ test "WIF の圧縮・非圧縮" {
 
     const uncompressed = try wif(&buf, priv, .testnet, false);
     try testing.expectEqual(@as(u8, '9'), uncompressed[0]);
+}
+
+test "scriptPubKey からアドレスを復元する（公式ベクタの scriptPubKey）" {
+    var buf: [90]u8 = undefined;
+
+    // BIP84 テストベクタの P2WPKH
+    var wpkh: [22]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&wpkh, "0014c0cebcd6c3d3ca8c75dc5ec62ebe55330ef910e2");
+    try testing.expectEqualStrings(
+        "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu",
+        (try fromScriptPubKey(&buf, &wpkh, .mainnet)).?,
+    );
+
+    // BIP86 テストベクタの P2TR
+    var tr: [34]u8 = undefined;
+    _ = try std.fmt.hexToBytes(
+        &tr,
+        "5120a60869f0dbcf1dc659c9cecbaf8050135ea9e8cdc487053f1dc6880949dc684c",
+    );
+    try testing.expectEqualStrings(
+        "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr",
+        (try fromScriptPubKey(&buf, &tr, .mainnet)).?,
+    );
+
+    // BIP49 テストベクタの P2SH（testnet）
+    var sh: [23]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&sh, "a914336caa13e08b96080a32b5d818d59b4ab3b3674287");
+    try testing.expectEqualStrings(
+        "2Mww8dCYPUpKHofjgcXcBCEGmniw9CoaiD2",
+        (try fromScriptPubKey(&buf, &sh, .testnet)).?,
+    );
+
+    // P2WSH と、対応しないスクリプト
+    var wsh: [34]u8 = @splat(0x22);
+    wsh[0] = 0x00;
+    wsh[1] = 0x20;
+    try testing.expect((try fromScriptPubKey(&buf, &wsh, .mainnet)) != null);
+    try testing.expect((try fromScriptPubKey(&buf, &[_]u8{0x6a}, .mainnet)) == null);
 }
