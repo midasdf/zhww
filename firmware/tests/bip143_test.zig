@@ -184,3 +184,101 @@ test "BIP143: 署名済みトランザクションを完全に再現する" {
     const expected_signed = try hexAlloc(allocator, root.get("signed_tx").?.string);
     try testing.expectEqualSlices(u8, expected_signed, serialized);
 }
+
+test "BIP143: PSBT 経由で署名しても公式ベクタの署名と一致する" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, vectors, .{});
+    const root = parsed.value.object;
+
+    const unsigned_tx = try hexAlloc(allocator, root.get("unsigned_tx").?.string);
+    const input0 = root.get("input0").?.object;
+    const input1 = root.get("input1").?.object;
+
+    var priv0: [32]u8 = undefined;
+    _ = try hexTo(&priv0, input0.get("private_key").?.string);
+    var pub0: [33]u8 = undefined;
+    _ = try hexTo(&pub0, input0.get("prevout_script_pubkey").?.string[2..68]);
+    var priv1: [32]u8 = undefined;
+    _ = try hexTo(&priv1, input1.get("private_key").?.string);
+    var pub1: [33]u8 = undefined;
+    _ = try hexTo(&pub1, input1.get("public_key").?.string);
+
+    // --- PSBT を組み立てる（input 1 にだけ witness_utxo を与える）---
+    var bytes = std.ArrayList(u8).empty;
+    defer bytes.deinit(allocator);
+    try bytes.appendSlice(allocator, &zhww.btc_psbt.magic);
+    try bytes.append(allocator, 1); // keylen
+    try bytes.append(allocator, 0x00); // PSBT_GLOBAL_UNSIGNED_TX
+    try zhww.btc_transaction.writeVarInt(&bytes, allocator, unsigned_tx.len);
+    try bytes.appendSlice(allocator, unsigned_tx);
+    try bytes.append(allocator, 0); // グローバルマップ終端
+
+    try bytes.append(allocator, 0); // input 0 のマップ（空）
+
+    var utxo = std.ArrayList(u8).empty;
+    defer utxo.deinit(allocator);
+    var value_le: [8]u8 = undefined;
+    std.mem.writeInt(u64, &value_le, @intCast(input1.get("value_sats").?.integer), .little);
+    try utxo.appendSlice(allocator, &value_le);
+    var script1: [22]u8 = undefined;
+    _ = try hexTo(&script1, "00141d0f172a0ecb48aee1be1f2687d2963ae33f71a1");
+    try zhww.btc_transaction.writeVarBytes(&utxo, allocator, &script1);
+    try bytes.append(allocator, 1); // keylen
+    try bytes.append(allocator, 0x01); // PSBT_IN_WITNESS_UTXO
+    try zhww.btc_transaction.writeVarInt(&bytes, allocator, utxo.items.len);
+    try bytes.appendSlice(allocator, utxo.items);
+    try bytes.append(allocator, 0); // input 1 のマップ終端
+
+    try bytes.append(allocator, 0); // output 0 のマップ（空）
+    try bytes.append(allocator, 0); // output 1 のマップ（空）
+
+    const psbt = try zhww.btc_psbt.Psbt.parse(allocator, bytes.items);
+
+    // --- 生の鍵を渡して署名する ---
+    const raw_keys = [_]zhww.btc_sign.KeySource.RawKey{
+        .{ .private_key = priv0, .public_key = pub0 },
+        .{ .private_key = priv1, .public_key = pub1 },
+    };
+    const keys = zhww.btc_sign.KeySource.fromRawKeys(&raw_keys);
+    const result = try zhww.btc_sign.sign(allocator, psbt, keys);
+
+    // input 1 のみ署名できる（input 0 は UTXO 情報が無いので署名しない）
+    try testing.expectEqual(@as(usize, 1), result.partial_sigs.len);
+    try testing.expectEqual(@as(usize, 1), result.partial_sigs[0].index);
+    try testing.expectEqualSlices(u8, &pub1, &result.partial_sigs[0].pubkey);
+
+    // 署名が公式ベクタと**バイト単位で一致**する
+    var expected_signature: [128]u8 = undefined;
+    const expected = try hexTo(&expected_signature, root.get("signature_input1").?.string);
+    try testing.expectEqualSlices(u8, expected, result.partial_sigs[0].signature);
+
+    // 署名できなかった入力を正しく報告する
+    try testing.expectEqual(@as(usize, 1), result.unsigned_inputs.len);
+    try testing.expectEqual(@as(usize, 0), result.unsigned_inputs[0]);
+    try testing.expect(result.final_tx == null);
+
+    // 入力額が 1 つでも不明なら手数料を計算しない
+    try testing.expect(result.fee == null);
+    try testing.expectEqual(@as(u64, 335_790_000), result.total_output);
+
+    // --- 署名済み PSBT を書き出し、読み直しても署名が残っていること ---
+    const sigs = try allocator.alloc([]const zhww.btc_psbt.PartialSig, psbt.inputs.len);
+    for (sigs) |*slot| slot.* = &.{};
+    for (result.partial_sigs) |partial| {
+        const one = try allocator.alloc(zhww.btc_psbt.PartialSig, 1);
+        one[0] = .{ .pubkey = &partial.pubkey, .signature = partial.signature };
+        sigs[partial.index] = one;
+    }
+    const signed_psbt = try zhww.btc_psbt.Psbt.serialize(allocator, psbt, sigs);
+    try testing.expect(signed_psbt.len > bytes.items.len);
+
+    const reparsed = try zhww.btc_psbt.Psbt.parse(allocator, signed_psbt);
+    try testing.expectEqual(@as(usize, 1), reparsed.inputs[1].partial_sigs.len);
+    try testing.expectEqualSlices(u8, &pub1, reparsed.inputs[1].partial_sigs[0].pubkey);
+    try testing.expectEqualSlices(u8, expected, reparsed.inputs[1].partial_sigs[0].signature);
+    // 署名していない入力には partial sig が付かない
+    try testing.expectEqual(@as(usize, 0), reparsed.inputs[0].partial_sigs.len);
+}

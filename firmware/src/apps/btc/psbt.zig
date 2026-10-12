@@ -91,6 +91,11 @@ pub const Psbt = struct {
     outputs: []Output,
     /// PSBT_GLOBAL_VERSION（未設定なら 0 = PSBTv0）。
     version: u32 = 0,
+    /// 各マップの生バイト列（終端の 0x00 を含まない）。
+    /// 未知のフィールドをそのまま保持して書き戻すために使う。
+    global_raw: []const u8 = &.{},
+    input_raw: []const []const u8 = &.{},
+    output_raw: []const []const u8 = &.{},
 
     pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) Error!Psbt {
         var cursor = Cursor{ .data = bytes };
@@ -98,6 +103,7 @@ pub const Psbt = struct {
         if (!std.mem.eql(u8, header, &magic)) return error.InvalidPsbt;
 
         // --- グローバルマップ ---
+        const global_start = cursor.pos;
         var unsigned_tx: ?transaction.Transaction = null;
         var version: u32 = 0;
 
@@ -143,19 +149,23 @@ pub const Psbt = struct {
 
         // PSBTv0 では unsigned tx が必須
         const tx = unsigned_tx orelse return error.InvalidPsbt;
+        // 終端の 0x00 を除いたマップ本体
+        const global_raw = bytes[global_start .. cursor.pos - 1];
 
         // --- 入力マップ（トランザクションの入力数と一致すること） ---
         const inputs = try allocator.alloc(Input, tx.inputs.len);
+        const input_raw = try allocator.alloc([]const u8, tx.inputs.len);
         for (inputs) |*input| input.* = .{};
-        for (inputs) |*input| {
-            try parseInputMap(allocator, &cursor, input);
+        for (inputs, 0..) |*input, i| {
+            input_raw[i] = try parseInputMap(allocator, &cursor, input);
         }
 
         // --- 出力マップ ---
         const outputs = try allocator.alloc(Output, tx.outputs.len);
+        const output_raw = try allocator.alloc([]const u8, tx.outputs.len);
         for (outputs) |*output| output.* = .{};
-        for (outputs) |*output| {
-            try parseOutputMap(allocator, &cursor, output);
+        for (outputs, 0..) |*output, i| {
+            output_raw[i] = try parseOutputMap(allocator, &cursor, output);
         }
 
         // 余分なデータがあってはならない
@@ -168,9 +178,80 @@ pub const Psbt = struct {
             .inputs = inputs,
             .outputs = outputs,
             .version = version,
+            .global_raw = global_raw,
+            .input_raw = input_raw,
+            .output_raw = output_raw,
         };
     }
+
+    /// 署名済み（または部分署名済み）PSBT を書き出す。
+    ///
+    /// 元のバイト列をそのまま使い、**未知のフィールドも保持する**。
+    /// `sigs_by_input` は入力ごとの追加署名（公開鍵と DER 署名 + sighash タイプ）。
+    /// 同じ公開鍵の partial sig が元のマップに既にある場合は置き換える。
+    pub fn serialize(
+        allocator: std.mem.Allocator,
+        psbt: Psbt,
+        sigs_by_input: []const []const PartialSig,
+    ) Error![]u8 {
+        if (sigs_by_input.len != psbt.inputs.len) return error.InvalidPsbt;
+        if (psbt.input_raw.len != psbt.inputs.len) return error.InvalidPsbt;
+        if (psbt.output_raw.len != psbt.outputs.len) return error.InvalidPsbt;
+
+        var out = std.ArrayList(u8).empty;
+        errdefer out.deinit(allocator);
+
+        try out.appendSlice(allocator, &magic);
+        try out.appendSlice(allocator, psbt.global_raw);
+        try out.append(allocator, 0); // グローバルマップ終端
+
+        for (psbt.input_raw, 0..) |raw, index| {
+            try appendFilteredMap(allocator, &out, raw, sigs_by_input[index]);
+            for (sigs_by_input[index]) |sig| {
+                if (sig.pubkey.len != 33 and sig.pubkey.len != 65) return error.InvalidPsbt;
+                try out.append(allocator, @intCast(1 + sig.pubkey.len));
+                try out.append(allocator, IN_PARTIAL_SIG);
+                try out.appendSlice(allocator, sig.pubkey);
+                try transaction.writeVarInt(&out, allocator, sig.signature.len);
+                try out.appendSlice(allocator, sig.signature);
+            }
+            try out.append(allocator, 0); // 入力マップ終端
+        }
+
+        for (psbt.output_raw) |raw| {
+            try out.appendSlice(allocator, raw);
+            try out.append(allocator, 0); // 出力マップ終端
+        }
+
+        return out.toOwnedSlice(allocator);
+    }
 };
+
+/// 生のマップをコピーする。ただし `new_sigs` に含まれる公開鍵の partial sig は
+/// 取り除く（重複キーを作らないため）。
+fn appendFilteredMap(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayList(u8),
+    raw: []const u8,
+    new_sigs: []const PartialSig,
+) Error!void {
+    var cursor = Cursor{ .data = raw };
+    while (cursor.remaining() > 0) {
+        const field_start = cursor.pos;
+        const key_len = try cursor.readVarInt();
+        const key = try cursor.readBytes(@intCast(key_len));
+        const value_len = try cursor.readVarInt();
+        _ = try cursor.readBytes(@intCast(value_len));
+
+        var skip = false;
+        if (key.len >= 1 and key[0] == IN_PARTIAL_SIG) {
+            for (new_sigs) |sig| {
+                if (std.mem.eql(u8, key[1..], sig.pubkey)) skip = true;
+            }
+        }
+        if (!skip) try out.appendSlice(allocator, raw[field_start..cursor.pos]);
+    }
+}
 
 fn parseUnsignedTx(
     allocator: std.mem.Allocator,
@@ -192,7 +273,8 @@ fn parseInputMap(
     allocator: std.mem.Allocator,
     cursor: *Cursor,
     input: *Input,
-) Error!void {
+) Error![]const u8 {
+    const start = cursor.pos;
     var keys = std.ArrayList([]const u8).empty;
     defer keys.deinit(allocator);
     var partial_sigs = std.ArrayList(PartialSig).empty;
@@ -266,13 +348,16 @@ fn parseInputMap(
 
     input.partial_sigs = try partial_sigs.toOwnedSlice(allocator);
     input.bip32_derivations = try derivations.toOwnedSlice(allocator);
+    // 終端の 0x00 を除いたマップ本体
+    return cursor.data[start .. cursor.pos - 1];
 }
 
 fn parseOutputMap(
     allocator: std.mem.Allocator,
     cursor: *Cursor,
     output: *Output,
-) Error!void {
+) Error![]const u8 {
+    const start = cursor.pos;
     var keys = std.ArrayList([]const u8).empty;
     defer keys.deinit(allocator);
     var derivations = std.ArrayList(Bip32Derivation).empty;
@@ -308,6 +393,8 @@ fn parseOutputMap(
     }
 
     output.bip32_derivations = try derivations.toOwnedSlice(allocator);
+    // 終端の 0x00 を除いたマップ本体
+    return cursor.data[start .. cursor.pos - 1];
 }
 
 fn parseTxOut(cursor: *Cursor) Error!transaction.TxOut {
