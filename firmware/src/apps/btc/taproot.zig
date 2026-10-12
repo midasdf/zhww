@@ -1,17 +1,17 @@
-//! Taproot（BIP341 / BIP86）の鍵パス署名。
+//! Taproot (BIP341 / BIP86) key path signing.
 //!
-//! 参考: https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki
+//! Reference: https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki
 //!       https://github.com/bitcoin/bips/blob/master/bip-0086.mediawiki
 //!
-//! **実装範囲**: 鍵パス（key path）のみ。スクリプトパス（Tapscript）は実装しない
-//! （誤実装のリスクが高いため。[docs/01-requirements.md] でスコープ外としている）。
+//! **Scope**: key path only. The script path (Tapscript) is not implemented
+//! (the risk of getting it wrong is high; [docs/01-requirements.md] puts it out of scope).
 //!
-//! **注意点**
-//! - Taproot の署名対象ハッシュは **単一の SHA256**（`tagged_hash("TapSighash", ...)`）。
-//!   Legacy / BIP143 の二重 SHA256 とは異なる
-//! - 署名に使う鍵は `taproot_tweak_private_key` で tweak 済みにすること（BIP341）
-//! - `SIGHASH_DEFAULT` の署名は 64 バイトで、末尾に sighash タイプを付けない
-//!   （BIP143 の 65 バイトとは異なる）
+//! **Points to watch**
+//! - The Taproot signature hash is a **single SHA256** (`tagged_hash("TapSighash", ...)`).
+//!   It differs from the double SHA256 of Legacy / BIP143
+//! - The key used for signing must already be tweaked with `taproot_tweak_private_key` (BIP341)
+//! - A `SIGHASH_DEFAULT` signature is 64 bytes and carries no sighash type at the end
+//!   (unlike BIP143's 65 bytes)
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;
@@ -19,11 +19,11 @@ const hashes = @import("../../core/crypto/hashes.zig");
 const secp256k1 = @import("../../core/crypto/secp256k1.zig");
 const transaction = @import("transaction.zig");
 
-/// BIP341 の sighash タイプ。`SIGHASH_DEFAULT` は 0 で、署名にタイプを付けない。
+/// BIP341 sighash type. `SIGHASH_DEFAULT` is 0 and adds no type to the signature.
 pub const SIGHASH_DEFAULT: u8 = 0x00;
 pub const SIGHASH_ALL: u8 = 0x01;
 
-/// P2TR の scriptPubKey（`5120{x-only 出力鍵}`）。
+/// P2TR scriptPubKey (`5120{x-only output key}`).
 pub fn scriptPubKey(output_key: [32]u8) [34]u8 {
     var script: [34]u8 = undefined;
     script[0] = 0x51; // OP_1
@@ -32,17 +32,17 @@ pub fn scriptPubKey(output_key: [32]u8) [34]u8 {
     return script;
 }
 
-/// scriptPubKey が P2TR なら x-only 出力鍵を取り出す。
+/// Extract the x-only output key when the scriptPubKey is P2TR.
 pub fn outputKeyFromScript(script: []const u8) ?[32]u8 {
     if (script.len != 34) return null;
     if (script[0] != 0x51 or script[1] != 0x20) return null;
     return script[2..34].*;
 }
 
-/// BIP341 の署名対象ハッシュ（鍵パス、annex なし）。
+/// BIP341 signature hash (key path, no annex).
 ///
-/// `prevouts` は入力と同じ順・同じ数の UTXO 情報（金額と scriptPubKey）が必要。
-/// `SIGHASH_DEFAULT`（および `ALL`）ではすべての入力の情報を使う。
+/// `prevouts` must supply UTXO information (value and scriptPubKey) in the same order and
+/// the same number as the inputs. `SIGHASH_DEFAULT` (and `ALL`) use every input's information.
 pub fn sighashKeyPath(
     allocator: std.mem.Allocator,
     tx: transaction.Transaction,
@@ -51,7 +51,7 @@ pub fn sighashKeyPath(
     sighash_type: u8,
 ) Error![32]u8 {
     if (sighash_type != SIGHASH_DEFAULT and sighash_type != SIGHASH_ALL) {
-        return error.UnsupportedSighash; // NONE / SINGLE は非対応
+        return error.UnsupportedSighash; // NONE / SINGLE are not supported
     }
     if (input_index >= tx.inputs.len) return error.InvalidEncoding;
     if (prevouts.len != tx.inputs.len) return error.InvalidEncoding;
@@ -109,7 +109,7 @@ pub fn sighashKeyPath(
         hashes.Sha256.hash(output_bytes.items, &sha_outputs, .{});
     }
 
-    // 署名対象の組み立て
+    // Assemble the signature target
     var buffer = std.ArrayList(u8).empty;
     defer buffer.deinit(allocator);
 
@@ -129,7 +129,7 @@ pub fn sighashKeyPath(
     try buffer.appendSlice(allocator, &sha_scriptpubkeys);
     try buffer.appendSlice(allocator, &sha_sequences);
     try buffer.appendSlice(allocator, &sha_outputs);
-    try buffer.append(allocator, 0x00); // spend_type（鍵パス・annex なし）
+    try buffer.append(allocator, 0x00); // spend_type (key path, no annex)
     try buffer.appendSlice(allocator, &index);
 
     var digest: [32]u8 = undefined;
@@ -137,9 +137,9 @@ pub fn sighashKeyPath(
     return digest;
 }
 
-/// 鍵パスの署名（64 バイト。`SIGHASH_DEFAULT`）。
+/// Key path signature (64 bytes, `SIGHASH_DEFAULT`).
 ///
-/// `priv` は内部鍵の秘密鍵（tweak 前）。内部で BIP341 の tweak を適用する。
+/// `priv` is the internal key's private key (before tweaking). The BIP341 tweak is applied internally.
 pub fn signKeyPath(
     allocator: std.mem.Allocator,
     tx: transaction.Transaction,
@@ -158,16 +158,16 @@ pub fn signKeyPath(
     return secp256k1.schnorrSign(message, tweaked);
 }
 
-/// 鍵パス署名の witness（64 バイトの署名 1 つだけ）。
+/// Witness for a key path signature (a single 64-byte signature).
 pub fn witnessFrom(signature: [64]u8) [1][]const u8 {
     return .{&signature};
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "P2TR の scriptPubKey と出力鍵の取り出し" {
+test "P2TR scriptPubKey and output key extraction" {
     const output_key: [32]u8 = @splat(0xAB);
     const script = scriptPubKey(output_key);
     try testing.expectEqual(@as(u8, 0x51), script[0]);
@@ -176,12 +176,12 @@ test "P2TR の scriptPubKey と出力鍵の取り出し" {
     try testing.expect(outputKeyFromScript(&[_]u8{ 0x00, 0x14 }) == null);
 }
 
-test "鍵パス署名は BIP340 の検証を通り、決定論的である" {
+test "key path signature passes BIP340 verification and is deterministic" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 適当な 1 入力 1 出力のトランザクション
+    // An arbitrary 1-input 1-output transaction
     var prev_txid: [32]u8 = undefined;
     for (&prev_txid, 0..) |*byte, i| byte.* = @intCast(i + 1);
     const inputs = try allocator.alloc(transaction.TxIn, 1);
@@ -204,7 +204,7 @@ test "鍵パス署名は BIP340 の検証を通り、決定論的である" {
         .has_witness = false,
     };
 
-    // 内部鍵から P2TR の出力鍵を作り、その UTXO を用意する
+    // Derive the P2TR output key from the internal key and prepare its UTXO
     var priv: [32]u8 = @splat(0);
     priv[31] = 0x42;
     const internal = try secp256k1.schnorrPublicKey(priv);
@@ -214,26 +214,26 @@ test "鍵パス署名は BIP340 の検証を通り、決定論的である" {
 
     const signature = try signKeyPath(allocator, tx, 0, prevouts, priv);
 
-    // 署名は output_key に対して検証が通る
+    // The signature verifies against output_key
     const message = try sighashKeyPath(allocator, tx, 0, prevouts, SIGHASH_DEFAULT);
     try testing.expect(try secp256k1.schnorrVerify(signature, message, output_key));
 
-    // 決定論的（同じ入力からは同じ署名）
+    // Deterministic (the same input yields the same signature)
     const again = try signKeyPath(allocator, tx, 0, prevouts, priv);
     try testing.expectEqualSlices(u8, &signature, &again);
 
-    // 改竄した署名は通らない
+    // A tampered signature does not verify
     var broken = signature;
     broken[0] ^= 0x01;
     try testing.expect(!try secp256k1.schnorrVerify(broken, message, output_key));
 
-    // witness は署名 1 つ（65 バイトの sighash タイプ付きではない）
+    // The witness is a single signature (not 65 bytes with a sighash type)
     const witness = witnessFrom(signature);
     try testing.expectEqual(@as(usize, 1), witness.len);
     try testing.expectEqual(@as(usize, 64), witness[0].len);
 }
 
-test "SIGHASH_DEFAULT 以外は非対応（NONE / SINGLE を拒否する）" {
+test "anything but SIGHASH_DEFAULT is unsupported (NONE / SINGLE are rejected)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -266,7 +266,7 @@ test "SIGHASH_DEFAULT 以外は非対応（NONE / SINGLE を拒否する）" {
         error.UnsupportedSighash,
         sighashKeyPath(allocator, tx, 0, prevouts, 0x03), // SIGHASH_SINGLE
     );
-    // 入力数と UTXO 数が合わない場合も拒否する
+    // Also reject a mismatch between the number of inputs and the number of UTXOs
     try testing.expectError(
         error.InvalidEncoding,
         sighashKeyPath(allocator, tx, 0, &.{}, SIGHASH_DEFAULT),

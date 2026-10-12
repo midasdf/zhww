@@ -1,5 +1,5 @@
-//! バイト列を順に読むカーソル。Bitcoin のネットワーク直列化（リトルエンディアン +
-//! CompactSize）を扱う。
+//! A cursor that reads a byte string in order. It handles Bitcoin's network
+//! serialization (little-endian + CompactSize).
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -25,7 +25,7 @@ pub const Cursor = struct {
         return bytes[0];
     }
 
-    /// 消費せずに次の 1 バイトを覗く。
+    /// Peek at the next byte without consuming it.
     pub fn peekU8(self: Cursor) Error!u8 {
         if (self.remaining() < 1) return error.Truncated;
         return self.data[self.pos];
@@ -51,7 +51,7 @@ pub const Cursor = struct {
         return std.mem.readInt(u64, bytes[0..8], .little);
     }
 
-    /// CompactSize（可変長整数）。**非正規な符号化は拒否する**（BIP144 / コンセンサス規則）。
+    /// CompactSize (variable-length integer). **Non-canonical encodings are rejected** (BIP144 / consensus rules).
     pub fn readVarInt(self: *Cursor) Error!u64 {
         const prefix = try self.readU8();
         if (prefix < 0xFD) return prefix;
@@ -71,7 +71,7 @@ pub const Cursor = struct {
         return value;
     }
 
-    /// CompactSize 長のプレフィクス付きバイト列。
+    /// A byte string prefixed with its CompactSize length.
     pub fn readVarBytes(self: *Cursor) Error![]const u8 {
         const length = try self.readVarInt();
         if (length > self.remaining()) return error.Truncated;
@@ -79,11 +79,11 @@ pub const Cursor = struct {
     }
 };
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "リトルエンディアンの読み出し" {
+test "little-endian reads" {
     var cursor = Cursor{ .data = &[_]u8{
         0x01, 0x02, 0x03, 0x04,
         0x05, 0x06, 0x07, 0x08,
@@ -95,23 +95,23 @@ test "リトルエンディアンの読み出し" {
     try testing.expectError(error.Truncated, cursor.readU8());
 }
 
-test "CompactSize の正規形のみ受理する" {
+test "accepts only canonical CompactSize" {
     var single = Cursor{ .data = &[_]u8{0xFC} };
     try testing.expectEqual(@as(u64, 0xFC), try single.readVarInt());
 
     var two = Cursor{ .data = &[_]u8{ 0xFD, 0xFD, 0x00 } };
     try testing.expectEqual(@as(u64, 0xFD), try two.readVarInt());
 
-    // 0xFD で 0xFC を表すのは非正規
+    // Encoding 0xFC as 0xFD is non-canonical
     var non_canonical = Cursor{ .data = &[_]u8{ 0xFD, 0xFC, 0x00 } };
     try testing.expectError(error.InvalidEncoding, non_canonical.readVarInt());
 
-    // 0xFE で 0xFFFF を表すのは非正規
+    // Encoding 0xFFFF as 0xFE is non-canonical
     var non_canonical_4 = Cursor{ .data = &[_]u8{ 0xFE, 0xFF, 0xFF, 0x00, 0x00 } };
     try testing.expectError(error.InvalidEncoding, non_canonical_4.readVarInt());
 }
 
-test "可変長バイト列" {
+test "variable-length byte strings" {
     var cursor = Cursor{ .data = &[_]u8{ 0x03, 0xAA, 0xBB, 0xCC, 0xDD } };
     try testing.expectEqualSlices(u8, &[_]u8{ 0xAA, 0xBB, 0xCC }, try cursor.readVarBytes());
     try testing.expectEqual(@as(u8, 0xDD), try cursor.readU8());

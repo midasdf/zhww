@@ -1,44 +1,44 @@
-//! RLP（Recursive Length Prefix）のエンコードとデコード。
+//! RLP (Recursive Length Prefix) encoding and decoding.
 //!
-//! Ethereum のトランザクション・ブロック・状態トライで使われる直列化形式。
+//! The serialization format used by Ethereum transactions, blocks, and the state trie.
 //!
-//! **設計方針**
-//! - **正準性（canonical）に厳格**。RLP は同じ値に対して複数の表現が存在しうる
-//!   （1 バイト（< 0x80）を長さ付きで書く、長さを最短バイト数で書かない、など）。
-//!   署名対象ハッシュは 1 バイト違えば別のハッシュになるため、非正準な表現は
-//!   すべて error.InvalidEncoding で拒否する。
-//! - 秘密情報を扱わないため、メモリ確保は行わない（出力先は呼び出し側が用意する）。
+//! **Design policy**
+//! - **Strict about canonical form.** RLP allows several encodings of the same value
+//!   (a 1-byte value (< 0x80) written with a length prefix, a length not written in the
+//!   minimum number of bytes, and so on). A signing hash becomes a different hash if a
+//!   single byte differs, so every non-canonical encoding is rejected with error.InvalidEncoding.
+//! - No memory allocation, because no secrets are handled (the caller provides the output).
 //!
-//! 参考: https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp/
-//!       https://github.com/ethereum/tests/blob/develop/RLPTests/rlptest.json
-//!       https://ethereum.github.io/yellowpaper/paper.pdf （付録 B）
+//! References: https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp/
+//!             https://github.com/ethereum/tests/blob/develop/RLPTests/rlptest.json
+//!             https://ethereum.github.io/yellowpaper/paper.pdf (Appendix B)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;
 
-/// デコード時に許す最大ネスト深さ。
+/// Maximum nesting depth allowed when decoding.
 ///
-/// 正規のトランザクションは 3 段程度しかネストしない。深い入力をそのまま
-/// 再帰処理するとスタックを食い潰すため、上限を設けて拒否する。
+/// A normal transaction nests only about three levels deep. Processing deep input
+/// recursively as-is would exhaust the stack, so a limit is imposed and it is rejected.
 pub const max_depth = 16;
 
-/// RLP の長さヘッダの最大バイト数（種別 1 バイト + 長さ 8 バイト）。
-/// 長さヘッダだけを書く一時バッファの大きさとして使える。
+/// Maximum byte length of an RLP length header (1 kind byte + 8 length bytes).
+/// Usable as the size of a temporary buffer that holds only a length header.
 pub const max_header_len = 9;
 
-// ---------------------------------------------------------------- エンコード
+// ---------------------------------------------------------------- encoding
 
-/// 値を表すのに必要な最小バイト数（0 のときは 0）。
+/// Minimum number of bytes needed to represent a value (0 for the value 0).
 fn byteLen(value: usize) usize {
     if (value == 0) return 0;
     return (@bitSizeOf(usize) - @clz(value) + 7) / 8;
 }
 
-/// 長さヘッダを `out` に書く。`offset` はバイト列（0x80）かリスト（0xC0）の種別。
+/// Writes a length header to `out`. `offset` is the kind: byte string (0x80) or list (0xC0).
 ///
-/// 55 以下は 1 バイト（`offset + len`）、それ以上は `offset + 55 + 長さのバイト数` の
-/// 後ろに長さをビッグエンディアンで書く。長さは常に最短バイト数で書く。
+/// For 55 or less, one byte (`offset + len`); above that, `offset + 55 + length byte count`
+/// followed by the length in big-endian. The length always uses the minimum byte count.
 fn encodeLenHeader(out: []u8, payload_len: usize, offset: u8) Error![]u8 {
     if (payload_len < 56) {
         if (out.len < 1) return error.BufferTooSmall;
@@ -55,20 +55,20 @@ fn encodeLenHeader(out: []u8, payload_len: usize, offset: u8) Error![]u8 {
     return out[0 .. 1 + length_bytes];
 }
 
-/// バイト列の RLP ヘッダ（本体を含まない）を `out` に書く。
+/// Writes the RLP header for a byte string (excluding the body) to `out`.
 ///
-/// 返り値が空スライスの場合は「1 バイトかつ < 0x80 はそのまま符号化する」ケースで、
-/// **本体をそのまま出力すればよい**。ハッシュ計算のように本体をコピーせずに
-/// ストリーミングしたい場合に使う。
+/// An empty returned slice means the "a single byte < 0x80 encodes itself" case, where
+/// **the body should simply be emitted as-is**. Use this when streaming without copying
+/// the body, as when computing a hash.
 pub fn encodeBytesHeader(out: []u8, data: []const u8) Error![]u8 {
     if (data.len == 1 and data[0] < 0x80) return out[0..0];
     return encodeLenHeader(out, data.len, 0x80);
 }
 
-/// バイト列をエンコードする。
+/// Encodes a byte string.
 ///
-/// 1 バイトかつ 0x00〜0x7F の場合はそのバイト自身が符号化になる（`0x80` を付けない）。
-/// 空文字列は `0x80`。
+/// For a single byte in 0x00 to 0x7F, that byte is the encoding itself (no `0x80` prefix).
+/// The empty string is `0x80`.
 pub fn encodeBytes(out: []u8, data: []const u8) Error![]u8 {
     const header = try encodeBytesHeader(out, data);
     if (header.len == 0) {
@@ -81,9 +81,9 @@ pub fn encodeBytes(out: []u8, data: []const u8) Error![]u8 {
     return out[0 .. header.len + data.len];
 }
 
-/// 整数をエンコードする（Ethereum の「整数は先頭ゼロを付けないビッグエンディアン」規則）。
+/// Encodes an integer (Ethereum's rule: integers are big-endian with no leading zeros).
 ///
-/// 0 は空文字列 `0x80`、1 バイトに収まる値は長さヘッダを付けない。
+/// 0 is the empty string `0x80`; values that fit in one byte get no length header.
 pub fn encodeUint(out: []u8, value: u256) Error![]u8 {
     if (value == 0) return encodeBytes(out, &.{});
     var buf: [32]u8 = undefined;
@@ -92,59 +92,59 @@ pub fn encodeUint(out: []u8, value: u256) Error![]u8 {
     return encodeBytes(out, buf[leading_zero_bytes..]);
 }
 
-/// リストのヘッダを書く（本体は呼び出し側が `payload_len` バイト書く）。
+/// Writes a list header (the caller writes the `payload_len` bytes of body).
 pub fn encodeListHeader(out: []u8, payload_len: usize) Error![]u8 {
     return encodeLenHeader(out, payload_len, 0xC0);
 }
 
-// ---------------------------------------------------------------- デコード
+// ---------------------------------------------------------------- decoding
 
-/// デコードしたトークン。
+/// A decoded token.
 pub const Item = union(enum) {
-    /// バイト列（整数・アドレス・データなど）。
+    /// A byte string (integer, address, data, and so on).
     bytes: []const u8,
-    /// リストの開始。`payload` はリストの中身全体（ヘッダを含まない）。
+    /// Start of a list. `payload` is the whole list body (header excluded).
     list: []const u8,
-    /// リストの終端。
+    /// End of a list.
     list_end,
 };
 
-/// トークン列を先頭から順に返すイテレータ。
+/// Iterator that returns the token sequence from the start.
 ///
-/// リストは `.list` → 中身 → `.list_end` の順に現れる。入力全体を読み終えると
-/// `null` を返す。読み終えたら必ず `finish()` を呼び、余分なデータや閉じていない
-/// リストがないことを確認する。
+/// A list appears as `.list`, then its body, then `.list_end`. After the whole input has
+/// been read it returns `null`. When done, always call `finish()` to confirm that there is
+/// no leftover data and no unclosed list.
 pub const Iterator = struct {
     data: []const u8,
     pos: usize = 0,
     depth: usize = 0,
-    /// 現在開いている各リストの終端位置。
+    /// End position of each currently open list.
     ends: [max_depth]usize = @splat(0),
 
     pub fn open(data: []const u8) Iterator {
         return .{ .data = data };
     }
 
-    /// 現在の入れ子（最も内側のリスト、無ければ入力全体）の終端。
+    /// End of the current nesting (the innermost list, or the whole input if none).
     fn currentEnd(self: *const Iterator) usize {
         if (self.depth == 0) return self.data.len;
         return self.ends[self.depth - 1];
     }
 
-    /// `start` から `len` バイトを読む範囲を検査して終端を返す。
+    /// Validates the range of `len` bytes starting at `start` and returns its end.
     fn checkedEnd(self: *const Iterator, start: usize, len: usize) Error!usize {
         if (start > self.data.len or len > self.data.len - start) return error.Truncated;
         const end = start + len;
-        // 親リストの終端を越える要素は構造として不正
+        // An element reaching past the end of the parent list is structurally invalid
         if (end > self.currentEnd()) return error.InvalidEncoding;
         return end;
     }
 
-    /// ロング形式の長さ（0xB8〜0xBF / 0xF8〜0xFF）を読む。
+    /// Reads a long-form length (0xB8 to 0xBF / 0xF8 to 0xFF).
     fn readLongLength(self: *const Iterator, length_bytes: usize) Error!usize {
         const start = self.pos + 1;
         if (start + length_bytes > self.data.len) return error.Truncated;
-        // 最短バイト数で書かれていない長さ（先頭バイトが 0）は非正準
+        // A length not written in the minimum number of bytes (leading byte 0) is non-canonical
         if (self.data[start] == 0) return error.InvalidEncoding;
 
         var value: u64 = 0;
@@ -157,7 +157,7 @@ pub const Iterator = struct {
     }
 
     pub fn next(self: *Iterator) Error!?Item {
-        // 開いているリストの終端に到達したら list_end を返す
+        // Return list_end once the end of the open list is reached
         if (self.depth > 0 and self.pos == self.ends[self.depth - 1]) {
             self.depth -= 1;
             return .list_end;
@@ -165,7 +165,7 @@ pub const Iterator = struct {
         if (self.pos >= self.data.len) return null;
 
         const prefix = self.data[self.pos];
-        // 単一バイト（0x00〜0x7F）はそれ自身が符号化
+        // A single byte (0x00 to 0x7F) is its own encoding
         if (prefix < 0x80) {
             const item = self.data[self.pos .. self.pos + 1];
             self.pos += 1;
@@ -173,17 +173,17 @@ pub const Iterator = struct {
         }
 
         switch (prefix) {
-            // ショート文字列: 0x80 + 長さ（0〜55）
+            // Short string: 0x80 + length (0 to 55)
             0x80...0xB7 => {
                 const length = prefix - 0x80;
                 const start = self.pos + 1;
                 const end = try self.checkedEnd(start, length);
-                // 1 バイト（< 0x80）は長さ付きで書いてはならない（非正準）
+                // A single byte (< 0x80) must not be written with a length (non-canonical)
                 if (length == 1 and self.data[start] < 0x80) return error.InvalidEncoding;
                 self.pos = end;
                 return .{ .bytes = self.data[start..end] };
             },
-            // ロング文字列: 0xB7 + 長さのバイト数（1〜8）
+            // Long string: 0xB7 + number of length bytes (1 to 8)
             0xB8...0xBF => {
                 const length = try self.readLongLength(prefix - 0xB7);
                 const start = self.pos + 1 + (prefix - 0xB7);
@@ -191,17 +191,17 @@ pub const Iterator = struct {
                 self.pos = end;
                 return .{ .bytes = self.data[start..end] };
             },
-            // ショートリスト: 0xC0 + ペイロード長（0〜55）
+            // Short list: 0xC0 + payload length (0 to 55)
             0xC0...0xF7 => {
                 const length = prefix - 0xC0;
                 return try self.openList(length);
             },
-            // ロングリスト: 0xF7 + 長さのバイト数（1〜8）
+            // Long list: 0xF7 + number of length bytes (1 to 8)
             0xF8...0xFF => {
                 const length = try self.readLongLength(prefix - 0xF7);
                 return try self.openList(length);
             },
-            // 0x00〜0x7F は上で処理済み
+            // 0x00 to 0x7F was handled above
             else => unreachable,
         }
     }
@@ -220,14 +220,14 @@ pub const Iterator = struct {
         return .{ .list = self.data[start..end] };
     }
 
-    /// 入力全体を矛盾なく読み切ったことを確認する。
+    /// Confirms that the whole input was consumed consistently.
     pub fn finish(self: *const Iterator) Error!void {
         if (self.depth != 0) return error.Truncated;
         if (self.pos != self.data.len) return error.InvalidEncoding;
     }
 };
 
-/// 単一のバイト列（整数・アドレス・データ）としてデコードする。
+/// Decodes as a single byte string (integer, address, data).
 pub fn decodeBytes(data: []const u8) Error![]const u8 {
     var it = Iterator.open(data);
     const first = (try it.next()) orelse return error.Truncated;
@@ -240,7 +240,7 @@ pub fn decodeBytes(data: []const u8) Error![]const u8 {
     return payload;
 }
 
-/// 単一のリストとしてデコードし、ペイロードを返す。
+/// Decodes as a single list and returns the payload.
 pub fn decodeList(data: []const u8) Error![]const u8 {
     var it = Iterator.open(data);
     const first = (try it.next()) orelse return error.Truncated;
@@ -248,20 +248,20 @@ pub fn decodeList(data: []const u8) Error![]const u8 {
         .list => |bytes| bytes,
         else => return error.InvalidEncoding,
     };
-    // 先頭のリストが入力全体を覆っていることを確認する（末尾の余分なデータを拒否）
+    // Confirm that the leading list spans the whole input (reject trailing extra data)
     if (@intFromPtr(payload.ptr) + payload.len != @intFromPtr(data.ptr) + data.len) {
         return error.InvalidEncoding;
     }
-    // 中身をすべて読み、構造が正準であることを確認する
+    // Read all of the body and confirm that the structure is canonical
     while ((try it.next()) != null) {}
     try it.finish();
     return payload;
 }
 
-/// RLP のペイロード（長さヘッダを除いたバイト列）を整数として読む。
+/// Reads an RLP payload (the bytes after the length header) as an integer.
 ///
-/// 先頭にゼロバイトがある表現は非正準なので拒否する（`0x00` の 1 バイトも拒否）。
-/// 空文字列は 0 の正準形として受理する。
+/// A representation with a leading zero byte is non-canonical and rejected (a lone `0x00`
+/// byte is rejected too). The empty string is accepted as the canonical form of 0.
 pub fn decodeUintPayload(payload: []const u8) Error!u256 {
     if (payload.len == 0) return 0;
     if (payload.len > 32) return error.InvalidEncoding;
@@ -272,16 +272,16 @@ pub fn decodeUintPayload(payload: []const u8) Error!u256 {
     return std.mem.readInt(u256, &buf, .big);
 }
 
-/// 単一の整数としてデコードする。
+/// Decodes as a single integer.
 pub fn decodeUint(data: []const u8) Error!u256 {
     return decodeUintPayload(try decodeBytes(data));
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-/// テストの失敗時に差分を読めるよう 16 進文字列に直す。
+/// Converts to a hex string so that test failures can be read as a diff.
 fn toHex(buf: []u8, bytes: []const u8) []const u8 {
     const digits = "0123456789abcdef";
     for (bytes, 0..) |byte, i| {
@@ -296,7 +296,7 @@ fn expectHex(expected: []const u8, actual: []const u8) !void {
     try testing.expectEqualStrings(expected, toHex(&buf, actual));
 }
 
-/// 公式テストベクタの入力をそのまま書けるようにするための値。
+/// Value type that allows the official test vector inputs to be written verbatim.
 const Value = union(enum) {
     bytes: []const u8,
     uint: u256,
@@ -321,13 +321,13 @@ fn encodeValue(out: []u8, value: Value) Error![]u8 {
     }
 }
 
-/// デコードしたトークン列を正準 RLP に組み直す。
+/// Rebuilds a decoded token sequence into canonical RLP.
 ///
-/// イテレータは深さ優先でトークンを返すため、その順に書き出すだけでよい
-/// （リストは「ヘッダ → 中身 → 終端」の順に現れる）。非正準な入力を渡すと、
-/// 組み直した結果が元のバイト列と異なる。したがって「デコード → 再エンコード」
-/// が一致することは、受理した入力が正準形であり、かつイテレータが正しい境界を
-/// 返したことの確認になる。
+/// The iterator returns tokens depth-first, so writing them out in that order is enough
+/// (a list appears as "header -> body -> end"). Given non-canonical input, the rebuilt
+/// result differs from the original bytes. So a matching "decode -> re-encode" confirms
+/// that the accepted input was canonical and that the iterator returned the correct
+/// boundaries.
 fn reencode(out: []u8, it: *Iterator) Error![]u8 {
     var pos: usize = 0;
     while (try it.next()) |item| {
@@ -340,12 +340,12 @@ fn reencode(out: []u8, it: *Iterator) Error![]u8 {
     return out[0..pos];
 }
 
-/// 公式テストベクタ（RLPTests/rlptest.json）。`in` を `input`、`out` を `encoded` に
-/// そのまま写している（16 進文字列は 0x を除いた部分）。
+/// Official test vectors (RLPTests/rlptest.json). `in` is copied verbatim to `input` and
+/// `out` to `encoded` (hex strings are the part without 0x).
 ///
-/// - `bigint`（2^256）は u256 に収まらないため、整数ではなく**その値のビッグエンディアン
-///   表現（33 バイト）**をバイト列として持つ（RLP の整数表現は先頭ゼロを除いた
-///   ビッグエンディアンなので、公式の `out` と同じ比較ができる）
+/// - `bigint` (2^256) does not fit in u256, so it holds not an integer but the
+///   **big-endian representation of that value (33 bytes)** as a byte string (RLP integers
+///   are big-endian without leading zeros, so the official `out` compares the same way)
 const vectors = [_]struct {
     name: []const u8,
     input: Value,
@@ -431,13 +431,13 @@ const vectors = [_]struct {
         .input = .{ .uint = 100000 },
         .encoded = "830186a0",
     },
-    // in = 83729609699884896815286331701780722（15 バイト）
+    // in = 83729609699884896815286331701780722 (15 bytes)
     .{
         .name = "mediumint4",
         .input = .{ .uint = 0x102030405060708090a0b0c0d0e0f2 },
         .encoded = "8f102030405060708090a0b0c0d0e0f2",
     },
-    // in = 105315505618206987246253880190783558935785933862974822347068935681（29 バイト）
+    // in = 105315505618206987246253880190783558935785933862974822347068935681 (29 bytes)
     .{
         .name = "mediumint5",
         .input = .{ .uint = 0x100020003000400050006000700080009000a000b000c000d000e01 },
@@ -488,7 +488,7 @@ const vectors = [_]struct {
         .input = .{ .list = &.{ .{ .list = &.{ .{ .bytes = "key1" }, .{ .bytes = "val1" } } }, .{ .list = &.{ .{ .bytes = "key2" }, .{ .bytes = "val2" } } }, .{ .list = &.{ .{ .bytes = "key3" }, .{ .bytes = "val3" } } }, .{ .list = &.{ .{ .bytes = "key4" }, .{ .bytes = "val4" } } } } },
         .encoded = "ecca846b6579318476616c31ca846b6579328476616c32ca846b6579338476616c33ca846b6579348476616c34",
     },
-    // 公式ベクタの `bigint`: in = 2^256、out = 0xa1 0100...00（33 バイトの整数）
+    // The official vector's `bigint`: in = 2^256, out = 0xa1 0100...00 (a 33-byte integer)
     .{
         .name = "bigint",
         .input = .{ .bytes = "\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" },
@@ -496,21 +496,21 @@ const vectors = [_]struct {
     },
 };
 
-test "公式ベクタ: エンコード" {
+test "official vectors: encoding" {
     var buf: [4096]u8 = undefined;
     for (vectors) |vector| {
         const encoded = encodeValue(&buf, vector.input) catch |err| {
-            std.debug.print("ベクタ {s}: エンコードに失敗 ({s})\n", .{ vector.name, @errorName(err) });
+            std.debug.print("vector {s}: encoding failed ({s})\n", .{ vector.name, @errorName(err) });
             return err;
         };
         expectHex(vector.encoded, encoded) catch |err| {
-            std.debug.print("ベクタ {s}: 公式の `out` と一致しない\n", .{vector.name});
+            std.debug.print("vector {s}: does not match the official `out`\n", .{vector.name});
             return err;
         };
     }
 }
 
-test "公式ベクタ: デコード（正準形の往復）" {
+test "official vectors: decoding (canonical round trip)" {
     var encoded_buf: [4096]u8 = undefined;
     var decoded_buf: [4096]u8 = undefined;
     var payload_buf: [4096]u8 = undefined;
@@ -518,27 +518,27 @@ test "公式ベクタ: デコード（正準形の往復）" {
     for (vectors) |vector| {
         const encoded = try encodeValue(&encoded_buf, vector.input);
 
-        // 1) バイト列ベクタは decodeBytes で入力そのものが戻る
-        // 2) 整数ベクタは decodeUint が元の値になる
-        // 3) リストベクタは decodeList がヘッダを除いた長さを返す
+        // 1) For byte string vectors, decodeBytes returns the input itself
+        // 2) For integer vectors, decodeUint returns the original value
+        // 3) For list vectors, decodeList returns the length without the header
         switch (vector.input) {
             .bytes => |bytes| {
                 const decoded = decodeBytes(encoded) catch |err| {
-                    std.debug.print("ベクタ {s}: decodeBytes 失敗 ({s})\n", .{ vector.name, @errorName(err) });
+                    std.debug.print("vector {s}: decodeBytes failed ({s})\n", .{ vector.name, @errorName(err) });
                     return err;
                 };
                 try testing.expectEqualSlices(u8, bytes, decoded);
             },
             .uint => |number| {
                 const decoded = decodeUint(encoded) catch |err| {
-                    std.debug.print("ベクタ {s}: decodeUint 失敗 ({s})\n", .{ vector.name, @errorName(err) });
+                    std.debug.print("vector {s}: decodeUint failed ({s})\n", .{ vector.name, @errorName(err) });
                     return err;
                 };
                 try testing.expectEqual(number, decoded);
             },
             .list => |items| {
                 const payload = decodeList(encoded) catch |err| {
-                    std.debug.print("ベクタ {s}: decodeList 失敗 ({s})\n", .{ vector.name, @errorName(err) });
+                    std.debug.print("vector {s}: decodeList failed ({s})\n", .{ vector.name, @errorName(err) });
                     return err;
                 };
                 var payload_len: usize = 0;
@@ -549,27 +549,27 @@ test "公式ベクタ: デコード（正準形の往復）" {
             },
         }
 
-        // 4) トークン列を読み切って組み直すと元のバイト列に戻る
+        // 4) Reading the whole token sequence and rebuilding it restores the original bytes
         var it = Iterator.open(encoded);
         const reencoded = reencode(&decoded_buf, &it) catch |err| {
-            std.debug.print("ベクタ {s}: 再エンコード失敗 ({s})\n", .{ vector.name, @errorName(err) });
+            std.debug.print("vector {s}: re-encode failed ({s})\n", .{ vector.name, @errorName(err) });
             return err;
         };
         try testing.expectEqualSlices(u8, encoded, reencoded);
 
-        // 5) 最後まで読み切れること（余分なデータや閉じていないリストがないこと）
+        // 5) The input reads to the end (no leftover data and no unclosed list)
         var walk = Iterator.open(encoded);
         while ((try walk.next()) != null) {}
         try walk.finish();
     }
 }
 
-test "非正準な表現を拒否する" {
-    // 1 バイト（< 0x80）を長さ付きで書いている
+test "rejects non-canonical encodings" {
+    // A single byte (< 0x80) written with a length
     try testing.expectError(error.InvalidEncoding, decodeBytes(&[_]u8{ 0x81, 0x7f }));
     try testing.expectError(error.InvalidEncoding, decodeBytes(&[_]u8{ 0x81, 0x00 }));
 
-    // 55 バイト以下をロング形式（0xB8）で書いている
+    // 55 bytes or less written in long form (0xB8)
     try testing.expectError(error.InvalidEncoding, decodeBytes(&[_]u8{ 0xb8, 0x01, 0x80 }));
     var short_long: [2 + 55]u8 = undefined;
     short_long[0] = 0xb8;
@@ -577,7 +577,7 @@ test "非正準な表現を拒否する" {
     @memset(short_long[2..], 0x41);
     try testing.expectError(error.InvalidEncoding, decodeBytes(&short_long));
 
-    // 長さが最短バイト数で書かれていない（先頭バイトが 0）
+    // The length is not written in the minimum number of bytes (leading byte 0)
     var padded: [3 + 56]u8 = undefined;
     padded[0] = 0xb9;
     padded[1] = 0x00;
@@ -585,11 +585,11 @@ test "非正準な表現を拒否する" {
     @memset(padded[3..], 0x41);
     try testing.expectError(error.InvalidEncoding, decodeBytes(&padded));
 
-    // リストでも同じ規則
+    // The same rule applies to lists
     try testing.expectError(error.InvalidEncoding, decodeList(&[_]u8{ 0xf8, 0x01, 0x80 }));
     try testing.expectError(error.InvalidEncoding, decodeList(&[_]u8{ 0xf9, 0x00, 0x38, 0xc0 }));
 
-    // 整数として非正準（先頭ゼロバイト、33 バイト）
+    // Non-canonical as an integer (leading zero byte, 33 bytes)
     try testing.expectError(error.InvalidEncoding, decodeUint(&[_]u8{0x00}));
     try testing.expectError(error.InvalidEncoding, decodeUint(&[_]u8{ 0x82, 0x00, 0x01 }));
     var too_large: [34]u8 = undefined;
@@ -598,24 +598,24 @@ test "非正準な表現を拒否する" {
     try testing.expectError(error.InvalidEncoding, decodeUint(&too_large));
 }
 
-test "途中で終わっている入力を拒否する" {
-    // 3 バイトと宣言して 2 バイトしかない
+test "rejects truncated input" {
+    // Declares 3 bytes but has only 2
     try testing.expectError(error.Truncated, decodeBytes(&[_]u8{ 0x83, 0x61, 0x62 }));
-    // 長さのバイト数が足りない
+    // Not enough length bytes
     try testing.expectError(error.Truncated, decodeBytes(&[_]u8{ 0xb9, 0x01 }));
-    // リストのペイロードが足りない
+    // The list payload is short
     try testing.expectError(error.Truncated, decodeList(&[_]u8{ 0xc2, 0x80 }));
     try testing.expectError(error.Truncated, decodeList(&[_]u8{ 0xf8, 0x40, 0xc0 }));
-    // 空入力
+    // Empty input
     try testing.expectError(error.Truncated, decodeBytes(&[_]u8{}));
     try testing.expectError(error.Truncated, decodeList(&[_]u8{}));
 }
 
-test "リストの境界を越える入力を拒否する" {
-    // 親リスト（ペイロード 1 バイト）の中に、親より長い子リストを置いている
+test "rejects input that crosses list boundaries" {
+    // A child list longer than its parent is placed inside a parent list (1-byte payload)
     try testing.expectError(error.InvalidEncoding, decodeList(&[_]u8{ 0xc1, 0xc2, 0x80, 0x80 }));
 
-    // 正しい入れ子（親の終端と子の終端が一致）は受理する: [ [ [ "" ] ] ]
+    // Correct nesting (parent and child ends coincide) is accepted: [ [ [ "" ] ] ]
     var it = Iterator.open(&[_]u8{ 0xc3, 0xc2, 0xc1, 0x80 });
     try testing.expectEqual(Item.list, std.meta.activeTag((try it.next()).?));
     try testing.expectEqual(Item.list, std.meta.activeTag((try it.next()).?));
@@ -628,8 +628,8 @@ test "リストの境界を越える入力を拒否する" {
     try it.finish();
 }
 
-test "ネストが深すぎる入力を拒否する" {
-    // 各レベルが「残り全部」をペイロードに持つリスト（深さ = 配列長 - 1）
+test "rejects input that is nested too deeply" {
+    // Each level is a list whose payload is "all the rest" (depth = array length - 1)
     var ok: [max_depth + 1]u8 = undefined;
     for (0..ok.len - 1) |i| ok[i] = 0xc0 + @as(u8, @intCast(ok.len - 1 - i));
     ok[ok.len - 1] = 0x80;
@@ -641,12 +641,12 @@ test "ネストが深すぎる入力を拒否する" {
     try testing.expectError(error.InvalidEncoding, decodeList(&too_deep));
 }
 
-test "余分なデータを拒否する" {
+test "rejects extra data" {
     try testing.expectError(error.InvalidEncoding, decodeBytes(&[_]u8{ 0x80, 0x80 }));
     try testing.expectError(error.InvalidEncoding, decodeList(&[_]u8{ 0xc0, 0x80 }));
 }
 
-test "整数の境界（0、1 バイト、55/56 バイト境界）" {
+test "integer boundaries (0, 1 byte, the 55/56 byte boundary)" {
     var buf: [64]u8 = undefined;
     var expected: [64]u8 = undefined;
     var hex_buf: [256]u8 = undefined;
@@ -660,18 +660,18 @@ test "整数の境界（0、1 バイト、55/56 バイト境界）" {
         try encodeUint(&buf, std.math.maxInt(u256)),
     );
 
-    // 1 バイトの 0x80 には長さヘッダが付く（0x80 単体は空文字列）
+    // A single 0x80 byte gets a length header (0x80 alone is the empty string)
     try expectHex("8180", try encodeBytes(&buf, &[_]u8{0x80}));
     try expectHex("80", try encodeBytes(&buf, &.{}));
 
-    // 55 バイトはショート形式（0xB7 = 0x80 + 55）
+    // 55 bytes uses short form (0xB7 = 0x80 + 55)
     var data: [56]u8 = undefined;
     @memset(&data, 0xaa);
     expected[0] = 0xb7;
     @memset(expected[1..56], 0xaa);
     try expectHex(toHex(&hex_buf, expected[0..56]), try encodeBytes(&buf, data[0..55]));
 
-    // 56 バイトはロング形式（0xB8 + 長さ 1 バイト 0x38 = 56）
+    // 56 bytes uses long form (0xB8 + one length byte 0x38 = 56)
     expected[0] = 0xb8;
     expected[1] = 56;
     @memset(expected[2..58], 0xaa);

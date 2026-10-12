@@ -1,37 +1,38 @@
-//! 共通のエラー型。
+//! Shared error type.
 //!
-//! 方針: 解析・検証の失敗はすべてエラーで通知し、署名フローはエラーを捕捉したら
-//! **署名せずに理由を画面表示する**。エラーを握りつぶして処理を続行してはならない。
+//! Policy: every parse/validation failure is reported as an error, and when the signing flow
+//! catches an error it **shows the reason on screen without signing**. Never swallow an error
+//! and carry on regardless.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 pub const Error = error{
-    /// Base58 / Bech32 などの書式が不正
+    /// Invalid format such as Base58 / Bech32
     InvalidEncoding,
-    /// チェックサム不一致
+    /// Checksum mismatch
     ChecksumMismatch,
-    /// BIP39 mnemonic として不正（語数・語彙・チェックサム）
+    /// Not a valid BIP39 mnemonic (word count, vocabulary, checksum)
     InvalidMnemonic,
-    /// 派生パスの書式が不正
+    /// Invalid derivation path format
     InvalidPath,
-    /// 鍵として不正（範囲外・無限遠点など）
+    /// Invalid key (out of range, point at infinity, etc.)
     InvalidKey,
-    /// BIP32 の派生で無効な tweak（仕様により次の index へ進む）
+    /// Invalid tweak during BIP32 derivation (the spec says to move on to the next index)
     InvalidTweak,
-    /// 出力バッファが足りない
+    /// Output buffer is too small
     BufferTooSmall,
-    /// 正規化（NFKD）が必要な非 ASCII 入力。v0.1 では未対応
+    /// Non-ASCII input that would need normalization (NFKD). Unsupported in v0.1
     UnsupportedNormalization,
-    /// 入力データが途中で終わっている
+    /// Input data ends prematurely
     Truncated,
-    /// PSBT の構造・検証エラー（重複キー、マップ数の不一致など）
+    /// PSBT structure/validation error (duplicate keys, map count mismatch, etc.)
     InvalidPsbt,
-    /// 未対応の sighash タイプ（NONE / SINGLE は安全性のため非対応）
+    /// Unsupported sighash type (NONE / SINGLE are unsupported for safety)
     UnsupportedSighash,
-    /// 署名に使える鍵が見つからない
+    /// No key available for signing was found
     NoMatchingKey,
-    /// 署名の検証に失敗した
+    /// Signature verification failed
     SignatureInvalid,
-    /// メモリ確保に失敗した（解析層のみ。鍵を扱うコア処理では発生しない）
+    /// Memory allocation failed (parsing layer only; never happens in key-handling core code)
     OutOfMemory,
 };
 

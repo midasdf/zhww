@@ -1,21 +1,21 @@
 const std = @import("std");
 
-/// zhww ファームウェアのビルド定義。
+/// Build definition for the zhww firmware.
 ///
-/// 依存:
-///   - libsecp256k1（pkg-config か標準のライブラリ検索パスから解決）
+/// Dependencies:
+///   - libsecp256k1 (resolved through pkg-config or the standard library search path)
 ///     macOS:  brew install secp256k1
 ///     Debian: apt install libsecp256k1-dev
 ///
-/// 使い方:
-///   zig build test     テスト（公式テストベクタを含む）
-///   zig build          開発用 CLI を zig-out/bin/zhww に生成
+/// Usage:
+///   zig build test     tests (including the official test vectors)
+///   zig build          build the development CLI into zig-out/bin/zhww
 ///   zig build run -- addr --mnemonic "..." --path "m/84'/0'/0'/0/0"
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // コアライブラリ（チェーン非依存 + アプリ）
+    // Core library (chain-independent + apps)
     const lib = b.addModule("zhww", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -23,9 +23,9 @@ pub fn build(b: *std.Build) void {
     });
     linkSecp256k1(lib);
 
-    const pico_step = b.step("pico", "Pico 系（RP2040 / RP2350）向けにコアをコンパイルできるか確認する");
+    const pico_step = b.step("pico", "Check that the core compiles for the Pico family (RP2040 / RP2350)");
 
-    // 開発用 CLI（実機に画面 UI を作る前の確認手段）
+    // Development CLI (a way to check things before building the on-device screen UI)
     const cli_module = b.createModule(.{
         .root_source_file = b.path("src/cli/main.zig"),
         .target = target,
@@ -42,16 +42,16 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    // 注意: Zig 0.17 ではビルド経由で引数を渡す仕組み（旧 b.args）が無いため、
-    // 引数付きで使う場合は生成物を直接実行する:
+    // Note: Zig 0.17 has no way to pass arguments through the build (the old b.args),
+    // so to use arguments, run the built artifact directly:
     //   ./zig-out/bin/zhww address --mnemonic "..." --path "m/84'/0'/0'/0/0"
-    const run_step = b.step("run", "開発用 CLI を実行する（引数は生成物に直接渡すこと）");
+    const run_step = b.step("run", "Run the development CLI (pass arguments directly to the built artifact)");
     run_step.dependOn(&run_cmd.step);
 
-    // Pico 系（ベアメタル）でコアがコンパイルできるかの確認
+    // Check that the core compiles for the Pico family (bare metal)
     //
-    // Linux を前提にしない RP2040 / RP2350 へ移植できるかを見るためのステップ。
-    // 実行はしない（オブジェクトができることだけを確認する）。
+    // A step to see whether the code can be ported to RP2040 / RP2350 without assuming Linux.
+    // It is not run (we only check that an object file can be produced).
     inline for (.{
         .{ "pico_rp2040", &std.Target.arm.cpu.cortex_m0plus },
         .{ "pico_rp2350", &std.Target.arm.cpu.cortex_m33 },
@@ -62,8 +62,8 @@ pub fn build(b: *std.Build) void {
             .cpu_model = .{ .explicit = config[1] },
         });
 
-        // libsecp256k1 はホスト用をリンクしない（ターゲット向けのビルドは移植作業の一部）。
-        // ここでは「Zig のコアがこのターゲットでコンパイルできるか」だけを見る。
+        // We do not link the host libsecp256k1 (building it for the target is part of the porting work).
+        // Here we only check whether the Zig core compiles for this target.
         const pico_core = b.createModule(.{
             .root_source_file = b.path("src/root.zig"),
             .target = pico_target,
@@ -80,7 +80,7 @@ pub fn build(b: *std.Build) void {
         pico_step.dependOn(&pico_object.step);
     }
 
-    // テスト（tests.zig がコアと公式テストベクタの両方をまとめる）
+    // Tests (tests.zig bundles both the core and the official test vectors)
     const test_module = b.createModule(.{
         .root_source_file = b.path("tests.zig"),
         .target = target,
@@ -92,13 +92,13 @@ pub fn build(b: *std.Build) void {
         .root_module = test_module,
     });
     const run_unit_tests = b.addRunArtifact(unit_tests);
-    const test_step = b.step("test", "テストを実行する");
+    const test_step = b.step("test", "Run the tests");
     test_step.dependOn(&run_unit_tests.step);
 }
 
-/// libsecp256k1 をリンクする。pkg-config が使えれば include/lib を自動解決する。
+/// Link libsecp256k1. If pkg-config is available, include/lib paths are resolved automatically.
 fn linkSecp256k1(m: *std.Build.Module) void {
     m.linkSystemLibrary("secp256k1", .{});
-    // C ランタイム（libsecp256k1 が要求する）
+    // C runtime (required by libsecp256k1)
     m.linkSystemLibrary("c", .{});
 }

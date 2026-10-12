@@ -1,21 +1,22 @@
-//! PSBT（BIP174）の解析と検証。
+//! PSBT (BIP174) parsing and validation.
 //!
-//! 参考: https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki
+//! Reference: https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki
 //!
-//! **実装範囲**: PSBTv0（`PSBT_GLOBAL_UNSIGNED_TX` を持つ形式）。
-//! PSBTv2（入力・出力を個別のマップで持つ形式）は未対応で、unsigned tx が無い場合は
-//! `error.InvalidPsbt` とする。
+//! **Scope**: PSBTv0 (the form carrying `PSBT_GLOBAL_UNSIGNED_TX`).
+//! PSBTv2 (which keeps inputs and outputs in separate maps) is not supported, and a
+//! PSBT without an unsigned tx is rejected with `error.InvalidPsbt`.
 //!
-//! **検証方針**: BIP174 の「解析時に拒否すべき」条件だけを実装する。
-//! - マジック `psbt\xff`
-//! - 同じマップ内でのキーの重複
-//! - 型ごとのキー長（例: partial sig の公開鍵は 33 か 65 バイト）
-//! - unsigned tx は witness 無しの直列化で、scriptSig が全て空であること
-//! - 入力マップ・出力マップの数がトランザクションと一致すること
+//! **Validation policy**: implement only the conditions that BIP174 requires us to
+//! reject at parse time.
+//! - the magic `psbt\xff`
+//! - duplicate keys within the same map
+//! - per-type key lengths (e.g. a partial sig public key is 33 or 65 bytes)
+//! - the unsigned tx must be serialized without witness, with every scriptSig empty
+//! - the number of input and output maps must match the transaction
 //!
-//! スクリプトの一致確認（redeemScript が scriptPubKey と一致するか等）は
-//! **署名者の責務**であり、解析時には検証しない（BIP174 のテストベクタでも
-//! 「一致しないが妥当な PSBT」が valid として扱われている）。
+//! Checking that scripts agree (whether redeemScript matches scriptPubKey, etc.) is
+//! the **signer's responsibility** and is not validated at parse time (BIP174's own
+//! test vectors treat a "valid PSBT whose scripts do not match" as valid).
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -24,15 +25,15 @@ const secp256k1 = @import("../../core/crypto/secp256k1.zig");
 const Cursor = @import("cursor.zig").Cursor;
 const transaction = @import("transaction.zig");
 
-/// PSBT のマジックバイト。
+/// PSBT magic bytes.
 pub const magic = [5]u8{ 0x70, 0x73, 0x62, 0x74, 0xff };
 
-// グローバルの型
+// Global types
 const GLOBAL_UNSIGNED_TX: u8 = 0x00;
 const GLOBAL_XPUB: u8 = 0x01;
 const GLOBAL_VERSION: u8 = 0xFB;
 
-// 入力の型
+// Input types
 const IN_NON_WITNESS_UTXO: u8 = 0x00;
 const IN_WITNESS_UTXO: u8 = 0x01;
 const IN_PARTIAL_SIG: u8 = 0x02;
@@ -42,10 +43,10 @@ const IN_WITNESS_SCRIPT: u8 = 0x05;
 const IN_BIP32_DERIVATION: u8 = 0x06;
 const IN_FINAL_SCRIPTSIG: u8 = 0x07;
 const IN_FINAL_SCRIPTWITNESS: u8 = 0x08;
-/// PSBT_IN_TAP_KEY_SIG（Taproot の鍵パス署名。64 バイト）
+/// PSBT_IN_TAP_KEY_SIG (Taproot key path signature, 64 bytes)
 pub const IN_TAP_KEY_SIG: u8 = 0x13;
 
-// 出力の型
+// Output types
 const OUT_REDEEM_SCRIPT: u8 = 0x00;
 const OUT_WITNESS_SCRIPT: u8 = 0x01;
 const OUT_BIP32_DERIVATION: u8 = 0x02;
@@ -58,7 +59,7 @@ pub const PartialSig = struct {
 pub const Bip32Derivation = struct {
     pubkey: []const u8,
     fingerprint: [4]u8,
-    /// hardened ビット付きの派生パス。
+    /// Derivation path with the hardened bits set.
     path: []const u32,
 };
 
@@ -73,11 +74,12 @@ pub const Input = struct {
     final_script_sig: ?[]const u8 = null,
     final_script_witness: ?[]const []const u8 = null,
 
-    /// 署名に使える UTXO 情報（witness_utxo を優先）。
+    /// UTXO information usable for signing (witness_utxo takes precedence).
     pub fn utxo(self: Input) ?transaction.TxOut {
         if (self.witness_utxo) |witness| return witness;
-        // non_witness_utxo から該当する出力を取り出すには prevout が必要なため、
-        // ここでは witness_utxo のみ返す。呼び出し側（署名者）が prevout を使って解決する。
+        // Pulling the matching output out of non_witness_utxo needs the prevout, so
+        // only witness_utxo is returned here; the caller (the signer) resolves it
+        // using the prevout.
         return null;
     }
 };
@@ -92,10 +94,10 @@ pub const Psbt = struct {
     unsigned_tx: transaction.Transaction,
     inputs: []Input,
     outputs: []Output,
-    /// PSBT_GLOBAL_VERSION（未設定なら 0 = PSBTv0）。
+    /// PSBT_GLOBAL_VERSION (0 = PSBTv0 when unset).
     version: u32 = 0,
-    /// 各マップの生バイト列（終端の 0x00 を含まない）。
-    /// 未知のフィールドをそのまま保持して書き戻すために使う。
+    /// Raw bytes of each map (not including the terminating 0x00).
+    /// Used to keep unknown fields verbatim and write them back out.
     global_raw: []const u8 = &.{},
     input_raw: []const []const u8 = &.{},
     output_raw: []const []const u8 = &.{},
@@ -105,7 +107,7 @@ pub const Psbt = struct {
         const header = try cursor.readBytes(magic.len);
         if (!std.mem.eql(u8, header, &magic)) return error.InvalidPsbt;
 
-        // --- グローバルマップ ---
+        // --- global map ---
         const global_start = cursor.pos;
         var unsigned_tx: ?transaction.Transaction = null;
         var version: u32 = 0;
@@ -115,7 +117,7 @@ pub const Psbt = struct {
 
         while (true) {
             const key_len = try cursor.readVarInt();
-            if (key_len == 0) break; // マップ終端
+            if (key_len == 0) break; // end of map
             const key = try cursor.readBytes(@intCast(key_len));
             try checkDuplicate(keys.items, key);
             try keys.append(allocator, key);
@@ -127,16 +129,16 @@ pub const Psbt = struct {
                 GLOBAL_UNSIGNED_TX => {
                     if (key.len != 1) return error.InvalidPsbt;
                     if (unsigned_tx != null) return error.InvalidPsbt;
-                    // Transaction.parse は「余分なバイトが無いこと」まで検証する
+                    // Transaction.parse also verifies that there are no leftover bytes
                     const tx = try parseUnsignedTx(allocator, value);
-                    if (tx.has_witness) return error.InvalidPsbt; // witness 直列化は不可
+                    if (tx.has_witness) return error.InvalidPsbt; // no witness serialization
                     for (tx.inputs) |input| {
                         if (input.script_sig.len != 0) return error.InvalidPsbt;
                     }
                     unsigned_tx = tx;
                 },
                 GLOBAL_XPUB => {
-                    // キーは 1 + 78 バイト（拡張公開鍵）。内容は署名には使わない
+                    // The key is 1 + 78 bytes (an extended public key). Its contents are not used for signing
                     if (key.len != 1 + 78) return error.InvalidPsbt;
                 },
                 GLOBAL_VERSION => {
@@ -145,17 +147,17 @@ pub const Psbt = struct {
                     version = std.mem.readInt(u32, value[0..4], .little);
                 },
                 else => {
-                    // 未知の型は無視する（BIP174 の拡張性の規定）
+                    // Unknown types are ignored (BIP174's extensibility rule)
                 },
             }
         }
 
-        // PSBTv0 では unsigned tx が必須
+        // PSBTv0 requires an unsigned tx
         const tx = unsigned_tx orelse return error.InvalidPsbt;
-        // 終端の 0x00 を除いたマップ本体
+        // Map body, excluding the terminating 0x00
         const global_raw = bytes[global_start .. cursor.pos - 1];
 
-        // --- 入力マップ（トランザクションの入力数と一致すること） ---
+        // --- input maps (must match the transaction's input count) ---
         const inputs = try allocator.alloc(Input, tx.inputs.len);
         const input_raw = try allocator.alloc([]const u8, tx.inputs.len);
         for (inputs) |*input| input.* = .{};
@@ -163,7 +165,7 @@ pub const Psbt = struct {
             input_raw[i] = try parseInputMap(allocator, &cursor, input);
         }
 
-        // --- 出力マップ ---
+        // --- output maps ---
         const outputs = try allocator.alloc(Output, tx.outputs.len);
         const output_raw = try allocator.alloc([]const u8, tx.outputs.len);
         for (outputs) |*output| output.* = .{};
@@ -171,9 +173,9 @@ pub const Psbt = struct {
             output_raw[i] = try parseOutputMap(allocator, &cursor, output);
         }
 
-        // 余分なデータがあってはならない
+        // There must be no leftover data
         if (cursor.remaining() != 0) return error.InvalidPsbt;
-        // 0xfb がある場合は version 0 以外（PSBTv2 等）として扱う
+        // If 0xfb is present, treat the PSBT as a version other than 0 (PSBTv2 etc.)
         if (version != 0) return error.InvalidPsbt;
 
         return .{
@@ -187,17 +189,17 @@ pub const Psbt = struct {
         };
     }
 
-    /// 入力マップに追加するフィールド（key は型バイトを含む完全なキー）。
+    /// Field to add to an input map (key is the full key, including the type byte).
     pub const Field = struct {
         key: []const u8,
         value: []const u8,
     };
 
-    /// 任意のフィールドを追加して PSBT を書き出す。
+    /// Write out a PSBT with arbitrary fields added.
     ///
-    /// 元のバイト列をそのまま使うので**未知のフィールドも保持される**。
-    /// `extra` は入力ごとの追加フィールド（例: partial sig、Taproot の署名）。
-    /// 同じキーが元のマップに既にある場合は置き換える（重複キーを作らない）。
+    /// The original bytes are reused as-is, so **unknown fields are preserved**.
+    /// `extra` holds the additional fields per input (e.g. partial sigs, Taproot signatures).
+    /// A key already present in the original map is replaced (no duplicate keys are created).
     pub fn serializeWith(
         allocator: std.mem.Allocator,
         psbt: Psbt,
@@ -212,7 +214,7 @@ pub const Psbt = struct {
 
         try out.appendSlice(allocator, &magic);
         try out.appendSlice(allocator, psbt.global_raw);
-        try out.append(allocator, 0); // グローバルマップ終端
+        try out.append(allocator, 0); // end of global map
 
         for (psbt.input_raw, 0..) |raw, index| {
             try appendFilteredMap(allocator, &out, raw, extra[index]);
@@ -223,22 +225,23 @@ pub const Psbt = struct {
                 try transaction.writeVarInt(&out, allocator, field.value.len);
                 try out.appendSlice(allocator, field.value);
             }
-            try out.append(allocator, 0); // 入力マップ終端
+            try out.append(allocator, 0); // end of input map
         }
 
         for (psbt.output_raw) |raw| {
             try out.appendSlice(allocator, raw);
-            try out.append(allocator, 0); // 出力マップ終端
+            try out.append(allocator, 0); // end of output map
         }
 
         return out.toOwnedSlice(allocator);
     }
 
-    /// 署名済み（または部分署名済み）PSBT を書き出す。
+    /// Write out a signed (or partially signed) PSBT.
     ///
-    /// 元のバイト列をそのまま使い、**未知のフィールドも保持する**。
-    /// `sigs_by_input` は入力ごとの追加署名（公開鍵と DER 署名 + sighash タイプ）。
-    /// 同じ公開鍵の partial sig が元のマップに既にある場合は置き換える。
+    /// The original bytes are reused as-is, so **unknown fields are preserved**.
+    /// `sigs_by_input` holds the additional signatures per input (public key and DER
+    /// signature + sighash type).
+    /// A partial sig already present in the original map for the same public key is replaced.
     pub fn serialize(
         allocator: std.mem.Allocator,
         psbt: Psbt,
@@ -262,8 +265,8 @@ pub const Psbt = struct {
     }
 };
 
-/// 生のマップをコピーする。ただし `extra` と同じキーを持つフィールドは取り除く
-/// （重複キーを作らないため）。
+/// Copy a raw map, dropping any field whose key also appears in `extra`
+/// (so that no duplicate keys are created).
 fn appendFilteredMap(
     allocator: std.mem.Allocator,
     out: *std.ArrayList(u8),
@@ -374,14 +377,14 @@ fn parseInputMap(
                 input.final_script_witness = items;
             },
             else => {
-                // 未知の型（または本実装が未対応の型）は無視する
+                // Unknown types (or types this implementation does not support) are ignored
             },
         }
     }
 
     input.partial_sigs = try partial_sigs.toOwnedSlice(allocator);
     input.bip32_derivations = try derivations.toOwnedSlice(allocator);
-    // 終端の 0x00 を除いたマップ本体
+    // Map body, excluding the terminating 0x00
     return cursor.data[start .. cursor.pos - 1];
 }
 
@@ -426,7 +429,7 @@ fn parseOutputMap(
     }
 
     output.bip32_derivations = try derivations.toOwnedSlice(allocator);
-    // 終端の 0x00 を除いたマップ本体
+    // Map body, excluding the terminating 0x00
     return cursor.data[start .. cursor.pos - 1];
 }
 
@@ -449,7 +452,7 @@ fn parseWitness(
     return items;
 }
 
-/// BIP32 派生情報（4 バイトの fingerprint + 4 バイト単位のインデックス列）。
+/// BIP32 derivation information (4-byte fingerprint + a sequence of 4-byte indices).
 fn parseDerivation(
     allocator: std.mem.Allocator,
     pubkey: []const u8,
@@ -468,36 +471,36 @@ fn parseDerivation(
     };
 }
 
-/// 公開鍵が有効な形（圧縮 33 / 非圧縮 65 バイト）かどうか。
+/// Whether the public key has a valid form (compressed 33 / uncompressed 65 bytes).
 pub fn isValidPubKeyFormat(pubkey: []const u8) bool {
     if (pubkey.len == 33) return pubkey[0] == 2 or pubkey[0] == 3;
     if (pubkey.len == 65) return pubkey[0] == 4;
     return false;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
 const sample_psbt_hex = "70736274ff0100550200000001279a2323a5dfb51fc45f220fa58b0fc13e1e3342792a85d7e36cd6333b5cbc390000000000ffffffff01a05aea0b000000001976a914ffe9c0061097cc3b636f2cb0460fa4fc427d2b4588ac0000000000010120955eea0b0000000017a9146345200f68d189e1adc0df1c4d16ea8f14c0dbeb8700000000";
 
-test "マジックバイトが違えば拒否する" {
+test "rejects a mismatched magic byte" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // ネットワーク形式のトランザクション（PSBT ではない）
+    // A network-format transaction (not a PSBT)
     const raw = try allocator.alloc(u8, 8);
     _ = try std.fmt.hexToBytes(raw, "0200000001000000");
     try testing.expectError(error.InvalidPsbt, Psbt.parse(allocator, raw));
 }
 
-test "最小構成の PSBT を組み立てて解析する" {
+test "builds and parses a minimal PSBT" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 1 入力 1 出力の未署名トランザクション
+    // An unsigned transaction with 1 input and 1 output
     var prev_txid: [32]u8 = undefined;
     for (&prev_txid, 0..) |*byte, i| byte.* = @intCast(i);
     const inputs = try allocator.alloc(transaction.TxIn, 1);
@@ -522,19 +525,19 @@ test "最小構成の PSBT を組み立てて解析する" {
     };
     const raw_tx = try tx.serialize(allocator, false);
 
-    // PSBT を組み立てる
+    // Build the PSBT
     var bytes = std.ArrayList(u8).empty;
     defer bytes.deinit(allocator);
     try bytes.appendSlice(allocator, &magic);
 
-    // グローバル: unsigned tx
+    // Global: unsigned tx
     try bytes.append(allocator, 1); // keylen
     try bytes.append(allocator, GLOBAL_UNSIGNED_TX);
     try transaction.writeVarInt(&bytes, allocator, raw_tx.len);
     try bytes.appendSlice(allocator, raw_tx);
-    try bytes.append(allocator, 0); // グローバルマップ終端
+    try bytes.append(allocator, 0); // end of global map
 
-    // 入力マップ: witness utxo
+    // Input map: witness utxo
     var utxo_bytes = std.ArrayList(u8).empty;
     defer utxo_bytes.deinit(allocator);
     var value_le: [8]u8 = undefined;
@@ -545,9 +548,9 @@ test "最小構成の PSBT を組み立てて解析する" {
     try bytes.append(allocator, IN_WITNESS_UTXO);
     try transaction.writeVarInt(&bytes, allocator, utxo_bytes.items.len);
     try bytes.appendSlice(allocator, utxo_bytes.items);
-    try bytes.append(allocator, 0); // 入力マップ終端
+    try bytes.append(allocator, 0); // end of input map
 
-    // 出力マップ（空）
+    // Output map (empty)
     try bytes.append(allocator, 0);
 
     const psbt = try Psbt.parse(allocator, bytes.items);
@@ -558,7 +561,7 @@ test "最小構成の PSBT を組み立てて解析する" {
     try testing.expectEqual(@as(i32, 2), psbt.unsigned_tx.version);
 }
 
-test "キー長の検証（partial sig の公開鍵は 33 / 65 バイト）" {
+test "key length validation (partial sig public keys are 33 / 65 bytes)" {
     var compressed: [33]u8 = undefined;
     _ = try std.fmt.hexToBytes(
         &compressed,
@@ -569,8 +572,8 @@ test "キー長の検証（partial sig の公開鍵は 33 / 65 バイト）" {
     try testing.expect(!isValidPubKeyFormat(&[_]u8{0x01}));
 }
 
-test "重複キーを拒否する" {
-    // グローバルマップに同じキーを 2 回書いた PSBT
+test "rejects duplicate keys" {
+    // A PSBT that writes the same key twice into the global map
     var bytes = std.ArrayList(u8).empty;
     defer bytes.deinit(testing.allocator);
     try bytes.appendSlice(testing.allocator, &magic);
@@ -580,11 +583,11 @@ test "重複キーを拒否する" {
     try testing.expectError(error.InvalidPsbt, Psbt.parse(testing.allocator, bytes.items));
 }
 
-test "カーソルが尽きたら拒否する" {
+test "rejects an exhausted cursor" {
     var bytes = std.ArrayList(u8).empty;
     defer bytes.deinit(testing.allocator);
     try bytes.appendSlice(testing.allocator, &magic);
-    // キー長 10 と言いつつ 2 バイトしかない
+    // Claims a key length of 10 while only 2 bytes are present
     try bytes.appendSlice(testing.allocator, &[_]u8{ 0x0A, 0x00, 0x00 });
     try testing.expectError(error.Truncated, Psbt.parse(testing.allocator, bytes.items));
 }

@@ -1,14 +1,14 @@
-//! 壊れた入力に対する堅牢性のテスト（変異テスト / ファジングの一種）。
+//! Robustness tests against corrupt input (a kind of mutation testing / fuzzing).
 //!
-//! **なぜ重要か**: 端末が受け取る PSBT やカードの中身は**外部から来る信頼できないデータ**である。
-//! 解析器が落ちたり固まったりすると、最悪の場合は署名の途中で停止する
-//! （[docs/05-threat-model.md] の 4-6「実装バグ」）。
+//! **Why this matters**: the PSBTs the device receives and the contents of the card are
+//! **untrusted data coming from outside**. If a parser crashes or hangs, the worst case
+//! is that it stops in the middle of signing ([docs/05-threat-model.md] 4-6, "implementation bugs").
 //!
-//! ここでは有効なデータを少しずつ壊して大量に流し込み、
-//! 「**必ず解析に成功するか、エラーを返すかのどちらか**（落ちない・固まらない）」ことを確かめる。
+//! Here we corrupt valid data little by little and feed in a large number of mutants,
+//! checking that it **either parses successfully or returns an error** (no crash, no hang).
 //!
-//! 乱数は固定の種を使う（失敗したときに再現できる）。Debug / ReleaseSafe では
-//! 安全検査が有効なので、範囲外アクセスや整数オーバーフローもここで捕まる。
+//! The RNG uses a fixed seed (so a failure can be reproduced). Under Debug / ReleaseSafe
+//! safety checks are enabled, so out-of-bounds accesses and integer overflows are caught here too.
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");
@@ -21,14 +21,14 @@ const Fuzz = struct {
         return .{ .prng = std.Random.DefaultPrng.init(seed) };
     }
 
-    /// **注意**: `std.Random` は乱数器を指すポインタを持つ。
-    /// 構造体に保存して返すと、指し先（自分自身）がコピーされて**ダングリング**する。
-    /// そのため使うたびに作る。
+    /// **Caution**: `std.Random` holds a pointer to the random number generator.
+    /// Storing it in a struct and returning that struct copies the pointee (itself) and
+    /// **dangles**. It is therefore created on every use.
     fn random(self: *Fuzz) std.Random {
         return self.prng.random();
     }
 
-    /// データを少し壊す（1〜8 箇所）。
+    /// Corrupt the data a little (1 to 8 places).
     fn mutate(self: *Fuzz, data: []u8) void {
         const changes = 1 + self.random().uintLessThan(usize, 8);
         for (0..changes) |_| {
@@ -37,12 +37,12 @@ const Fuzz = struct {
                 0 => data[self.random().uintLessThan(usize, data.len)] ^= @as(u8, 1) << @intCast(self.random().uintLessThan(u4, 8)),
                 1 => data[self.random().uintLessThan(usize, data.len)] = self.random().int(u8),
                 2 => {
-                    // 途中で切る
+                    // Truncate
                     const at = self.random().uintLessThan(usize, data.len);
                     data[at] = 0;
                 },
                 3 => {
-                    // 端を壊す
+                    // Corrupt the edge
                     if (self.random().boolean()) {
                         data[0] = self.random().int(u8);
                     } else {
@@ -50,7 +50,7 @@ const Fuzz = struct {
                     }
                 },
                 else => {
-                    // 2 バイトを入れ替える
+                    // Swap 2 bytes
                     const a = self.random().uintLessThan(usize, data.len);
                     const b = self.random().uintLessThan(usize, data.len);
                     const tmp = data[a];
@@ -69,7 +69,7 @@ fn decodeBase64(allocator: std.mem.Allocator, encoded: []const u8) ![]u8 {
     return out;
 }
 
-test "PSBT: 壊れた入力を与えても落ちない（2000 件の変異）" {
+test "PSBT: does not crash on corrupt input (2000 mutants)" {
     const vectors = @embedFile("vectors/core_psbt.json");
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -94,7 +94,7 @@ test "PSBT: 壊れた入力を与えても落ちない（2000 件の変異）" {
         const result = zhww.btc_psbt.Psbt.parse(a, mutated);
         if (result) |psbt| {
             ok += 1;
-            // 解析できたものは、もう一度書き出して読み直せること（往復）
+            // Whatever parsed must be writable and readable again (round trip)
             const sigs = try a.alloc([]const zhww.btc_psbt.PartialSig, psbt.inputs.len);
             for (sigs) |*s| s.* = &.{};
             const serialized = try zhww.btc_psbt.Psbt.serialize(a, psbt, sigs);
@@ -107,22 +107,22 @@ test "PSBT: 壊れた入力を与えても落ちない（2000 件の変異）" {
             failed += 1;
         }
 
-        // 病的な確保をしていないこと（1 件あたり 1MB 未満）
+        // No pathological allocations (under 1MB per case)
         try testing.expect(iteration.queryCapacity() < 1024 * 1024);
     }
 
-    // 変異の大半は解析に失敗するはず（＝検査が効いている）
+    // Most mutants should fail to parse (= the checks are working)
     try testing.expect(failed > ok);
     try testing.expect(ok + failed == 2000);
-    std.debug.print("\n  PSBT: 解析成功 {d} / 失敗 {d}\n", .{ ok, failed });
+    std.debug.print("\n  PSBT: parsed {d} / failed {d}\n", .{ ok, failed });
 }
 
-test "トランザクション: 壊れた入力を与えても落ちない" {
+test "transaction: does not crash on corrupt input" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 適当なトランザクションを作ってから壊す
+    // Build an arbitrary transaction, then corrupt it
     const inputs = try allocator.alloc(zhww.btc_transaction.TxIn, 2);
     inputs[0] = .{ .prevout = .{ .txid = @splat(0x11), .vout = 0 }, .script_sig = &.{}, .sequence = 0xFFFFFFFF, .witness = &.{} };
     inputs[1] = .{ .prevout = .{ .txid = @splat(0x22), .vout = 1 }, .script_sig = &.{}, .sequence = 0, .witness = &.{} };
@@ -151,7 +151,7 @@ test "トランザクション: 壊れた入力を与えても落ちない" {
 
         if (zhww.btc_transaction.Transaction.parse(a, mutated)) |parsed_tx| {
             ok += 1;
-            // 往復して同じ形になること
+            // Round-trips to the same shape
             const again = try parsed_tx.serialize(a, parsed_tx.has_witness);
             const reparsed = try zhww.btc_transaction.Transaction.parse(a, again);
             try testing.expectEqual(parsed_tx.inputs.len, reparsed.inputs.len);
@@ -164,10 +164,10 @@ test "トランザクション: 壊れた入力を与えても落ちない" {
     }
 
     try testing.expect(ok + failed == 1000);
-    std.debug.print("  Transaction: 解析成功 {d} / 失敗 {d}\n", .{ ok, failed });
+    std.debug.print("  Transaction: parsed {d} / failed {d}\n", .{ ok, failed });
 }
 
-test "UR / Bytewords: 壊れた文字列を拒否する" {
+test "UR / Bytewords: rejects corrupt strings" {
     var fuzz = Fuzz.init(0x0BAD_F00D);
     const alphabet = "ur:bytes/1-2/lpadacslbcyfmemqdoshdcxjojkidjyzmadaegmaoaeaeaeadswmuoygamogscfkodwknsrmdvwkttlfsfnluwysewzlubg-ZZ00";
 
@@ -180,12 +180,12 @@ test "UR / Bytewords: 壊れた文字列を拒否する" {
         const text = try a.alloc(u8, length);
         for (text) |*c| c.* = alphabet[fuzz.random().uintLessThan(usize, alphabet.len)];
 
-        // 解析できてもできなくてもよいが、落ちてはいけない
+        // Parsing may succeed or fail, but it must not crash
         if (zhww.ur.parse(text)) |uri| {
             try testing.expect(uri.ur_type.len <= zhww.ur.max_type_len);
         } else |_| {}
 
-        // パートとして読む経路も試す
+        // Also exercise the path that reads them as parts
         var part_buffer: [4096]u8 = undefined;
         if (zhww.ur.decodePartUr(&part_buffer, text)) |decoded| {
             try testing.expect(decoded.part.data.len <= part_buffer.len);
@@ -195,7 +195,7 @@ test "UR / Bytewords: 壊れた文字列を拒否する" {
     }
 }
 
-test "FAT32: でたらめな中身のデバイスを拒否する（落ちない・固まらない）" {
+test "FAT32: rejects a device with garbage contents (no crash, no hang)" {
     const device_mod = zhww.block_device;
     var fuzz = Fuzz.init(0xFEED_BEEF);
     var mounted: usize = 0;
@@ -206,7 +206,7 @@ test "FAT32: でたらめな中身のデバイスを拒否する（落ちない�
         defer iteration.deinit();
         const a = iteration.allocator();
 
-        // 512 セクタ（256KB）のでたらめなデバイス
+        // A garbage device of 512 sectors (256KB)
         const storage = try a.alloc(u8, 512 * 512);
         for (storage) |*byte| byte.* = fuzz.random().int(u8);
         var device = device_mod.MemoryDevice.init(storage);
@@ -214,13 +214,13 @@ test "FAT32: でたらめな中身のデバイスを拒否する（落ちない�
         if (zhww.fs_fat32.Fat32.mount(device.device(), a)) |mounted_fs| {
             mounted += 1;
             var fs = mounted_fs;
-            // マウントできてしまった場合も、操作がエラーを返すだけで落ちないこと
+            // Even when it does mount, operations must only return errors, never crash
             var iterator = fs.openDir("/") catch continue;
             var entry: zhww.fs_fat32.Entry = .{};
             var guard: usize = 0;
             while (iterator.next(&entry) catch break) {
                 guard += 1;
-                if (guard > 4096) break; // 固まらないことの確認
+                if (guard > 4096) break; // confirms it does not hang
             }
         } else |_| {
             rejected += 1;
@@ -228,11 +228,11 @@ test "FAT32: でたらめな中身のデバイスを拒否する（落ちない�
         try testing.expect(iteration.queryCapacity() < 64 * 1024 * 1024);
     }
 
-    std.debug.print("  FAT32: マウント成功 {d} / 拒否 {d}\n", .{ mounted, rejected });
-    try testing.expect(rejected > 0); // でたらめな中身はほぼ必ず拒否される
+    std.debug.print("  FAT32: mounted {d} / rejected {d}\n", .{ mounted, rejected });
+    try testing.expect(rejected > 0); // garbage contents are almost always rejected
 }
 
-test "EVM: 壊れた raw トランザクションを拒否する" {
+test "EVM: rejects corrupt raw transactions" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -255,7 +255,7 @@ test "EVM: 壊れた raw トランザクションを拒否する" {
 
         if (zhww.evm_transaction.decode(a, mutated)) |decoded| {
             ok += 1;
-            // 壊れた入力でも、返ってきた値の整合性が保たれていること
+            // Even for corrupt input, the values returned must stay consistent
             if (decoded.to) |to| try testing.expectEqual(@as(usize, 20), to.len);
             try testing.expect(decoded.data.len <= mutated.len);
         } else |_| {
@@ -265,10 +265,10 @@ test "EVM: 壊れた raw トランザクションを拒否する" {
     }
 
     try testing.expect(ok + failed == 500);
-    std.debug.print("  EVM: 解析成功 {d} / 失敗 {d}\n", .{ ok, failed });
+    std.debug.print("  EVM: parsed {d} / failed {d}\n", .{ ok, failed });
 }
 
-test "BIP39: でたらめな mnemonic を拒否する" {
+test "BIP39: rejects garbage mnemonics" {
     const words = [_][]const u8{ "abandon", "about", "zoo", "notaword", "", "A", "日本語" };
     var fuzz = Fuzz.init(0x9999_1111);
     var accepted: usize = 0;
@@ -295,6 +295,6 @@ test "BIP39: でたらめな mnemonic を拒否する" {
         try testing.expect(iteration.queryCapacity() < 1024 * 1024);
     }
 
-    std.debug.print("  BIP39: 受理 {d} / 拒否 {d}\n", .{ accepted, rejected });
+    std.debug.print("  BIP39: accepted {d} / rejected {d}\n", .{ accepted, rejected });
     try testing.expect(rejected > accepted);
 }

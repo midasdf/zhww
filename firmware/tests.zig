@@ -1,10 +1,10 @@
-//! テストのルート。
+//! Test root.
 //!
-//! コアのユニットテスト（src/ 内の `test` ブロック）と、公式テストベクタによる
-//! 統合テスト（tests/）の両方を 1 つのモジュールにまとめて実行する。
+//! Bundles both the core unit tests (`test` blocks under src/) and the integration tests
+//! based on official test vectors (tests/) into a single module and runs them together.
 //!
-//! ベクタは第三者（Bitcoin BIPs リポジトリ等）の生データをそのまま埋め込む。
-//! **自前の期待値は使わない。**
+//! Vectors are embedded verbatim as raw data from third parties (Bitcoin BIPs repository etc.).
+//! **We never use home-grown expected values.**
 
 test {
     _ = @import("src/root.zig");

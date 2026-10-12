@@ -1,17 +1,17 @@
-//! Bitcoin Core との相互運用テスト（最も強い検証）。
+//! Interoperability test against Bitcoin Core (the strongest verification).
 //!
-//! ベクタ: tests/vectors/core_psbt.json
+//! Vector: tests/vectors/core_psbt.json
 //!
-//! 手順（実際に regtest で実行した内容をそのまま固定している）:
-//!   1. Bitcoin Core（v31.1.0）の `createpsbt` + `utxoupdatepsbt` で PSBT を作る
-//!   2. 本実装で署名して署名済み PSBT を書き出す
-//!   3. Core の `finalizepsbt` が `complete: true` を返し、
-//!      その出力 hex が本実装の最終トランザクションと**バイト単位で一致**する
-//!   4. Core の `testmempoolaccept` が `allowed: true` を返す
+//! Procedure (frozen exactly as it was run on regtest):
+//!   1. Build a PSBT with Bitcoin Core (v31.1.0) `createpsbt` + `utxoupdatepsbt`
+//!   2. Sign it with this implementation and write out the signed PSBT
+//!   3. Core's `finalizepsbt` returns `complete: true`, and its output hex
+//!      **matches byte for byte** this implementation's final transaction
+//!   4. Core's `testmempoolaccept` returns `allowed: true`
 //!
-//! **他のテストとの違い**: BIP143 のベクタは「仕様どうりに実装できているか」を見るが、
-//! このテストは「**実際の Bitcoin Core が我々の署名を有効と判断するか**」を見る。
-//! 実装・エンコード・鍵探索・最終化のすべてが噛み合っていなければ通らない。
+//! **How this differs from the other tests**: the BIP143 vectors check whether the
+//! implementation follows the spec, while this test checks **whether real Bitcoin Core
+//! considers our signature valid**. It only passes when implementation, encoding, key discovery and finalization all mesh.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -34,7 +34,7 @@ fn hexAlloc(allocator: std.mem.Allocator, hex: []const u8) ![]u8 {
     return out;
 }
 
-test "Bitcoin Core が生成した PSBT に署名し、Core の署名済みトランザクションと一致する" {
+test "signs a PSBT created by Bitcoin Core and matches Core's signed transaction" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -47,14 +47,14 @@ test "Bitcoin Core が生成した PSBT に署名し、Core の署名済みト�
     const expected_tx = root.get("expected_final_tx").?.string;
     const expected_fee: u64 = @intCast(root.get("fee_sats").?.integer);
 
-    // --- Core が作った PSBT を解析する ---
+    // --- parse the PSBT Core created ---
     const psbt_bytes = try decodeBase64(allocator, psbt_b64);
     const psbt = try zhww.btc_psbt.Psbt.parse(allocator, psbt_bytes);
     try testing.expectEqual(@as(usize, 1), psbt.inputs.len);
     try testing.expectEqual(@as(usize, 1), psbt.outputs.len);
     try testing.expect(psbt.inputs[0].witness_utxo != null);
 
-    // --- 署名（鍵は script の一致で見つかる。PSBT に派生情報は無い）---
+    // --- signing (the key is found by matching the script; the PSBT has no derivation info) ---
     const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, "");
     const outcome = try zhww.btc_sign.signPsbtBytes(allocator, psbt_bytes, keys);
 
@@ -62,11 +62,11 @@ test "Bitcoin Core が生成した PSBT に署名し、Core の署名済みト�
     try testing.expectEqual(@as(usize, 0), outcome.result.unsigned_inputs.len);
     try testing.expectEqual(@as(?u64, expected_fee), outcome.result.fee);
 
-    // --- 最終トランザクションが Core の出力と一致する ---
+    // --- the final transaction matches Core's output ---
     const expected_bytes = try hexAlloc(allocator, expected_tx);
     try testing.expectEqualSlices(u8, expected_bytes, outcome.result.final_tx.?);
 
-    // --- 署名を独立に検証する（P2WPKH の BIP143 sighash を再計算）---
+    // --- verify the signature independently (recompute the P2WPKH BIP143 sighash) ---
     const pub_key = outcome.result.partial_sigs[0].pubkey;
     const utxo = psbt.inputs[0].witness_utxo.?;
     var h160: [20]u8 = undefined;
@@ -87,7 +87,7 @@ test "Bitcoin Core が生成した PSBT に署名し、Core の署名済みト�
     const parsed_signature = try zhww.secp256k1.parseDer(signature[0 .. signature.len - 1]);
     try testing.expect(try zhww.secp256k1.verify(&parsed_signature, message, pub_key));
 
-    // --- 署名済み PSBT は Core に渡せる形（再解析できる）---
+    // --- the signed PSBT is in a form Core accepts (it can be parsed again) ---
     const reparsed = try zhww.btc_psbt.Psbt.parse(allocator, outcome.signed_psbt);
     try testing.expectEqual(@as(usize, 1), reparsed.inputs[0].partial_sigs.len);
     try testing.expectEqualSlices(

@@ -1,19 +1,19 @@
-//! BIP143 の公式テストベクタ（Native P2WPKH）による、署名の**バイト単位**検証。
+//! **Byte-for-byte** verification of signatures against BIP143's official test vectors (Native P2WPKH).
 //!
-//! ベクタ: tests/vectors/bip143.json
-//! 出典: https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki
+//! Vector: tests/vectors/bip143.json
+//! Source: https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki
 //!
-//! このベクタは未署名トランザクション・期待 sighash・期待 DER 署名・署名済み
-//! トランザクションの全てを含むため、以下を同時に検証できる。
+//! This vector contains the unsigned transaction, the expected sighash, the expected DER
+//! signature and the signed transaction, so it verifies all of the following at once.
 //!
-//!   1. トランザクションの解析と直列化
-//!   2. Legacy sighash（input 0 は P2PK）
-//!   3. BIP143 sighash（input 1 は P2WPKH）
-//!   4. ECDSA 署名（RFC6979 の決定論的 nonce・low-s・DER 符号化）
-//!   5. 最終的な署名済みトランザクションの再現
+//!   1. Transaction parsing and serialization
+//!   2. Legacy sighash (input 0 is P2PK)
+//!   3. BIP143 sighash (input 1 is P2WPKH)
+//!   4. ECDSA signing (RFC6979 deterministic nonce, low-s, DER encoding)
+//!   5. Reproduction of the final signed transaction
 //!
-//! **RFC6979 は決定論的**なので、同じ鍵と同じメッセージからは同じ署名が得られる。
-//! したがって「署名が公式ベクタと完全一致する」ことが、実装全体の正しさの強い証拠になる。
+//! **RFC6979 is deterministic**, so the same key and the same message always give the same signature.
+//! Hence an exact match with the official vector is strong evidence that the implementation is correct.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -32,7 +32,7 @@ fn hexTo(out: []u8, hex: []const u8) ![]u8 {
     return std.fmt.hexToBytes(out, hex);
 }
 
-test "BIP143: BIP143 sighash と DER 署名が公式ベクタと一致する（input 1: P2WPKH）" {
+test "BIP143: BIP143 sighash and DER signature match the official vector (input 1: P2WPKH)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -43,23 +43,23 @@ test "BIP143: BIP143 sighash と DER 署名が公式ベクタと一致する（i
     const unsigned_tx = try hexAlloc(allocator, root.get("unsigned_tx").?.string);
     const tx = try zhww.btc_transaction.Transaction.parse(allocator, unsigned_tx);
 
-    // ベクタの期待値
+    // Expected values from the vector
     var expected_sighash: [32]u8 = undefined;
     _ = try hexTo(&expected_sighash, root.get("sighash_input1").?.string);
 
-    // input 1 の情報
+    // Information for input 1
     const input1 = root.get("input1").?.object;
     var priv: [32]u8 = undefined;
     _ = try hexTo(&priv, input1.get("private_key").?.string);
     const amount: u64 = @intCast(input1.get("value_sats").?.integer);
 
-    // scriptPubKey は `0014{hash160(pubkey)}` なので、scriptCode を公開鍵から組み立てられる
+    // scriptPubKey is `0014{hash160(pubkey)}`, so scriptCode can be built from the public key
     var expected_pubkey: [33]u8 = undefined;
     _ = try hexTo(&expected_pubkey, input1.get("public_key").?.string);
     var pubkey_hash: [20]u8 = undefined;
     zhww.hashes.hash160(&pubkey_hash, &expected_pubkey);
 
-    // 導出した公開鍵がベクタと一致すること（scriptPubKey の中身と整合）
+    // The derived public key must match the vector (consistent with the scriptPubKey contents)
     const derived_pubkey = try zhww.secp256k1.pubKeyCompressed(priv);
     try testing.expectEqualSlices(u8, &expected_pubkey, &derived_pubkey);
 
@@ -69,7 +69,7 @@ test "BIP143: BIP143 sighash と DER 署名が公式ベクタと一致する（i
     _ = try hexTo(&expected_script_pubkey, "00141d0f172a0ecb48aee1be1f2687d2963ae33f71a1");
     try testing.expectEqualSlices(u8, &expected_script_pubkey, &script_pubkey);
 
-    // 1) sighash が一致する
+    // 1) the sighash matches
     const sighash = try zhww.btc_sighash.segwitV0Sighash(
         allocator,
         tx,
@@ -80,7 +80,7 @@ test "BIP143: BIP143 sighash と DER 署名が公式ベクタと一致する（i
     );
     try testing.expectEqualSlices(u8, &expected_sighash, &sighash);
 
-    // 2) DER 署名 + sighash タイプが一致する
+    // 2) the DER signature + sighash type match
     const signature = try zhww.secp256k1.sign(sighash, priv);
     var der_buf: [72]u8 = undefined;
     const der = try zhww.secp256k1.serializeDer(&der_buf, &signature);
@@ -91,11 +91,11 @@ test "BIP143: BIP143 sighash と DER 署名が公式ベクタと一致する（i
     try testing.expectEqualSlices(u8, expected[0..der.len], der);
     try testing.expectEqual(@as(u8, 0x01), expected[der.len]);
 
-    // 3) 作った署名が検証を通る
+    // 3) the signature we built verifies
     try testing.expect(try zhww.secp256k1.verify(&signature, sighash, derived_pubkey));
 }
 
-test "BIP143: 署名済みトランザクションを完全に再現する" {
+test "BIP143: fully reproduces the signed transaction" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -114,7 +114,7 @@ test "BIP143: 署名済みトランザクションを完全に再現する" {
     var priv1: [32]u8 = undefined;
     _ = try hexTo(&priv1, input1.get("private_key").?.string);
 
-    // --- input 0: P2PK（legacy sighash）---
+    // --- input 0: P2PK (legacy sighash) ---
     var script_code0: [35]u8 = undefined;
     _ = try hexTo(&script_code0, input0.get("prevout_script_pubkey").?.string);
     const sighash0 = try zhww.btc_sighash.legacySighash(
@@ -130,17 +130,17 @@ test "BIP143: 署名済みトランザクションを完全に再現する" {
     var der0_buf: [72]u8 = undefined;
     const der0 = try zhww.secp256k1.serializeDer(&der0_buf, &signature0);
 
-    // scriptSig は「署名を push する」形になる: <push 72> || DER || 0x01
-    // （P2PK はスクリプト内に公開鍵が埋まっているため、署名だけを push する）
+    // scriptSig takes the form "push the signature": <push 72> || DER || 0x01
+    // (P2PK embeds the public key in the script, so only the signature is pushed)
     const signature_blob = try allocator.alloc(u8, der0.len + 1);
     @memcpy(signature_blob[0..der0.len], der0);
     signature_blob[der0.len] = 0x01;
 
     const script_sig0 = try allocator.alloc(u8, signature_blob.len + 1);
-    script_sig0[0] = @intCast(signature_blob.len); // 0x48 = 72 バイトを push
+    script_sig0[0] = @intCast(signature_blob.len); // 0x48 = push 72 bytes
     @memcpy(script_sig0[1..], signature_blob);
 
-    // --- input 1: P2WPKH（BIP143 sighash）---
+    // --- input 1: P2WPKH (BIP143 sighash) ---
     var pubkey1: [33]u8 = undefined;
     _ = try hexTo(&pubkey1, input1.get("public_key").?.string);
     var pubkey_hash1: [20]u8 = undefined;
@@ -162,7 +162,7 @@ test "BIP143: 署名済みトランザクションを完全に再現する" {
     @memcpy(witness_signature[0..der1.len], der1);
     witness_signature[der1.len] = 0x01;
 
-    // --- 署名を埋めて直列化する ---
+    // --- fill in the signatures and serialize ---
     const inputs = try allocator.alloc(zhww.btc_transaction.TxIn, tx.inputs.len);
     @memcpy(inputs, tx.inputs);
     inputs[0].script_sig = script_sig0;
@@ -186,7 +186,7 @@ test "BIP143: 署名済みトランザクションを完全に再現する" {
     try testing.expectEqualSlices(u8, expected_signed, serialized);
 }
 
-test "BIP143: PSBT 経由で署名しても公式ベクタの署名と一致する" {
+test "BIP143: signing via a PSBT also matches the official vector's signature" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -207,7 +207,7 @@ test "BIP143: PSBT 経由で署名しても公式ベクタの署名と一致す�
     var pub1: [33]u8 = undefined;
     _ = try hexTo(&pub1, input1.get("public_key").?.string);
 
-    // --- PSBT を組み立てる（input 1 にだけ witness_utxo を与える）---
+    // --- build the PSBT (give a witness_utxo only to input 1) ---
     var bytes = std.ArrayList(u8).empty;
     defer bytes.deinit(allocator);
     try bytes.appendSlice(allocator, &zhww.btc_psbt.magic);
@@ -215,9 +215,9 @@ test "BIP143: PSBT 経由で署名しても公式ベクタの署名と一致す�
     try bytes.append(allocator, 0x00); // PSBT_GLOBAL_UNSIGNED_TX
     try zhww.btc_transaction.writeVarInt(&bytes, allocator, unsigned_tx.len);
     try bytes.appendSlice(allocator, unsigned_tx);
-    try bytes.append(allocator, 0); // グローバルマップ終端
+    try bytes.append(allocator, 0); // end of global map
 
-    try bytes.append(allocator, 0); // input 0 のマップ（空）
+    try bytes.append(allocator, 0); // input 0 map (empty)
 
     var utxo = std.ArrayList(u8).empty;
     defer utxo.deinit(allocator);
@@ -231,14 +231,14 @@ test "BIP143: PSBT 経由で署名しても公式ベクタの署名と一致す�
     try bytes.append(allocator, 0x01); // PSBT_IN_WITNESS_UTXO
     try zhww.btc_transaction.writeVarInt(&bytes, allocator, utxo.items.len);
     try bytes.appendSlice(allocator, utxo.items);
-    try bytes.append(allocator, 0); // input 1 のマップ終端
+    try bytes.append(allocator, 0); // end of input 1 map
 
-    try bytes.append(allocator, 0); // output 0 のマップ（空）
-    try bytes.append(allocator, 0); // output 1 のマップ（空）
+    try bytes.append(allocator, 0); // output 0 map (empty)
+    try bytes.append(allocator, 0); // output 1 map (empty)
 
     const psbt = try zhww.btc_psbt.Psbt.parse(allocator, bytes.items);
 
-    // --- 生の鍵を渡して署名する ---
+    // --- sign with raw keys ---
     const raw_keys = [_]zhww.btc_sign.KeySource.RawKey{
         .{ .private_key = priv0, .public_key = pub0 },
         .{ .private_key = priv1, .public_key = pub1 },
@@ -246,27 +246,27 @@ test "BIP143: PSBT 経由で署名しても公式ベクタの署名と一致す�
     const keys = zhww.btc_sign.KeySource.fromRawKeys(&raw_keys);
     const result = try zhww.btc_sign.sign(allocator, psbt, keys);
 
-    // input 1 のみ署名できる（input 0 は UTXO 情報が無いので署名しない）
+    // Only input 1 can be signed (input 0 has no UTXO information, so it is not signed)
     try testing.expectEqual(@as(usize, 1), result.partial_sigs.len);
     try testing.expectEqual(@as(usize, 1), result.partial_sigs[0].index);
     try testing.expectEqualSlices(u8, &pub1, &result.partial_sigs[0].pubkey);
 
-    // 署名が公式ベクタと**バイト単位で一致**する
+    // The signature **matches the official vector byte for byte**
     var expected_signature: [128]u8 = undefined;
     const expected = try hexTo(&expected_signature, root.get("signature_input1").?.string);
     try testing.expectEqualSlices(u8, expected, result.partial_sigs[0].signature);
 
-    // 署名できなかった入力を正しく報告する
+    // Correctly reports the inputs that could not be signed
     try testing.expectEqual(@as(usize, 1), result.unsigned_inputs.len);
     try testing.expectEqual(@as(usize, 0), result.unsigned_inputs[0]);
     try testing.expect(result.final_tx == null);
 
-    // 入力額が 1 つでも不明なら手数料を計算しない
+    // If even one input amount is unknown, no fee is computed
     try testing.expect(result.fee == null);
     try testing.expectEqual(@as(u64, 335_790_000), result.total_output);
 
-    // --- 署名済み PSBT を書き出し、読み直しても署名が残っていること ---
-    // 公開鍵は result.partial_sigs の要素を指す（ループ変数のアドレスを渡さない）
+    // --- write out the signed PSBT and confirm the signatures survive a re-read ---
+    // The public key points into result.partial_sigs (do not pass the address of a loop variable)
     const sigs = try allocator.alloc([]const zhww.btc_psbt.PartialSig, psbt.inputs.len);
     for (sigs) |*slot| slot.* = &.{};
     for (result.partial_sigs, 0..) |partial, i| {
@@ -284,6 +284,6 @@ test "BIP143: PSBT 経由で署名しても公式ベクタの署名と一致す�
     try testing.expectEqual(@as(usize, 1), reparsed.inputs[1].partial_sigs.len);
     try testing.expectEqualSlices(u8, &pub1, reparsed.inputs[1].partial_sigs[0].pubkey);
     try testing.expectEqualSlices(u8, expected, reparsed.inputs[1].partial_sigs[0].signature);
-    // 署名していない入力には partial sig が付かない
+    // Inputs that were not signed get no partial sig
     try testing.expectEqual(@as(usize, 0), reparsed.inputs[0].partial_sigs.len);
 }

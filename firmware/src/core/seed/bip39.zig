@@ -1,14 +1,14 @@
-//! BIP39 mnemonic の生成・検証・seed 導出。
+//! BIP39 mnemonic generation, validation and seed derivation.
 //!
-//! 参考: https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
+//! Reference: https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
 //!
-//! **設計上の要点**
-//! - エントロピーは呼び出し側（entropy モジュール）がダイス・カメラ・TRNG から生成して渡す。
-//!   本モジュールは乱数を発生させない
-//! - 単語リストはバイナリに埋め込む（実行時にファイルシステムへ依存しない）
-//! - パスフレーズと mnemonic は NFKD 正規化が必要だが、v0.1 では ASCII のみ対応し、
-//!   非 ASCII は **明示的にエラー** にする（黙って異なる seed を作らないため）
-//! - mnemonic は空白を正規化してから PBKDF2 に渡す（末尾の空白で seed が変わる事故を防ぐ）
+//! **Design points**
+//! - Entropy is produced and passed in by the caller (the entropy module) from dice, camera and TRNG.
+//!   This module never generates randomness itself
+//! - The word list is embedded in the binary (no runtime dependency on a filesystem)
+//! - Passphrases and mnemonics need NFKD normalization, but v0.1 supports ASCII only, and
+//!   non-ASCII is made an **explicit error** (so we never silently build a different seed)
+//! - The mnemonic is whitespace-normalized before PBKDF2 (so the seed cannot change on trailing whitespace)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -18,33 +18,33 @@ const hashes = @import("../crypto/hashes.zig");
 const pbkdf2 = std.crypto.pwhash.pbkdf2;
 const HmacSha512 = std.crypto.auth.hmac.sha2.HmacSha512;
 
-/// BIP39 の単語数。
+/// BIP39 word list size.
 pub const wordlist_len = 2048;
 
-/// 対応する mnemonic の語数。
+/// Supported mnemonic word counts.
 pub const valid_word_counts = [_]usize{ 12, 15, 18, 21, 24 };
 
-/// バイナリに埋め込んだ単語リスト。BIP39 英語版（2048 語）。
+/// Word list embedded in the binary. BIP39 English edition (2048 words).
 const english_words: [wordlist_len][]const u8 = blk: {
     @setEvalBranchQuota(200_000);
     var list: [wordlist_len][]const u8 = undefined;
     var it = std.mem.tokenizeAny(u8, @embedFile("english.txt"), "\r\n");
     var count: usize = 0;
     while (it.next()) |raw| {
-        if (count >= wordlist_len) @compileError("BIP39 単語リストが 2048 語を超えている");
+        if (count >= wordlist_len) @compileError("the BIP39 word list has more than 2048 words");
         list[count] = std.mem.trim(u8, raw, " \t\r");
         count += 1;
     }
-    if (count != wordlist_len) @compileError("BIP39 単語リストは 2048 語でなければならない");
+    if (count != wordlist_len) @compileError("the BIP39 word list must have exactly 2048 words");
     break :blk list;
 };
 
-/// 単語リスト（読み取り専用）。
+/// Word list (read-only).
 pub fn wordlist() [wordlist_len][]const u8 {
     return english_words;
 }
 
-/// 単語のインデックスを返す。見つからなければ null。
+/// Return the word's index, or null if it is not found.
 pub fn wordIndex(word: []const u8) ?u11 {
     for (english_words, 0..) |candidate, i| {
         if (std.mem.eql(u8, candidate, word)) return @intCast(i);
@@ -52,7 +52,7 @@ pub fn wordIndex(word: []const u8) ?u11 {
     return null;
 }
 
-/// エントロピー（16/20/24/28/32 バイト）を mnemonic に変換する。
+/// Convert entropy (16/20/24/28/32 bytes) into a mnemonic.
 pub fn entropyToMnemonic(out: []u8, entropy: []const u8) Error![]u8 {
     const bits = entropy.len * 8;
     if (bits != 128 and bits != 160 and bits != 192 and bits != 224 and bits != 256) {
@@ -87,7 +87,7 @@ pub fn entropyToMnemonic(out: []u8, entropy: []const u8) Error![]u8 {
     return out[0..pos];
 }
 
-/// mnemonic を検証してエントロピーに戻す。チェックサム不一致は error.ChecksumMismatch。
+/// Validate a mnemonic and turn it back into entropy. A checksum mismatch is error.ChecksumMismatch.
 pub fn mnemonicToEntropy(out: []u8, mnemonic: []const u8) Error![]u8 {
     var it = std.mem.tokenizeAny(u8, mnemonic, " \t\r\n");
     var value: u264 = 0;
@@ -114,7 +114,7 @@ pub fn mnemonicToEntropy(out: []u8, mnemonic: []const u8) Error![]u8 {
     const checksum: u8 = @intCast(value & checksum_mask);
     const entropy_value = value >> @intCast(checksum_bits);
 
-    // ビッグエンディアンで書き出す（out[0] が最上位バイト）
+    // write big-endian (out[0] is the most significant byte)
     var i: usize = 0;
     while (i < entropy_len) : (i += 1) {
         const shift: u9 = @intCast(8 * (entropy_len - 1 - i));
@@ -129,17 +129,17 @@ pub fn mnemonicToEntropy(out: []u8, mnemonic: []const u8) Error![]u8 {
     return out[0..entropy_len];
 }
 
-/// mnemonic として妥当かどうか。
+/// Whether this is a valid mnemonic.
 pub fn isValid(mnemonic: []const u8) bool {
     var buf: [32]u8 = undefined;
     _ = mnemonicToEntropy(&buf, mnemonic) catch return false;
     return true;
 }
 
-/// PBKDF2-HMAC-SHA512 で 64 バイトの seed を導出する。
+/// Derive a 64-byte seed with PBKDF2-HMAC-SHA512.
 ///
-/// パスフレーズは任意（空文字列可）。mnemonic の語彙・チェックサム検証は行わない
-/// （検証が必要な場合は `mnemonicToEntropy` を先に呼ぶこと）。
+/// The passphrase is optional (an empty string is allowed). The mnemonic's vocabulary and
+/// checksum are not validated (call `mnemonicToEntropy` first if validation is needed).
 pub fn mnemonicToSeed(out: *[64]u8, mnemonic: []const u8, passphrase: []const u8) Error!void {
     if (!isAscii(mnemonic) or !isAscii(passphrase)) return error.UnsupportedNormalization;
 
@@ -152,7 +152,7 @@ pub fn mnemonicToSeed(out: *[64]u8, mnemonic: []const u8, passphrase: []const u8
     @memcpy(salt[8..][0..passphrase.len], passphrase);
     const salt_slice = salt[0 .. 8 + passphrase.len];
 
-    // rounds=2048 / 64 バイト出力は常に有効なので、エラーは起きない
+    // rounds=2048 with 64-byte output is always valid, so no error can occur
     pbkdf2(out, mnemonic_normalized, salt_slice, 2048, HmacSha512) catch return error.InvalidMnemonic;
 }
 
@@ -163,7 +163,7 @@ fn isAscii(text: []const u8) bool {
     return true;
 }
 
-/// 連続する空白を 1 つにまとめ、前後の空白を除く。
+/// Collapse runs of whitespace into one and trim leading/trailing whitespace.
 fn normalizeWhitespace(out: []u8, text: []const u8) Error![]const u8 {
     var pos: usize = 0;
     var it = std.mem.tokenizeAny(u8, text, " \t\r\n");
@@ -180,11 +180,11 @@ fn normalizeWhitespace(out: []u8, text: []const u8) Error![]const u8 {
     return out[0..pos];
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "単語リストが 2048 語で、先頭と末尾が既知の語である" {
+test "word list has 2048 words and starts and ends with known words" {
     const words = wordlist();
     try testing.expectEqual(@as(usize, 2048), words.len);
     try testing.expectEqualStrings("abandon", words[0]);
@@ -194,11 +194,11 @@ test "単語リストが 2048 語で、先頭と末尾が既知の語である" 
     try testing.expectEqual(@as(?u11, null), wordIndex("notaword"));
 }
 
-test "エントロピーから mnemonic を生成し、元に戻せる" {
+test "mnemonic can be generated from entropy and converted back" {
     var mnemonic: [256]u8 = undefined;
     var entropy: [32]u8 = undefined;
 
-    // すべて 0 のエントロピーは既知の mnemonic になる
+    // all-zero entropy yields a known mnemonic
     const zeros: [16]u8 = @splat(0);
     const text = try entropyToMnemonic(&mnemonic, &zeros);
     try testing.expectEqualStrings(
@@ -209,8 +209,8 @@ test "エントロピーから mnemonic を生成し、元に戻せる" {
     const round_trip = try mnemonicToEntropy(&entropy, text);
     try testing.expectEqualSlices(u8, &zeros, round_trip);
 
-    // バイト順の取り違えを検出するため、非対称なエントロピーでも往復させる
-    // （すべて同じ値のエントロピーは逆順にしても同じ結果になるため検出力が無い）
+    // Round-trip asymmetric entropy too, to detect byte-order mistakes
+    // (all-identical entropy has no detection power since reversing it gives the same result)
     var asymmetric: [32]u8 = undefined;
     for (&asymmetric, 0..) |*byte, i| byte.* = @intCast(i + 1);
     for ([_]usize{ 16, 20, 24, 28, 32 }) |length| {
@@ -220,7 +220,7 @@ test "エントロピーから mnemonic を生成し、元に戻せる" {
     }
 }
 
-test "不正な語数・語彙・チェックサムを拒否する" {
+test "rejects invalid word counts, vocabulary and checksums" {
     var entropy: [32]u8 = undefined;
     try testing.expectError(
         error.InvalidMnemonic,
@@ -230,7 +230,7 @@ test "不正な語数・語彙・チェックサムを拒否する" {
         error.InvalidMnemonic,
         mnemonicToEntropy(&entropy, "notaword notaword notaword notaword notaword notaword notaword notaword notaword notaword notaword notaword"),
     );
-    // 最後の語を about から abandon に変えるとチェックサムが壊れる
+    // changing the last word from about to abandon breaks the checksum
     try testing.expectError(
         error.ChecksumMismatch,
         mnemonicToEntropy(&entropy, "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon"),
@@ -238,13 +238,13 @@ test "不正な語数・語彙・チェックサムを拒否する" {
     try testing.expectEqual(false, isValid("abandon abandon abandon"));
 }
 
-test "エントロピー長の検証" {
+test "entropy length validation" {
     var mnemonic: [256]u8 = undefined;
     const fifteen: [15]u8 = @splat(0);
     try testing.expectError(error.InvalidMnemonic, entropyToMnemonic(&mnemonic, &fifteen));
 }
 
-test "既知のパスフレーズベクタ（BIP39 仕様の TREZOR 例）" {
+test "known passphrase vector (TREZOR example from the BIP39 spec)" {
     var seed: [64]u8 = undefined;
     try mnemonicToSeed(
         &seed,
@@ -258,7 +258,7 @@ test "既知のパスフレーズベクタ（BIP39 仕様の TREZOR 例）" {
     try testing.expectEqualStrings(expected, &hex);
 }
 
-test "空白の揺れが seed に影響しない" {
+test "whitespace variations do not affect the seed" {
     const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     var seed_a: [64]u8 = undefined;
     var seed_b: [64]u8 = undefined;
@@ -267,7 +267,7 @@ test "空白の揺れが seed に影響しない" {
     try testing.expectEqualSlices(u8, &seed_a, &seed_b);
 }
 
-test "非 ASCII を明示的に拒否する（NFKD 未実装のため）" {
+test "explicitly rejects non-ASCII (NFKD is not implemented)" {
     var seed: [64]u8 = undefined;
     const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     try testing.expectError(error.UnsupportedNormalization, mnemonicToSeed(&seed, mnemonic, "パスフレーズ"));

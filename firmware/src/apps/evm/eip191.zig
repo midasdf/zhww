@@ -1,31 +1,31 @@
-//! `personal_sign`（EIP-191 の version `0x45`）のメッセージハッシュ。
+//! Message hash for `personal_sign` (EIP-191 version `0x45`).
 //!
 //! ```text
-//! keccak256("\x19Ethereum Signed Message:\n" + 十進のバイト長 + message)
+//! keccak256("\x19Ethereum Signed Message:\n" + decimal byte length + message)
 //! ```
 //!
-//! 先頭の `0x19` は「Ethereum の署名対象である」ことを示すバイトで、RLP の
-//! トランザクション（先頭が 0xC0 以上）と構造的に衝突しないようにしている。
-//! 長さは**バイト数**の十進表記（文字数ではない）であることに注意。
+//! The leading `0x19` marks the data as an Ethereum signing target, so that it cannot
+//! structurally collide with an RLP transaction (whose first byte is 0xC0 or above).
+//! Note that the length is the **byte count** in decimal (not the character count).
 //!
-//! 参考: https://eips.ethereum.org/EIPS/eip-191
-//!       https://eips.ethereum.org/EIPS/eip-712 （型付きデータ。v0.1 では未対応）
+//! References: https://eips.ethereum.org/EIPS/eip-191
+//!             https://eips.ethereum.org/EIPS/eip-712 (typed data; unsupported in v0.1)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const hashes = @import("../../core/crypto/hashes.zig");
 
-/// メッセージの前に付ける固定プレフィクス。
+/// Fixed prefix prepended to the message.
 pub const prefix = "\x19Ethereum Signed Message:\n";
 
-/// 十進表記の最大桁数（usize の最大値は 20 桁）。
+/// Maximum number of decimal digits (the largest usize has 20 digits).
 const max_length_digits = 20;
 
-/// 十進表記を `buffer` の末尾に書き、そのスライスを返す。
+/// Writes the decimal representation at the end of `buffer` and returns that slice.
 fn decimal(value: usize, buffer: *[max_length_digits]u8) []const u8 {
     var index = buffer.len;
     var remaining = value;
-    // 0 も 1 桁として書く
+    // Write 0 as a single digit too
     while (true) {
         index -= 1;
         buffer[index] = '0' + @as(u8, @intCast(remaining % 10));
@@ -35,9 +35,9 @@ fn decimal(value: usize, buffer: *[max_length_digits]u8) []const u8 {
     return buffer[index..];
 }
 
-/// `personal_sign` のメッセージハッシュを計算する。
+/// Computes the `personal_sign` message hash.
 ///
-/// 長さは必ずバイト数で書く（UTF-8 のメッセージでも文字数ではない）。
+/// The length is always the byte count (not the character count, even for UTF-8 messages).
 pub fn personalSignHash(out: *[32]u8, message: []const u8) void {
     var length_buf: [max_length_digits]u8 = undefined;
     const length_text = decimal(message.len, &length_buf);
@@ -49,20 +49,20 @@ pub fn personalSignHash(out: *[32]u8, message: []const u8) void {
     hasher.final(out);
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
-// テストでのみ使う（ハッシュが正しいことを署名の一致で確認する）。
-// 本体の依存は Keccak-256 だけ。
+// Used in tests only (a matching signature confirms that the hash is correct).
+// The module itself depends on Keccak-256 only.
 const secp256k1 = @import("../../core/crypto/secp256k1.zig");
 
-/// 長さがコンパイル時に決まらない 16 進文字列をバイト列に直す。
+/// Converts a hex string whose length is not known at compile time into bytes.
 fn decodeHex(out: []u8, hex: []const u8) void {
     std.debug.assert(out.len * 2 == hex.len);
     _ = std.fmt.hexToBytes(out, hex) catch unreachable;
 }
 
-/// 手でプレフィクスと長さを組み立ててハッシュする（十進表記の確認用）。
+/// Builds the prefix and length by hand and hashes them (to check the decimal representation).
 fn hashWithLengthText(out: *[32]u8, message: []const u8, length_text: []const u8) void {
     var hasher = hashes.Keccak256.init(.{});
     hasher.update(prefix);
@@ -71,22 +71,22 @@ fn hashWithLengthText(out: *[32]u8, message: []const u8, length_text: []const u8
     hasher.final(out);
 }
 
-test "MetaMask が公開している personal_sign の署名が有効である（外部の既知値）" {
+test "personal_sign signatures published by MetaMask are valid (external known values)" {
     // https://github.com/MetaMask/eth-sig-util/blob/main/src/personal-sign.test.ts
-    // にある「メッセージ」と「署名（r || s || v）」の組。v の 1 バイトを除いた
-    // r || s が、このハッシュと鍵に対して **有効** であることを確認する
-    // （ハッシュが 1 バイトでも違えば ECDSA の検証に失敗する）。
+    // the "message" and "signature (r || s || v)" pairs. It checks that r || s (the
+    // signature without the 1-byte v) is **valid** for this hash and key
+    // (a single differing hash byte makes ECDSA verification fail).
     //
-    // 注意: `secp256k1.sign` が返す `EcdsaSignature.data` は libsecp256k1 の内部表現で
-    // あり、r || s のビッグエンディアンではない。ここでは公開されている r || s を
-    // `parseCompact` で内部表現に直して検証する。
+    // Note: `EcdsaSignature.data` returned by `secp256k1.sign` is libsecp256k1's internal
+    // representation, not big-endian r || s. Here the published r || s is converted
+    // to the internal representation with `parseCompact` and then verified.
     const vectors = [_]struct {
         key_hex: []const u8,
         message_hex: []const u8,
         signature_hex: []const u8,
         v: u8,
     }{
-        // "Hello, world!"（13 バイト）
+        // "Hello, world!" (13 bytes)
         .{
             .key_hex = "4af1bceebf7f3634ec3cff8a2c38e51178d5d4ce585c52d6043e5e2cc3418bb0",
             .message_hex = "48656c6c6f2c20776f726c6421",
@@ -94,7 +94,7 @@ test "MetaMask が公開している personal_sign の署名が有効である�
                 "5d9c94148991bbe1f4a1818d1dff09165782749c877f5cf1eff4ef126e55714d",
             .v = 0x1c,
         },
-        // "hello world"（11 バイト、geth の内部実装から作られたテストデータ）
+        // "hello world" (11 bytes, test data generated from geth's internal implementation)
         .{
             .key_hex = "6969696969696969696969696969696969696969696969696969696969696969",
             .message_hex = "68656c6c6f20776f726c64",
@@ -102,7 +102,7 @@ test "MetaMask が公開している personal_sign の署名が有効である�
                 "0a3fc38fa8fbaaa81ead4b9f6bd03356b6f8bf18bccad167d78891636e1d6956",
             .v = 0x1b,
         },
-        // 32 バイトのバイナリメッセージ（parity のテスト由来）
+        // 32-byte binary message (from parity's tests)
         .{
             .key_hex = "4545454545454545454545454545454545454545454545454545454545454545",
             .message_hex = "0cc175b9c0f1b6a831c399e26977266192eb5ffee6ae2fec3ad71c777531578f",
@@ -126,14 +126,14 @@ test "MetaMask が公開している personal_sign の署名が有効である�
         const signature = try secp256k1.parseCompact(compact);
         try testing.expect(try secp256k1.verify(&signature, hash, try secp256k1.pubKeyCompressed(key)));
 
-        // v の値も期待どおり（27 = yParity 0 / 28 = yParity 1）
+        // The v value is as expected too (27 = yParity 0 / 28 = yParity 1)
         try testing.expect(vector.v == 27 or vector.v == 28);
     }
 }
 
-test "独立実装（eth_account 0.13.7）が計算したハッシュと一致する" {
-    // Account.sign_message(encode_defunct(message)).message_hash の値。
-    // 長さの桁数が変わる境界（0〜4 桁）と、UTF-8（バイト長 ≠ 文字数）を含む。
+test "hashes match an independent implementation (eth_account 0.13.7)" {
+    // Values of Account.sign_message(encode_defunct(message)).message_hash.
+    // Covers the digit-count boundaries (0 up to 4 digits) and UTF-8 (byte length != character count).
     const vectors = [_]struct { message: []const u8, hash_hex: []const u8 }{
         .{ .message = "", .hash_hex = "5f35dce98ba4fba25530a026ed80b2cecdaa31091ba4958b99b52ea1d068adad" },
         .{ .message = "xxxxxxxxx", .hash_hex = "9481e0d73ccde0e03d02ed91971f12e20877bd3bf6428f91be5a1d43e56bebc8" },
@@ -152,7 +152,7 @@ test "独立実装（eth_account 0.13.7）が計算したハッシュと一致�
         try testing.expectEqualSlices(u8, &expected, &hash);
     }
 
-    // 長いメッセージ（長さが 3 桁・4 桁）
+    // Long messages (lengths of 3 and 4 digits)
     const long_vectors = [_]struct { byte: u8, len: usize, hash_hex: []const u8 }{
         .{ .byte = 'a', .len = 100, .hash_hex = "90b496d4433ae2fe10bba2f73ca6a210a57d8499db0ae5dfb05f3fbeeff2b0cf" },
         .{ .byte = 'z', .len = 200, .hash_hex = "69736edfdad41e48a3519e78332e2a13813a6d556cb5ff3b30e81e66b8d71250" },
@@ -171,16 +171,16 @@ test "独立実装（eth_account 0.13.7）が計算したハッシュと一致�
     }
 }
 
-test "長さの十進表記はバイト数（手計算との一致）" {
+test "the decimal length is the byte count (matches hand-computed values)" {
     var expected: [32]u8 = undefined;
     var actual: [32]u8 = undefined;
 
-    // 0 バイト
+    // 0 bytes
     hashWithLengthText(&expected, "", "0");
     personalSignHash(&actual, "");
     try testing.expectEqualSlices(u8, &expected, &actual);
 
-    // 9 バイト / 10 バイト（桁上がり）
+    // 9 bytes / 10 bytes (carry into a new digit)
     hashWithLengthText(&expected, "xxxxxxxxx", "9");
     personalSignHash(&actual, "xxxxxxxxx");
     try testing.expectEqualSlices(u8, &expected, &actual);
@@ -189,12 +189,12 @@ test "長さの十進表記はバイト数（手計算との一致）" {
     personalSignHash(&actual, "yyyyyyyyyy");
     try testing.expectEqualSlices(u8, &expected, &actual);
 
-    // 文字数ではなくバイト数（"こんにちは" は 5 文字・15 バイト）
+    // Byte count, not character count (the Japanese string below is 5 characters, 15 bytes)
     hashWithLengthText(&expected, "こんにちは", "15");
     personalSignHash(&actual, "こんにちは");
     try testing.expectEqualSlices(u8, &expected, &actual);
 
-    // 1000 バイト
+    // 1000 bytes
     var long_message: [1000]u8 = undefined;
     @memset(&long_message, 'a');
     hashWithLengthText(&expected, &long_message, "1000");

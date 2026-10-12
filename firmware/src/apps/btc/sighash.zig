@@ -1,13 +1,13 @@
-//! トランザクションの署名対象ハッシュ（sighash）。
+//! Transaction signature hashes (sighash).
 //!
-//! - Legacy（P2PKH / P2PK）: scriptSig を差し替えた tx の二重 SHA-256
-//! - SegWit v0（P2WPKH / P2WSH）: BIP143 の preimage
+//! - Legacy (P2PKH / P2PK): double SHA-256 of the tx with scriptSig substituted
+//! - SegWit v0 (P2WPKH / P2WSH): the BIP143 preimage
 //!
-//! **対応する sighash タイプは SIGHASH_ALL と ANYONECANPAY 付きのみ。**
-//! NONE / SINGLE は「署名した覚えのない出力への送金」を許すため、誤用防止の観点から
-//! 明示的に非対応（error.UnsupportedSighash）としている。
+//! **Only SIGHASH_ALL and its ANYONECANPAY variants are supported.**
+//! NONE / SINGLE permit "paying an output you do not remember signing for", so to
+//! prevent misuse they are explicitly unsupported (error.UnsupportedSighash).
 //!
-//! 参考: https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki
+//! Reference: https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -29,12 +29,12 @@ fn hasAnyoneCanPay(sighash_type: u32) bool {
     return (sighash_type & SIGHASH_ANYONECANPAY) != 0;
 }
 
-/// P2WPKH の scriptCode（**25 バイト**）。
+/// P2WPKH scriptCode (**25 bytes**).
 ///
-/// `76a914{20}88ac`（OP_DUP / OP_HASH160 / push20 / OP_EQUALVERIFY / OP_CHECKSIG）。
-/// BIP143 の preimage では scriptCode を「CTxOut 内のスクリプトと同様に」直列化するため、
-/// 呼び出し側が `writeVarBytes` で長さ（`0x19`）を付ける。したがって preimage 上では
-/// `1976a914{20}88ac` の 26 バイトとして現れる。
+/// `76a914{20}88ac` (OP_DUP / OP_HASH160 / push20 / OP_EQUALVERIFY / OP_CHECKSIG).
+/// The BIP143 preimage serializes scriptCode "like the script inside a CTxOut", so the
+/// caller prefixes its length (`0x19`) with `writeVarBytes`. In the preimage it therefore
+/// appears as the 26 bytes `1976a914{20}88ac`.
 pub fn p2wpkhScriptCode(pubkey_hash: [20]u8) [25]u8 {
     var script: [25]u8 = undefined;
     script[0] = 0x76; // OP_DUP
@@ -46,7 +46,7 @@ pub fn p2wpkhScriptCode(pubkey_hash: [20]u8) [25]u8 {
     return script;
 }
 
-/// P2WPKH の scriptPubKey（`0014{20}`）。
+/// P2WPKH scriptPubKey (`0014{20}`).
 pub fn p2wpkhScriptPubKey(pubkey_hash: [20]u8) [22]u8 {
     var script: [22]u8 = undefined;
     script[0] = 0x00;
@@ -55,7 +55,7 @@ pub fn p2wpkhScriptPubKey(pubkey_hash: [20]u8) [22]u8 {
     return script;
 }
 
-/// BIP143 の hashPrevouts（全入力の outpoint の二重 SHA-256）。
+/// BIP143 hashPrevouts (double SHA-256 of every input's outpoint).
 pub fn hashPrevouts(allocator: std.mem.Allocator, tx: transaction.Transaction) Error![32]u8 {
     var buffer = std.ArrayList(u8).empty;
     defer buffer.deinit(allocator);
@@ -70,7 +70,7 @@ pub fn hashPrevouts(allocator: std.mem.Allocator, tx: transaction.Transaction) E
     return hash;
 }
 
-/// BIP143 の hashSequence（全入力の sequence の二重 SHA-256）。
+/// BIP143 hashSequence (double SHA-256 of every input's sequence).
 pub fn hashSequence(allocator: std.mem.Allocator, tx: transaction.Transaction) Error![32]u8 {
     var buffer = std.ArrayList(u8).empty;
     defer buffer.deinit(allocator);
@@ -84,7 +84,7 @@ pub fn hashSequence(allocator: std.mem.Allocator, tx: transaction.Transaction) E
     return hash;
 }
 
-/// BIP143 の hashOutputs（全出力の二重 SHA-256）。
+/// BIP143 hashOutputs (double SHA-256 of every output).
 pub fn hashOutputs(allocator: std.mem.Allocator, tx: transaction.Transaction) Error![32]u8 {
     var buffer = std.ArrayList(u8).empty;
     defer buffer.deinit(allocator);
@@ -99,7 +99,7 @@ pub fn hashOutputs(allocator: std.mem.Allocator, tx: transaction.Transaction) Er
     return hash;
 }
 
-/// Legacy の署名対象ハッシュ。`script_code` は前出力の scriptPubKey。
+/// Legacy signature hash. `script_code` is the previous output's scriptPubKey.
 pub fn legacySighash(
     allocator: std.mem.Allocator,
     tx: transaction.Transaction,
@@ -110,7 +110,7 @@ pub fn legacySighash(
     if (!isSupported(sighash_type)) return error.UnsupportedSighash;
     if (input_index >= tx.inputs.len) return error.InvalidEncoding;
 
-    // scriptSig を空にし、対象入力だけ script_code を入れた tx を作る
+    // Build a tx with an empty scriptSig and script_code only in the signed input
     var modified = tx;
     const inputs = try allocator.alloc(transaction.TxIn, tx.inputs.len);
     for (tx.inputs, 0..) |input, i| {
@@ -135,7 +135,7 @@ pub fn legacySighash(
     return hash;
 }
 
-/// SegWit v0（BIP143）の署名対象ハッシュ。
+/// SegWit v0 (BIP143) signature hash.
 pub fn segwitV0Sighash(
     allocator: std.mem.Allocator,
     tx: transaction.Transaction,
@@ -152,15 +152,15 @@ pub fn segwitV0Sighash(
     var buffer = std.ArrayList(u8).empty;
     defer buffer.deinit(allocator);
 
-    // hashPrevouts（ANYONECANPAY の場合はゼロ）
+    // hashPrevouts (zero for ANYONECANPAY)
     var hash_prevouts: [32]u8 = @splat(0);
     if (!anyone_can_pay) hash_prevouts = try hashPrevouts(allocator, tx);
 
-    // hashSequence（ANYONECANPAY の場合はゼロ）
+    // hashSequence (zero for ANYONECANPAY)
     var hash_sequence: [32]u8 = @splat(0);
     if (!anyone_can_pay) hash_sequence = try hashSequence(allocator, tx);
 
-    // hashOutputs（SIGHASH_ALL のみ対応なので常に全出力）
+    // hashOutputs (only SIGHASH_ALL is supported, so this is always every output)
     const hash_outputs = try hashOutputs(allocator, tx);
 
     const input = tx.inputs[input_index];
@@ -194,11 +194,11 @@ pub fn segwitV0Sighash(
     return hash;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "sighash タイプの対応範囲" {
+test "supported sighash types" {
     try testing.expect(isSupported(SIGHASH_ALL));
     try testing.expect(isSupported(SIGHASH_ALL | SIGHASH_ANYONECANPAY));
     try testing.expect(!isSupported(SIGHASH_NONE));
@@ -207,18 +207,18 @@ test "sighash タイプの対応範囲" {
     try testing.expect(!hasAnyoneCanPay(SIGHASH_ALL));
 }
 
-test "P2WPKH の scriptCode と scriptPubKey" {
+test "P2WPKH scriptCode and scriptPubKey" {
     var hash: [20]u8 = undefined;
     for (&hash, 0..) |*byte, i| byte.* = @intCast(i);
 
-    // scriptCode は `76a914{20}88ac` の 25 バイト（preimage 側で長さ 0x19 が付く）。
-    // 全バイトを比較する（末尾の 0x88 0xac を書き漏らすバグを検出するため）。
+    // scriptCode is the 25 bytes `76a914{20}88ac` (prefixed with length 0x19 in the preimage).
+    // Compare every byte (to catch a bug that drops the trailing 0x88 0xac).
     const script_code = p2wpkhScriptCode(hash);
     var expected: [25]u8 = undefined;
     _ = try std.fmt.hexToBytes(&expected, "76a914000102030405060708090a0b0c0d0e0f1011121388ac");
     try testing.expectEqualSlices(u8, &expected, &script_code);
 
-    // scriptPubKey は 0014{20}
+    // scriptPubKey is 0014{20}
     const script_pubkey = p2wpkhScriptPubKey(hash);
     var expected_pubkey: [22]u8 = undefined;
     _ = try std.fmt.hexToBytes(&expected_pubkey, "0014000102030405060708090a0b0c0d0e0f10111213");

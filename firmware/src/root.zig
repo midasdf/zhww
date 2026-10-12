@@ -34,6 +34,7 @@ pub const ui_framebuffer = @import("ui/framebuffer.zig");
 pub const ui_screen = @import("ui/screen.zig");
 pub const ui_st7789 = @import("ui/st7789.zig");
 pub const ui_qr = @import("ui/qr.zig");
+pub const ui_qr_decode = @import("ui/qr_decode.zig");
 pub const block_device = @import("fs/block_device.zig");
 pub const app_device = @import("app/device.zig");
 pub const fs_fat32 = @import("fs/fat32.zig");
@@ -70,6 +71,7 @@ test {
     _ = ui_screen;
     _ = ui_st7789;
     _ = ui_qr;
+    _ = ui_qr_decode;
     _ = block_device;
     _ = app_device;
     _ = fs_fat32;

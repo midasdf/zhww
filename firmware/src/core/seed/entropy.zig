@@ -1,14 +1,14 @@
-//! エントロピーの生成と結合（ダイス・カメラ・TRNG）。
+//! Entropy generation and combination (dice, camera, TRNG).
 //!
-//! **設計方針**
-//! - ダイスの出目は**必須**の入力。カメラ画像のエントロピーや SoC の TRNG は
-//!   「追加の寄与」であり、ダイスの置き換えではない（[docs/02-architecture.md] §3.1）
-//! - すべての入力は HKDF-SHA256（RFC 5869）で結合する。単一の源が偏っていても、
-//!   他が健全であれば出力は予測困難であり続ける
-//! - 出目から BIP39 の mnemonic までの経路は**再計算可能**である。ユーザーが
-//!   ダイスの記録から自分で検証できるようにするため、乱数を使うのは入力だけに限る
+//! **Design policy**
+//! - Dice rolls are a **required** input. Camera image entropy and the SoC TRNG are
+//!   "additional contributions", not replacements for the dice ([docs/02-architecture.md] §3.1)
+//! - All inputs are combined with HKDF-SHA256 (RFC 5869). Even if a single source is biased,
+//!   the output stays unpredictable as long as the others are sound
+//! - The path from rolls to the BIP39 mnemonic is **recomputable**. So that users can verify
+//!   it themselves from their dice record, randomness is used only for the inputs
 //!
-//! 参考: RFC 5869（HKDF）, https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
+//! Reference: RFC 5869 (HKDF), https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -18,25 +18,25 @@ const bip39 = @import("bip39.zig");
 
 const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 
-/// 12 語の mnemonic に必要な出目の数（6^50 ≒ 2^129 > 2^128）。
+/// Number of rolls needed for a 12-word mnemonic (6^50 ≒ 2^129 > 2^128).
 pub const rolls_for_12_words: usize = 50;
-/// 24 語の mnemonic に必要な出目の数（6^99 ≒ 2^255.9）。
+/// Number of rolls needed for a 24-word mnemonic (6^99 ≒ 2^255.9).
 pub const rolls_for_24_words: usize = 99;
-/// 保持できる出目の上限。
+/// Maximum number of rolls that can be stored.
 pub const max_rolls: usize = 128;
 
-/// エントロピー結合のドメイン分離用の定数。
+/// Constants for domain separation of entropy combination.
 const hkdf_salt = "zhww-entropy-v1";
 const hkdf_info = "bip39-entropy";
 
 // ---------------------------------------------------------------- HKDF
 
-/// HKDF-Extract（RFC 5869 §2.2）。
+/// HKDF-Extract (RFC 5869 §2.2).
 pub fn hkdfExtract(prk: *[32]u8, salt: []const u8, ikm: []const u8) void {
     HmacSha256.create(prk, ikm, salt);
 }
 
-/// HKDF-Expand（RFC 5869 §2.3）。
+/// HKDF-Expand (RFC 5869 §2.3).
 pub fn hkdfExpand(out: []u8, prk: [32]u8, info: []const u8) Error!void {
     if (out.len > 255 * 32) return error.BufferTooSmall;
 
@@ -62,14 +62,14 @@ pub fn hkdfExpand(out: []u8, prk: [32]u8, info: []const u8) Error!void {
     }
 }
 
-// ---------------------------------------------------------------- ダイス
+// ---------------------------------------------------------------- dice
 
-/// ダイスの出目の記録。
+/// Record of dice rolls.
 pub const Dice = struct {
     rolls: [max_rolls]u8 = undefined,
     len: usize = 0,
 
-    /// 出目（1〜6）を 1 つ追加する。
+    /// Append one roll (1-6).
     pub fn roll(self: *Dice, value: u8) Error!void {
         if (value < 1 or value > 6) return error.InvalidEncoding;
         if (self.len >= max_rolls) return error.BufferTooSmall;
@@ -77,7 +77,7 @@ pub const Dice = struct {
         self.len += 1;
     }
 
-    /// 文字列（例 "123456"）から出目を取り込む。
+    /// Ingest rolls from a string (e.g. "123456").
     pub fn rollString(self: *Dice, text: []const u8) Error!void {
         for (text) |ch| {
             if (ch < '1' or ch > '6') return error.InvalidEncoding;
@@ -85,9 +85,9 @@ pub const Dice = struct {
         }
     }
 
-    /// 出目を 6 進数の大きな整数として 64 バイトのビッグエンディアンに直す。
+    /// Turn the rolls into a 64-byte big-endian value as a large base-6 integer.
     ///
-    /// 出目の上限は 128 個なので 6^128 ≒ 2^331 となり、u512 に必ず収まる。
+    /// The roll limit is 128, so 6^128 ≒ 2^331 always fits in a u512.
     pub fn toBytes(self: Dice) [64]u8 {
         var value: u512 = 0;
         for (self.rolls[0..self.len]) |roll_value| {
@@ -98,7 +98,7 @@ pub const Dice = struct {
         return out;
     }
 
-    /// 記録した出目を文字列として返す（検証・記録用）。
+    /// Return the recorded rolls as a string (for verification and record keeping).
     pub fn format(self: Dice, out: []u8) Error![]const u8 {
         if (out.len < self.len) return error.BufferTooSmall;
         for (self.rolls[0..self.len], 0..) |value, i| {
@@ -108,12 +108,12 @@ pub const Dice = struct {
     }
 };
 
-// ---------------------------------------------------------------- 結合
+// ---------------------------------------------------------------- combination
 
-/// ダイス・カメラ・TRNG などの入力を結合して BIP39 のエントロピーを作る。
+/// Combine inputs such as dice, camera and TRNG to produce BIP39 entropy.
 ///
-/// `out.len` は 16/20/24/28/32 バイト（BIP39 の語数に対応）。
-/// **動的メモリを使わない**（固定長バッファのみ）。
+/// `out.len` is 16/20/24/28/32 bytes (corresponding to the BIP39 word counts).
+/// **No dynamic memory** (fixed-size buffers only).
 pub fn combine(
     out: []u8,
     dice: Dice,
@@ -122,9 +122,9 @@ pub fn combine(
     if (out.len != 16 and out.len != 20 and out.len != 24 and out.len != 28 and out.len != 32) {
         return error.InvalidMnemonic;
     }
-    if (dice.len < 1) return error.UnsupportedNormalization; // ダイスは必須
+    if (dice.len < 1) return error.UnsupportedNormalization; // dice are required
 
-    // HKDF-Extract の入力に、ダイスと追加の源をすべて並べる
+    // lay out the dice and all additional sources as HKDF-Extract input
     var ikm: [512]u8 = undefined;
     const dice_bytes = dice.toBytes();
     @memcpy(ikm[0..64], &dice_bytes);
@@ -143,9 +143,9 @@ pub fn combine(
     @memcpy(out, derived[0..out.len]);
 }
 
-/// 出目と追加の源から mnemonic を作る。
+/// Build a mnemonic from rolls and additional sources.
 ///
-/// `word_count` は 12 / 15 / 18 / 21 / 24。
+/// `word_count` is 12 / 15 / 18 / 21 / 24.
 pub fn mnemonicFromDice(
     out: []u8,
     dice: Dice,
@@ -165,7 +165,7 @@ pub fn mnemonicFromDice(
     return bip39.entropyToMnemonic(out, entropy[0..entropy_len]);
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -175,7 +175,7 @@ fn hexToFixed(comptime n: usize, hex: []const u8) [n]u8 {
     return out;
 }
 
-test "HKDF-SHA256（RFC 5869 テストケース 1）" {
+test "HKDF-SHA256 (RFC 5869 test case 1)" {
     const ikm: [22]u8 = @splat(0x0b);
     const salt = hexToFixed(13, "000102030405060708090a0b0c");
     const info = hexToFixed(10, "f0f1f2f3f4f5f6f7f8f9");
@@ -194,7 +194,7 @@ test "HKDF-SHA256（RFC 5869 テストケース 1）" {
     try testing.expectEqualSlices(u8, &expected_okm, &okm);
 }
 
-test "HKDF-SHA256（RFC 5869 テストケース 3: salt と info が空）" {
+test "HKDF-SHA256 (RFC 5869 test case 3: empty salt and info)" {
     const ikm: [22]u8 = @splat(0x0b);
 
     var prk: [32]u8 = undefined;
@@ -211,7 +211,7 @@ test "HKDF-SHA256（RFC 5869 テストケース 3: salt と info が空）" {
     try testing.expectEqualSlices(u8, &expected_okm, &okm);
 }
 
-test "ダイスの出目の検証" {
+test "dice roll validation" {
     var dice: Dice = .{};
     try dice.roll(1);
     try dice.roll(6);
@@ -227,7 +227,7 @@ test "ダイスの出目の検証" {
     try testing.expectError(error.InvalidEncoding, dice.rollString("17"));
 }
 
-test "50 回で 12 語、99 回で 24 語の mnemonic が作れる" {
+test "50 rolls produce a 12-word mnemonic and 99 rolls a 24-word one" {
     var dice: Dice = .{};
     var checked_12 = false;
 
@@ -251,7 +251,7 @@ test "50 回で 12 語、99 回で 24 語の mnemonic が作れる" {
     try testing.expect(bip39.isValid(text24));
 }
 
-test "同じ出目と同じ追加入力からは同じ mnemonic になる（再計算可能）" {
+test "the same rolls and extra inputs give the same mnemonic (recomputable)" {
     var dice: Dice = .{};
     try dice.rollString("12345612345612345612345612345612345612345612345612");
 
@@ -265,7 +265,7 @@ test "同じ出目と同じ追加入力からは同じ mnemonic になる（再�
     try testing.expectEqualStrings(a, b);
 }
 
-test "出目が違えば mnemonic も違う" {
+test "different rolls give a different mnemonic" {
     var dice_a: Dice = .{};
     var dice_b: Dice = .{};
     try dice_a.rollString("12345612345612345612345612345612345612345612345612");
@@ -278,7 +278,7 @@ test "出目が違えば mnemonic も違う" {
     try testing.expect(!std.mem.eql(u8, a, b));
 }
 
-test "追加のエントロピー源が結果に影響する" {
+test "additional entropy sources affect the result" {
     var dice: Dice = .{};
     try dice.rollString("12345612345612345612345612345612345612345612345612");
 
@@ -291,20 +291,20 @@ test "追加のエントロピー源が結果に影響する" {
     try testing.expect(!std.mem.eql(u8, a, b));
 }
 
-test "ダイス無しでは拒否する（ダイスは必須）" {
+test "rejects input without dice (dice are required)" {
     const empty: Dice = .{};
     var entropy: [16]u8 = undefined;
     try testing.expectError(error.UnsupportedNormalization, combine(&entropy, empty, &.{}));
 }
 
-test "エントロピー長の検証" {
+test "entropy length validation" {
     var dice: Dice = .{};
     try dice.rollString("123456");
     var wrong: [15]u8 = undefined;
     try testing.expectError(error.InvalidMnemonic, combine(&wrong, dice, &.{}));
 }
 
-test "ダイスから mnemonic・seed・アドレスまでの一気通貫" {
+test "end-to-end from dice to mnemonic, seed and address" {
     var dice: Dice = .{};
     try dice.rollString(
         "13524613524613524613524613524613524613524613524613",

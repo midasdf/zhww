@@ -1,19 +1,19 @@
-//! Bitcoin Core との相互運用テスト（2-of-3 マルチシグ P2WSH）。
+//! Interoperability test against Bitcoin Core (2-of-3 P2WSH multisig).
 //!
-//! ベクタ: tests/vectors/core_multisig.json
+//! Vector: tests/vectors/core_multisig.json
 //!
-//! 手順（実際に regtest で実行した内容をそのまま固定している）:
-//!   1. Core の `createmultisig` で 2-of-3 のアドレスを作り、送金して UTXO を作る
-//!   2. Core の `createpsbt` でトランザクションを作る
-//!   3. 本実装で 2 つの鍵で署名し（witnessScript の公開鍵順）、署名済み PSBT を書き出す
-//!   4. Core の `finalizepsbt` が `complete: true` を返し、その出力 hex が
-//!      本実装の最終トランザクションと**バイト単位で一致**する
-//!   5. Core の `testmempoolaccept` が `allowed: true` を返す
+//! Procedure (frozen exactly as it was run on regtest):
+//!   1. Create a 2-of-3 address with Core's `createmultisig`, send funds to it and get a UTXO
+//!   2. Build a transaction with Core's `createpsbt`
+//!   3. Sign it with two keys in this implementation (in witnessScript public key order) and write out the signed PSBT
+//!   4. Core's `finalizepsbt` returns `complete: true`, and its output hex
+//!      **matches byte for byte** this implementation's final transaction
+//!   5. Core's `testmempoolaccept` returns `allowed: true`
 //!
-//! マルチシグは「1 台が壊れても・盗まれても資産を失わない」ための構成であり、
-//! 本プロジェクトの推奨運用の中核である（[docs/05-threat-model.md]）。
-//! P2WSH の署名は **witnessScript に現れる公開鍵と同じ順**に並べる必要があり、
-//! ここを取り違えると Core が受理しない。
+//! Multisig is a setup where one device breaking or being stolen does not lose the funds,
+//! and it is the core of this project's recommended operation ([docs/05-threat-model.md]).
+//! P2WSH signatures must be ordered **in the same order as the public keys appearing in
+//! the witnessScript**; get this wrong and Core will not accept them.
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");
@@ -33,7 +33,7 @@ fn hexAlloc(allocator: std.mem.Allocator, hex: []const u8) ![]u8 {
     return out;
 }
 
-test "Bitcoin Core が受理する 2-of-3 マルチシグ署名を作れる" {
+test "produces a 2-of-3 multisig signature Bitcoin Core accepts" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -48,18 +48,18 @@ test "Bitcoin Core が受理する 2-of-3 マルチシグ署名を作れる" {
     const fee: u64 = @intCast(root.get("fee_sats").?.integer);
     const required: usize = @intCast(root.get("required").?.integer);
 
-    // --- witnessScript が Core のものと一致し、解析できること ---
+    // --- the witnessScript matches Core's and can be parsed ---
     const parsed_script = try zhww.btc_multisig.parseWitnessScript(witness_script);
     try testing.expectEqual(required, parsed_script.required);
 
-    // scriptPubKey が Core の witness_utxo と一致すること
+    // The scriptPubKey must match Core's witness_utxo
     const script_pubkey = zhww.btc_multisig.scriptPubKey(witness_script);
     try testing.expectEqualSlices(u8, utxo_script, &script_pubkey);
 
-    // --- 未署名トランザクションを組み立てる ---
+    // --- assemble the unsigned transaction ---
     const display_txid = try hexAlloc(allocator, root.get("prevout_txid").?.string);
     var wire_txid: [32]u8 = undefined;
-    for (0..32) |i| wire_txid[i] = display_txid[31 - i]; // 表示順 → 直列化順
+    for (0..32) |i| wire_txid[i] = display_txid[31 - i]; // display order -> serialization order
 
     const inputs = try allocator.alloc(zhww.btc_transaction.TxIn, 1);
     inputs[0] = .{
@@ -78,7 +78,7 @@ test "Bitcoin Core が受理する 2-of-3 マルチシグ署名を作れる" {
         .has_witness = false,
     };
 
-    // --- 2 つの鍵で署名する ---
+    // --- sign with two of the keys ---
     const keys_json = root.get("keys").?.array.items;
     var signers: [3]zhww.btc_multisig.Signer = undefined;
     for (keys_json, 0..) |entry, i| {
@@ -94,14 +94,14 @@ test "Bitcoin Core が受理する 2-of-3 マルチシグ署名を作れる" {
         0,
         witness_script,
         input_amount,
-        signers[0..2], // 3 つのうち 2 つ（2-of-3）
+        signers[0..2], // 2 of the 3 (2-of-3)
     );
     try testing.expectEqual(required, signatures.len);
 
-    // --- 最終トランザクションを組み立て、Core の出力と比較する ---
+    // --- assemble the final transaction and compare it against Core's output ---
     const witness = try zhww.btc_multisig.buildWitness(allocator, signatures, witness_script);
     try testing.expectEqual(@as(usize, required + 2), witness.len);
-    try testing.expectEqual(@as(usize, 0), witness[0].len); // 先頭は空要素
+    try testing.expectEqual(@as(usize, 0), witness[0].len); // the first element is empty
 
     const final_inputs = try allocator.alloc(zhww.btc_transaction.TxIn, 1);
     final_inputs[0] = inputs[0];
@@ -118,7 +118,7 @@ test "Bitcoin Core が受理する 2-of-3 マルチシグ署名を作れる" {
     const expected = try hexAlloc(allocator, root.get("expected_final_tx").?.string);
     try testing.expectEqualSlices(u8, expected, final_bytes);
 
-    // --- 各署名を独立に再計算した sighash で検証する ---
+    // --- verify each signature against an independently recomputed sighash ---
     const message = try zhww.btc_multisig.sighashForP2wsh(
         allocator,
         tx,
@@ -137,7 +137,7 @@ test "Bitcoin Core が受理する 2-of-3 マルチシグ署名を作れる" {
     }
 }
 
-test "マルチシグ: 署名が足りなければ拒否する" {
+test "multisig: rejects when there are not enough signatures" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -146,7 +146,7 @@ test "マルチシグ: 署名が足りなければ拒否する" {
     const root = parsed.value.object;
     const witness_script = try hexAlloc(allocator, root.get("witness_script").?.string);
 
-    // witnessScript に含まれない鍵しか無い場合は署名できない
+    // With only keys that are not in the witnessScript, signing is impossible
     const stranger = zhww.btc_multisig.Signer{
         .private_key = hexToFixed(32, "0000000000000000000000000000000000000000000000000000000000000001"),
         .public_key = try zhww.secp256k1.pubKeyCompressed(

@@ -1,4 +1,4 @@
-//! ハッシュ関数の集約。Bitcoin と Ethereum で必要になるものをここに集める。
+//! Hash function collection point. Everything Bitcoin and Ethereum need is gathered here.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -8,21 +8,21 @@ pub const Sha256 = std.crypto.hash.sha2.Sha256;
 pub const Sha512 = std.crypto.hash.sha2.Sha512;
 pub const Keccak256 = std.crypto.hash.sha3.Keccak256;
 
-/// 二重 SHA-256（Bitcoin のチェックサムと BIP32 で使用）。
+/// Double SHA-256 (used for Bitcoin checksums and BIP32).
 pub fn sha256d(out: *[32]u8, data: []const u8) void {
     var first: [32]u8 = undefined;
     Sha256.hash(data, &first, .{});
     Sha256.hash(&first, out, .{});
 }
 
-/// RIPEMD160(SHA256(data))。Bitcoin のアドレスと BIP32 fingerprint で使用。
+/// RIPEMD160(SHA256(data)). Used for Bitcoin addresses and BIP32 fingerprints.
 pub fn hash160(out: *[20]u8, data: []const u8) void {
     var digest: [32]u8 = undefined;
     Sha256.hash(data, &digest, .{});
     Ripemd160.hash(&digest, out, .{});
 }
 
-/// BIP340 の tagged hash。Taproot の tweak 計算で使用。
+/// BIP340 tagged hash. Used for Taproot tweak computation.
 ///
 /// SHA256(SHA256(tag) || SHA256(tag) || msg)
 pub fn taggedHash(out: *[32]u8, comptime tag: []const u8, data: []const u8) void {
@@ -35,11 +35,11 @@ pub fn taggedHash(out: *[32]u8, comptime tag: []const u8, data: []const u8) void
     ctx.final(out);
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "sha256d は二重ハッシュである" {
+test "sha256d is a double hash" {
     var expected: [32]u8 = undefined;
     var once: [32]u8 = undefined;
     Sha256.hash("hello", &once, .{});
@@ -50,7 +50,7 @@ test "sha256d は二重ハッシュである" {
     try testing.expectEqualSlices(u8, &expected, &actual);
 }
 
-test "hash160 は RIPEMD160(SHA256(x)) である" {
+test "hash160 is RIPEMD160(SHA256(x))" {
     var sha: [32]u8 = undefined;
     Sha256.hash("zhww", &sha, .{});
     var expected: [20]u8 = undefined;
@@ -61,7 +61,7 @@ test "hash160 は RIPEMD160(SHA256(x)) である" {
     try testing.expectEqualSlices(u8, &expected, &actual);
 }
 
-test "taggedHash は BIP340 の定義どおり" {
+test "taggedHash follows the BIP340 definition" {
     var tag_digest: [32]u8 = undefined;
     Sha256.hash("TapTweak", &tag_digest, .{});
 

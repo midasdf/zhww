@@ -1,16 +1,18 @@
-//! EIP-712 型付きデータ（typed data）のハッシュ計算と署名。
+//! EIP-712 typed data hashing and signing.
 //!
-//! 参考: https://eips.ethereum.org/EIPS/eip-712
+//! References: https://eips.ethereum.org/EIPS/eip-712
 //!
-//! **実装上の要点**
-//! - `encodeType` は「主型の定義 + 参照される構造体型を名前順に並べたもの」。参照関係は
-//!   推移的に集める（順序を間違えるとハッシュが変わるため、テストで固定する）
-//! - 数値は JSON の数値表記に依存しないよう、`parse_numbers = false` で文字列として読み、
-//!   十進文字列（および `0x` 付き十六進）として解釈する。uint256 の範囲外はエラーにする
-//! - ドメインの型（`EIP712Domain`）が `types` に無い場合は、標準の並び
-//!   （name / version / chainId / verifyingContract / salt）で推論する
+//! **Implementation notes**
+//! - `encodeType` is "the definition of the primary type plus the referenced struct types
+//!   sorted by name". References are collected transitively (the order changes the hash, so
+//!   the tests pin it down)
+//! - To avoid depending on JSON number formatting, numbers are read as strings with
+//!   `parse_numbers = false` and interpreted as decimal strings (and hex with `0x`).
+//!   Values outside the uint256 range are an error
+//! - When the domain type (`EIP712Domain`) is absent from `types`, it is inferred in the
+//!   standard order (name / version / chainId / verifyingContract / salt)
 //!
-//! テストは独立実装（eth-account 0.13.7）で計算した値との一致を確認している。
+//! The tests check agreement with values computed by an independent implementation (eth-account 0.13.7).
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -20,18 +22,18 @@ const secp256k1 = @import("../../core/crypto/secp256k1.zig");
 
 const Keccak256 = hashes.Keccak256;
 
-/// 型のフィールド定義。
+/// Field definition of a type.
 pub const Field = struct {
     name: []const u8,
     type_name: []const u8,
 };
 
-/// 署名結果。
+/// Signing result.
 pub const SignedTypedData = struct {
     signing_hash: [32]u8,
-    /// `r || s`（ビッグエンディアン）。
+    /// `r || s` (big-endian).
     compact: [64]u8,
-    /// 0 または 1（Ethereum の `yParity`）。
+    /// 0 or 1 (Ethereum's `yParity`).
     recovery_id: u8,
 
     pub fn r(self: SignedTypedData) u256 {
@@ -43,12 +45,12 @@ pub const SignedTypedData = struct {
     }
 };
 
-/// 型付きデータ（JSON）。
+/// Typed data (JSON).
 pub const TypedData = struct {
     parsed: std.json.Parsed(std.json.Value),
     allocator: std.mem.Allocator,
 
-    /// JSON 文字列を解析する。数値は文字列として保持する（uint256 を正確に扱うため）。
+    /// Parses a JSON string. Numbers are kept as strings (to handle uint256 exactly).
     pub fn parse(allocator: std.mem.Allocator, json: []const u8) Error!TypedData {
         const parsed = std.json.parseFromSlice(
             std.json.Value,
@@ -76,9 +78,9 @@ pub const TypedData = struct {
         return value.string;
     }
 
-    // ------------------------------------------------------------ 型の定義
+    // ------------------------------------------------------------ type definitions
 
-    /// 型のフィールド一覧。`EIP712Domain` が types に無い場合はドメインから推論する。
+    /// Field list of a type. When `EIP712Domain` is absent from types, it is inferred from the domain.
     pub fn fieldsOf(self: TypedData, type_name: []const u8) Error![]Field {
         const types = try self.typesMap();
         if (types.get(type_name)) |entry| {
@@ -97,7 +99,7 @@ pub const TypedData = struct {
         return error.InvalidEncoding;
     }
 
-    /// ドメインの型が与えられていない場合に、標準の並びでフィールドを推論する。
+    /// Infers the fields in the standard order when no domain type is given.
     fn inferDomainFields(self: TypedData) Error![]Field {
         const domain = self.parsed.value.object.get("domain") orelse return error.InvalidEncoding;
         if (domain != .object) return error.InvalidEncoding;
@@ -127,20 +129,20 @@ pub const TypedData = struct {
         return out;
     }
 
-    /// 構造体型かどうか（原子型・配列の基底型ではない）。
+    /// Whether this is a struct type (not an atomic type or the base type of an array).
     fn isStructType(self: TypedData, name: []const u8) bool {
         const types = self.typesMap() catch return false;
         return types.get(name) != null;
     }
 
-    /// 配列の基底型を取り出す（`Person[]` → `Person`、`uint256[2]` → `uint256`）。
+    /// Extracts the base type of an array (`Person[]` -> `Person`, `uint256[2]` -> `uint256`).
     pub fn baseType(name: []const u8) []const u8 {
         if (!std.mem.endsWith(u8, name, "]")) return name;
         const bracket = std.mem.lastIndexOfScalar(u8, name, '[') orelse return name;
         return name[0..bracket];
     }
 
-    /// `encodeType`（主型 + 参照型を名前順に連結した文字列）。
+    /// `encodeType` (primary type plus referenced types concatenated in name order).
     pub fn encodeType(self: TypedData, type_name: []const u8) Error![]u8 {
         var dependencies = std.ArrayList([]const u8).empty;
         defer dependencies.deinit(self.allocator);
@@ -210,7 +212,7 @@ pub const TypedData = struct {
         return digest;
     }
 
-    // ------------------------------------------------------------ エンコード
+    // ------------------------------------------------------------ encoding
 
     /// `hashStruct(s) = keccak256(typeHash ‖ encodeData(s))`
     pub fn structHash(
@@ -251,13 +253,13 @@ pub const TypedData = struct {
         value: std.json.Value,
         out: *std.ArrayList(u8),
     ) Error!void {
-        // 配列（固定長・動的のどちらも「要素を並べたものを keccak256 する」）
+        // Arrays (both fixed-size and dynamic hash "the concatenated elements with keccak256")
         //
         // EIP-712 §Definition of encodeData:
         //   "The array values are encoded as the keccak256 hash of the concatenated
         //    encodeData of their contents (i.e. the encoding of SomeType[5] is identical
         //    to that of a struct containing five members of type SomeType)."
-        // 固定長でもハッシュする点に注意（ABI エンコードとは異なる）。
+        // Note that even fixed-size arrays are hashed (unlike ABI encoding).
         if (std.mem.endsWith(u8, type_name, "]")) {
             const bracket = std.mem.lastIndexOfScalar(u8, type_name, '[') orelse {
                 return error.InvalidEncoding;
@@ -284,7 +286,7 @@ pub const TypedData = struct {
             return;
         }
 
-        // 構造体（再帰）
+        // Struct (recursive)
         if (self.isStructType(type_name)) {
             var digest: [32]u8 = undefined;
             try self.structHash(type_name, value, &digest);
@@ -292,7 +294,7 @@ pub const TypedData = struct {
             return;
         }
 
-        // 原子型
+        // Atomic types
         var word: [32]u8 = @splat(0);
         if (std.mem.eql(u8, type_name, "string")) {
             if (value != .string) return error.InvalidEncoding;
@@ -307,11 +309,11 @@ pub const TypedData = struct {
             if (size == 0 or size > 32) return error.InvalidEncoding;
             const raw = try self.decodeHex(value);
             if (raw.len != size) return error.InvalidEncoding;
-            @memcpy(word[0..size], raw); // bytesN は左寄せ（右をゼロ埋め）
+            @memcpy(word[0..size], raw); // bytesN is left-aligned (zero-padded on the right)
         } else if (std.mem.eql(u8, type_name, "address")) {
             const raw = try self.decodeHex(value);
             if (raw.len != 20) return error.InvalidEncoding;
-            @memcpy(word[12..32], raw); // 左をゼロ埋め
+            @memcpy(word[12..32], raw); // zero-padded on the left
         } else if (std.mem.eql(u8, type_name, "bool")) {
             if (value != .bool) return error.InvalidEncoding;
             word[31] = if (value.bool) 1 else 0;
@@ -320,7 +322,7 @@ pub const TypedData = struct {
         } else if (std.mem.startsWith(u8, type_name, "int")) {
             const text = try self.numberText(value);
             if (text.len > 0 and text[0] == '-') {
-                // 負数は 2 の補数
+                // Negative numbers use two's complement
                 const magnitude = std.fmt.parseInt(u256, text[1..], 10) catch {
                     return error.InvalidEncoding;
                 };
@@ -368,7 +370,7 @@ pub const TypedData = struct {
         return out;
     }
 
-    // ------------------------------------------------------------ ハッシュ
+    // ------------------------------------------------------------ hashing
 
     /// `domainSeparator = hashStruct(eip712Domain)`
     pub fn domainSeparator(self: TypedData, out: *[32]u8) Error!void {
@@ -376,7 +378,7 @@ pub const TypedData = struct {
         try self.structHash("EIP712Domain", domain, out);
     }
 
-    /// 署名対象: `keccak256("\x19\x01" ‖ domainSeparator ‖ hashStruct(message))`
+    /// Signing target: `keccak256("\x19\x01" ‖ domainSeparator ‖ hashStruct(message))`
     pub fn signingHash(self: TypedData, out: *[32]u8) Error!void {
         var separator: [32]u8 = undefined;
         try self.domainSeparator(&separator);
@@ -395,7 +397,7 @@ pub const TypedData = struct {
         Keccak256.hash(&buffer, out, .{});
     }
 
-    /// 型付きデータに署名する（署名したら必ず検証する）。
+    /// Signs typed data (the signature is always verified after signing).
     pub fn signTypedData(self: TypedData, priv: [32]u8) Error!SignedTypedData {
         var hash: [32]u8 = undefined;
         try self.signingHash(&hash);
@@ -413,10 +415,11 @@ pub const TypedData = struct {
     }
 };
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 //
-// 期待値は独立実装（eth-account 0.13.7）で計算した。仕様書の Mail の例については
-// EIP-712 の仕様に掲載されている既知の値（f2cee375… / c52c0ee5… / be609aee…）と一致する。
+// The expected values were computed with an independent implementation (eth-account 0.13.7).
+// For the Mail example from the specification they match the known values published in the
+// EIP-712 specification (f2cee375… / c52c0ee5… / be609aee…).
 
 const testing = std.testing;
 
@@ -446,14 +449,14 @@ const mail_example =
     \\}
 ;
 
-test "EIP-712 仕様書の Mail の例（ドメイン分離・構造体ハッシュ・署名対象）" {
+test "Mail example from the EIP-712 specification (domain separator, struct hash, signing target)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var data = try TypedData.parse(allocator, mail_example);
 
-    // encodeType は「主型 + 参照型を名前順」
+    // encodeType is "primary type + referenced types in name order"
     const encoded = try data.encodeType("Mail");
     try testing.expectEqualStrings(
         "Mail(Person from,Person to,string contents)Person(string name,address wallet)",
@@ -487,7 +490,7 @@ test "EIP-712 仕様書の Mail の例（ドメイン分離・構造体ハッシ
     data.deinit();
 }
 
-test "EIP-712 動的配列・bytes・bytes32・string" {
+test "EIP-712 dynamic arrays, bytes, bytes32, string" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -527,7 +530,7 @@ test "EIP-712 動的配列・bytes・bytes32・string" {
     data.deinit();
 }
 
-test "EIP-712 入れ子の構造体・固定長配列・bool" {
+test "EIP-712 nested structs, fixed-size arrays, bool" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -565,7 +568,7 @@ test "EIP-712 入れ子の構造体・固定長配列・bool" {
     data.deinit();
 }
 
-test "EIP-712 依存する型が複数ある場合は名前順に連結する" {
+test "EIP-712 concatenates multiple dependent types in name order" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -600,7 +603,7 @@ test "EIP-712 依存する型が複数ある場合は名前順に連結する" {
     data.deinit();
 }
 
-test "EIP-712 ドメインの型が無い場合は標準の並びで推論する" {
+test "EIP-712 infers the standard field order when the domain type is absent" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -637,7 +640,7 @@ test "EIP-712 ドメインの型が無い場合は標準の並びで推論する
     data.deinit();
 }
 
-test "EIP-712 の署名が独立実装（eth-account）と一致する" {
+test "EIP-712 signatures match an independent implementation (eth-account)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -647,7 +650,7 @@ test "EIP-712 の署名が独立実装（eth-account）と一致する" {
     const priv = hexToFixed(32, "4646464646464646464646464646464646464646464646464646464646464646");
     const signed = try data.signTypedData(priv);
 
-    // eth-account が同じ鍵・同じハッシュに対して生成した署名と一致する
+    // Matches the signature eth-account produces for the same key and the same hash
     const expected_compact = hexToFixed(
         64,
         "5318aee9942b84885761bb20e768372b76e7ee454fc4d39b59ce07338d15a06c" ++
@@ -658,15 +661,15 @@ test "EIP-712 の署名が独立実装（eth-account）と一致する" {
     data.deinit();
 }
 
-test "EIP-712 異常系を拒否する" {
+test "EIP-712 rejects invalid input" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // 不正な JSON
+    // Invalid JSON
     try testing.expectError(error.InvalidEncoding, TypedData.parse(allocator, "not json"));
 
-    // primaryType が types に無い
+    // primaryType is absent from types
     const missing_type =
         \\{"types":{"A":[{"name":"x","type":"uint256"}]},"primaryType":"B",
         \\ "domain":{"name":"x"},"message":{"x":1}}
@@ -676,7 +679,7 @@ test "EIP-712 異常系を拒否する" {
     try testing.expectError(error.InvalidEncoding, data.signingHash(&out));
     data.deinit();
 
-    // 構造体のフィールドが欠けている
+    // A struct field is missing
     const missing_field =
         \\{"types":{"A":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}]},
         \\ "primaryType":"A","domain":{"name":"x"},"message":{"x":1}}
@@ -685,7 +688,7 @@ test "EIP-712 異常系を拒否する" {
     try testing.expectError(error.InvalidEncoding, data2.signingHash(&out));
     data2.deinit();
 
-    // uint256 の範囲を超える値
+    // A value beyond the uint256 range
     const too_large =
         \\{"types":{"A":[{"name":"x","type":"uint256"}]},
         \\ "primaryType":"A","domain":{"name":"x"},
@@ -695,7 +698,7 @@ test "EIP-712 異常系を拒否する" {
     try testing.expectError(error.InvalidEncoding, data3.signingHash(&out));
     data3.deinit();
 
-    // bytes32 の長さが違う
+    // bytes32 with the wrong length
     const wrong_bytes =
         \\{"types":{"A":[{"name":"x","type":"bytes32"}]},
         \\ "primaryType":"A","domain":{"name":"x"},"message":{"x":"0x1234"}}

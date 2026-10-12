@@ -1,24 +1,24 @@
-//! RP2040 / RP2350（ベアメタル）でコアがコンパイルできるかの確認用。
+//! For checking that the core compiles on RP2040 / RP2350 (bare metal).
 //!
-//! Linux を前提にしない Pico 系へ移植できるかを確かめるためのスモークテスト。
-//! **テストランナーでは実行しない**（`zig build test` の対象ではない）。
-//! 次のように、ターゲットを指定してコンパイルが通ることを確認する:
+//! A smoke test to confirm the code can be ported to the Pico family without assuming Linux.
+//! **It is not run by the test runner** (it is not part of `zig build test`).
+//! Confirm that it compiles with a target specified, as follows:
 //!
 //! ```bash
-//! # まとめて確認する場合（build.zig のステップ）
+//! # Check everything at once (a build.zig step)
 //! zig build pico
 //!
-//! # 個別に確認する場合
+//! # Check individually
 //! zig build-obj pico_smoke.zig -target thumb-freestanding -mcpu=cortex_m0plus -OReleaseSmall
 //! zig build-obj pico_smoke.zig -target thumb-freestanding -mcpu=cortex_m33 -OReleaseSmall
 //! ```
 //!
-//! 未定義シンボルは libsecp256k1（`secp256k1_*`）と compiler-rt（`__aeabi_*`）だけになる。
-//! 前者はターゲット向けに別途ビルドが必要、後者は Zig が供給する。
+//! The only undefined symbols left are libsecp256k1 (`secp256k1_*`) and compiler-rt (`__aeabi_*`).
+//! The former must be built separately for the target; the latter is supplied by Zig.
 const std = @import("std");
 const zhww = @import("src/root.zig");
 
-/// アドレス生成（BIP84）と PSBT 署名までを参照させて、実際にコード生成させる。
+/// Reference address generation (BIP84) through PSBT signing so that real code gets generated.
 export fn zhww_smoke(
     mnemonic_ptr: [*]const u8,
     mnemonic_len: usize,
@@ -43,7 +43,7 @@ export fn zhww_smoke(
     return address.len + result.partial_sigs.len;
 }
 
-/// UI 層（画面・LCD ドライバ）も参照させる。
+/// Also reference the UI layer (screen and LCD driver).
 export fn zhww_smoke_ui(pixels_ptr: [*]u16, count: usize, out: [*]u8, out_len: usize) usize {
     var fb = @import("src/ui/framebuffer.zig").Framebuffer.init(pixels_ptr[0..count], 240, 240) catch return 0;
     const modules: [9]u8 = .{ 1, 0, 1, 0, 1, 0, 1, 0, 1 };
@@ -71,7 +71,7 @@ export fn zhww_smoke_ui(pixels_ptr: [*]u16, count: usize, out: [*]u8, out_len: u
     return fb.getPixel(0, 0);
 }
 
-/// EVM と UR も参照させる（コンパイル対象に含める）。
+/// Also reference EVM and UR (to include them in the compilation).
 export fn zhww_smoke_evm(
     data_ptr: [*]const u8,
     data_len: usize,
@@ -80,7 +80,7 @@ export fn zhww_smoke_evm(
 ) usize {
     const data = data_ptr[0..data_len];
     const out = out_ptr[0..out_len];
-    // ベアメタルでは固定バッファを使う（page_allocator は使えない）
+    // Bare metal uses a fixed buffer (page_allocator is unavailable)
     var fba = std.heap.FixedBufferAllocator.init(out);
     const decoded = zhww.evm_transaction.decode(fba.allocator(), data) catch return 0;
     var encoder = zhww.ur.Encoder.init(

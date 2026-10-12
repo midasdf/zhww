@@ -1,13 +1,14 @@
-//! RIPEMD-160 の実装。
+//! RIPEMD-160 implementation.
 //!
-//! **なぜ自前実装が必要か**: Zig の標準ライブラリに RIPEMD-160 が無く、
-//! かつ Raspberry Pi OS (OpenSSL 3) では OpenSSL 経由でも利用できないことがある。
-//! Bitcoin のアドレス生成と BIP32 の fingerprint は HASH160 = RIPEMD160(SHA256(x))
-//! に依存するため、ターゲット環境で必ず動く実装を自前で持つ。
+//! **Why we need our own implementation**: the Zig standard library has no RIPEMD-160,
+//! and on Raspberry Pi OS (OpenSSL 3) it can be unavailable even through OpenSSL.
+//! Bitcoin address generation and BIP32 fingerprints depend on
+//! HASH160 = RIPEMD160(SHA256(x)), so we keep our own implementation that is guaranteed to
+//! work on the target environment.
 //!
-//! ストリーミング API（init/update/final）を備えるため、任意長の入力に対応する。
+//! It provides a streaming API (init/update/final), so it handles input of any length.
 //!
-//! 参考: ISO/IEC 10118-3, https://homes.esat.kuleuven.be/~bosselae/ripemd160.html
+//! Reference: ISO/IEC 10118-3, https://homes.esat.kuleuven.be/~bosselae/ripemd160.html
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -65,7 +66,7 @@ pub const Ripemd160 = struct {
     pub fn final(self: *Ripemd160, out: *[digest_length]u8) void {
         const bit_len = self.total_len *% 8;
 
-        // パディング: 0x80、0 埋め、リトルエンディアンのビット長（8 バイト）
+        // padding: 0x80, zero fill, little-endian bit length (8 bytes)
         var pad: [72]u8 = @splat(0);
         pad[0] = 0x80;
         const pad_len: usize = if (self.buf_len < 56) 56 - self.buf_len else 120 - self.buf_len;
@@ -77,7 +78,7 @@ pub const Ripemd160 = struct {
         }
     }
 
-    /// std.crypto のハッシュと同じ呼び出し規約。
+    /// Same calling convention as std.crypto hashes.
     pub fn hash(b: []const u8, out: *[digest_length]u8, options: Options) void {
         var ctx = init(options);
         ctx.update(b);
@@ -172,7 +173,7 @@ fn compress(state: *[5]u32, block: *const [Ripemd160.block_length]u8) void {
     state[0] = t;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -182,7 +183,7 @@ fn hexToBuf(comptime hex: []const u8) [hex.len / 2]u8 {
     return out;
 }
 
-test "公式テストベクタ（ISO/IEC 10118-3）" {
+test "official test vectors (ISO/IEC 10118-3)" {
     const cases = .{
         .{ "", "9c1185a5c5e9fc54612808977ee8f548b2258d31" },
         .{ "a", "0bdc9d2d256b3ee9daae347be6f4dc835a467ffe" },
@@ -204,7 +205,7 @@ test "公式テストベクタ（ISO/IEC 10118-3）" {
     }
 }
 
-test "ブロック境界（64 バイト）をまたぐ長さで分割更新と一括計算が一致する" {
+test "chunked updates match one-shot hashing for lengths spanning the 64-byte block boundary" {
     var message: [200]u8 = undefined;
     for (&message, 0..) |*byte, i| byte.* = @intCast(i % 251);
     for ([_]usize{ 0, 1, 55, 56, 57, 63, 64, 65, 127, 128, 199 }) |length| {
@@ -227,7 +228,7 @@ test "ブロック境界（64 バイト）をまたぐ長さで分割更新と�
     }
 }
 
-test "100 万バイトの 'a'（長い入力の分割処理）" {
+test "one million 'a' bytes (chunked processing of long input)" {
     var ctx = Ripemd160.init(.{});
     const chunk: [1000]u8 = @splat('a');
     for (0..1000) |_| ctx.update(&chunk);

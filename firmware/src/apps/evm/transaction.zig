@@ -1,27 +1,27 @@
-//! Ethereum トランザクションの署名（EIP-155 legacy と EIP-1559 type 2）。
+//! Ethereum transaction signing (EIP-155 legacy and EIP-1559 type 2).
 //!
-//! **署名対象ハッシュ**
+//! **Signing hash**
 //! - legacy: `keccak256(RLP([nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]))`
 //! - 1559  : `keccak256(0x02 || RLP([chainId, nonce, maxPriorityFeePerGas, maxFeePerGas,
 //!                                  gasLimit, to, value, data, accessList]))`
 //!
-//! **署名済みトランザクション**
-//! - legacy: `RLP([nonce, gasPrice, gasLimit, to, value, data, v, r, s])`、`v = chainId * 2 + 35 + yParity`
+//! **Signed transaction**
+//! - legacy: `RLP([nonce, gasPrice, gasLimit, to, value, data, v, r, s])`, `v = chainId * 2 + 35 + yParity`
 //! - 1559  : `0x02 || RLP([... , yParity, r, s])`
 //!
-//! **設計方針**
-//! - **メモリ確保をしない**。鍵を扱う経路で `OutOfMemory` を起こさないため、出力先は
-//!   呼び出し側が用意する（足りなければ `error.BufferTooSmall`）。
-//! - リストの長さはヘッダに書く必要があるため、まず「同じフィールド書き込み」を
-//!   `MeasureSink` で走らせて長さを測る。長さの手計算によるハッシュ不一致を
-//!   構造的に防ぐ（フィールド順の定義は 1 箇所だけ）。
-//! - 署名演算は監査済み libsecp256k1 のみを使い、**署名したら必ず検証する**。
-//! - pre-EIP-155（`v = 27/28`）は対応しない。リプレイ攻撃を許すため、意図的に
-//!   非対応としている。
+//! **Design policy**
+//! - **No memory allocation.** So that the key-handling path cannot raise `OutOfMemory`,
+//!   the caller provides the output buffer (too small a buffer gives `error.BufferTooSmall`).
+//! - Because a list length must be written into the header, the same field-writing code is
+//!   first run through `MeasureSink` to measure the length. This structurally prevents hash
+//!   mismatches from hand-computed lengths (the field order is defined in exactly one place).
+//! - Signing uses only audited libsecp256k1, and **every signature is verified before it is returned**.
+//! - pre-EIP-155 (`v = 27/28`) is not supported. It is deliberately unsupported because it
+//!   would allow replay attacks.
 //!
-//! 参考: https://eips.ethereum.org/EIPS/eip-155
-//!       https://eips.ethereum.org/EIPS/eip-1559
-//!       https://eips.ethereum.org/EIPS/eip-2718
+//! References: https://eips.ethereum.org/EIPS/eip-155
+//!             https://eips.ethereum.org/EIPS/eip-1559
+//!             https://eips.ethereum.org/EIPS/eip-2718
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -30,48 +30,48 @@ const hashes = @import("../../core/crypto/hashes.zig");
 const secp256k1 = @import("../../core/crypto/secp256k1.zig");
 const rlp = @import("rlp.zig");
 
-/// EIP-2718 の type 2（EIP-1559）を表す先頭バイト。
+/// Leading byte that marks EIP-2718 type 2 (EIP-1559).
 pub const transaction_type_eip1559: u8 = 0x02;
 
-/// EIP-155（legacy）トランザクションのフィールド。
+/// Fields of an EIP-155 (legacy) transaction.
 pub const LegacyTx = struct {
     nonce: u256,
     gas_price: u256,
     gas_limit: u256,
-    /// 送信先。null はコントラクト作成（空文字列として符号化する）。
+    /// Destination. null means contract creation (encoded as the empty string).
     to: ?[20]u8,
     value: u256,
     data: []const u8,
-    /// EIP-155 のチェーン ID。`v = chain_id * 2 + 35 + yParity` になる。
+    /// EIP-155 chain ID. It yields `v = chain_id * 2 + 35 + yParity`.
     chain_id: u256,
 };
 
-/// EIP-2930 のアクセスリスト項目（EIP-1559 でも使う）。
+/// An EIP-2930 access list item (also used by EIP-1559).
 pub const AccessListItem = struct {
     address: [20]u8,
     storage_keys: []const [32]u8,
 };
 
-/// EIP-1559（type 2）トランザクションのフィールド。
+/// Fields of an EIP-1559 (type 2) transaction.
 pub const Eip1559Tx = struct {
     chain_id: u256,
     nonce: u256,
     max_priority_fee_per_gas: u256,
     max_fee_per_gas: u256,
     gas_limit: u256,
-    /// 送信先。null はコントラクト作成。
+    /// Destination. null means contract creation.
     to: ?[20]u8,
     value: u256,
     data: []const u8,
     access_list: []const AccessListItem = &.{},
 };
 
-// ---------------------------------------------------------------- RLP 出力先
+// ---------------------------------------------------------------- RLP sinks
 //
-// 「長さを測る」「ハッシュに入れる」「バッファに書く」の 3 通りを、同じフィールド順の
-// コードで使い回すための小さなインタフェース（`uint` / `bytes` / `listHeader`）。
+// A small interface (`uint` / `bytes` / `listHeader`) that lets the same field-order code
+// serve the three modes: measure the length, feed the hash, and write to a buffer.
 
-/// 符号化後の長さだけを数える。
+/// Counts only the encoded length.
 const MeasureSink = struct {
     written: usize = 0,
 
@@ -92,7 +92,7 @@ const MeasureSink = struct {
     }
 };
 
-/// Keccak-256 に流し込む。
+/// Feeds Keccak-256.
 const HashSink = struct {
     hasher: *hashes.Keccak256,
 
@@ -104,7 +104,7 @@ const HashSink = struct {
     fn bytes(self: HashSink, data: []const u8) Error!void {
         var header_buf: [rlp.max_header_len]u8 = undefined;
         const header = try rlp.encodeBytesHeader(&header_buf, data);
-        // ヘッダが空（1 バイトかつ < 0x80）の場合は本体だけを書く
+        // When the header is empty (a single byte < 0x80), write only the body
         if (header.len != 0) self.hasher.update(header);
         self.hasher.update(data);
     }
@@ -115,7 +115,7 @@ const HashSink = struct {
     }
 };
 
-/// 出力バッファに書く。
+/// Writes to the output buffer.
 const SliceSink = struct {
     out: []u8,
     pos: usize = 0,
@@ -133,16 +133,16 @@ const SliceSink = struct {
     }
 };
 
-/// 長さの加算。あふれる場合は「バッファに収まらない」として拒否する。
+/// Adds lengths. Overflow is rejected as "does not fit in the buffer".
 fn addLen(a: usize, b: usize) Error!usize {
     return std.math.add(usize, a, b) catch error.BufferTooSmall;
 }
 
-// ---------------------------------------------------------------- フィールド
+// ---------------------------------------------------------------- fields
 //
-// フィールド順の定義はここだけに置く（長さ測定・ハッシュ・直列化で共用）。
+// The field order is defined here and nowhere else (shared by measuring, hashing, serialization).
 
-/// `to` フィールド。コントラクト作成時は空文字列。
+/// The `to` field. The empty string for contract creation.
 fn writeTo(sink: anytype, to: ?[20]u8) Error!void {
     if (to) |address| {
         var bytes = address;
@@ -152,7 +152,7 @@ fn writeTo(sink: anytype, to: ?[20]u8) Error!void {
     }
 }
 
-/// legacy の共通部分（nonce, gasPrice, gasLimit, to, value, data）。
+/// The common legacy part (nonce, gasPrice, gasLimit, to, value, data).
 fn writeLegacyFields(tx: LegacyTx, sink: anytype) Error!void {
     try sink.uint(tx.nonce);
     try sink.uint(tx.gas_price);
@@ -162,7 +162,7 @@ fn writeLegacyFields(tx: LegacyTx, sink: anytype) Error!void {
     try sink.bytes(tx.data);
 }
 
-/// EIP-155 の署名対象（chainId, 0, 0 を末尾に足した 9 要素）。
+/// EIP-155 signing payload (9 elements, with chainId, 0, 0 appended).
 fn writeLegacySigningFields(tx: LegacyTx, sink: anytype) Error!void {
     try writeLegacyFields(tx, sink);
     try sink.uint(tx.chain_id);
@@ -170,7 +170,7 @@ fn writeLegacySigningFields(tx: LegacyTx, sink: anytype) Error!void {
     try sink.uint(0);
 }
 
-/// EIP-155 の署名済み（v, r, s を末尾に足した 9 要素）。
+/// EIP-155 signed form (9 elements, with v, r, s appended).
 fn writeLegacySignedFields(value: LegacySignedFields, sink: anytype) Error!void {
     try writeLegacyFields(value.tx, sink);
     try sink.uint(value.v);
@@ -178,15 +178,15 @@ fn writeLegacySignedFields(value: LegacySignedFields, sink: anytype) Error!void 
     try sink.uint(value.s);
 }
 
-/// `writeLegacySignedFields` の入力。
+/// Input to `writeLegacySignedFields`.
 const LegacySignedFields = struct { tx: LegacyTx, v: u256, r: u256, s: u256 };
 
-/// アクセスリストの各項目の中身（アドレスとストレージキーのリスト）。
+/// Body of one access list item (an address and a list of storage keys).
 fn writeAccessListItem(item: AccessListItem, sink: anytype) Error!void {
     var address = item.address;
     try sink.bytes(&address);
 
-    // ストレージキーのリスト（[32 バイト, ...]）
+    // The storage key list ([32 bytes, ...])
     var keys_measure = MeasureSink{};
     for (item.storage_keys) |key| {
         var bytes = key;
@@ -199,9 +199,9 @@ fn writeAccessListItem(item: AccessListItem, sink: anytype) Error!void {
     }
 }
 
-/// アクセスリスト全体（項目のリスト）。
+/// The whole access list (a list of items).
 fn writeAccessList(access_list: []const AccessListItem, sink: anytype) Error!void {
-    // 1) 長さを測る: 各項目は「項目リストのヘッダ + 中身」
+    // 1) Measure: each item is "item list header + body"
     var measure = MeasureSink{};
     for (access_list) |item| {
         var item_measure = MeasureSink{};
@@ -210,7 +210,7 @@ fn writeAccessList(access_list: []const AccessListItem, sink: anytype) Error!voi
         try writeAccessListItem(item, &measure);
     }
 
-    // 2) 測った長さでヘッダを書き、中身を書く
+    // 2) Write the header with the measured length, then write the body
     try sink.listHeader(measure.written);
     for (access_list) |item| {
         var item_measure = MeasureSink{};
@@ -220,8 +220,8 @@ fn writeAccessList(access_list: []const AccessListItem, sink: anytype) Error!voi
     }
 }
 
-/// EIP-1559 の共通部分
-/// （chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList）。
+/// The common EIP-1559 part
+/// (chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data, accessList).
 fn writeEip1559Fields(tx: Eip1559Tx, sink: anytype) Error!void {
     try sink.uint(tx.chain_id);
     try sink.uint(tx.nonce);
@@ -234,7 +234,7 @@ fn writeEip1559Fields(tx: Eip1559Tx, sink: anytype) Error!void {
     try writeAccessList(tx.access_list, sink);
 }
 
-/// EIP-1559 の署名済み（yParity, r, s を末尾に足した 12 要素）。
+/// EIP-1559 signed form (12 elements, with yParity, r, s appended).
 fn writeEip1559SignedFields(value: Eip1559SignedFields, sink: anytype) Error!void {
     try writeEip1559Fields(value.tx, sink);
     try sink.uint(value.y_parity);
@@ -242,13 +242,13 @@ fn writeEip1559SignedFields(value: Eip1559SignedFields, sink: anytype) Error!voi
     try sink.uint(value.s);
 }
 
-/// `writeEip1559SignedFields` の入力。
+/// Input to `writeEip1559SignedFields`.
 const Eip1559SignedFields = struct { tx: Eip1559Tx, y_parity: u1, r: u256, s: u256 };
 
-/// フィールド群を 1 つの RLP リストにして `out` に書く。
+/// Writes a group of fields to `out` as a single RLP list.
 ///
-/// まず `MeasureSink` で長さを測り、その長さでリストヘッダを書いてから本体を書く。
-/// 最後に測った長さと書いた長さが一致することを確認する（内部矛盾の検出）。
+/// First it measures the length with `MeasureSink`, writes the list header with that length,
+/// then writes the body. Finally it checks measured against written length (internal check).
 fn encodeListWith(comptime writeFields: anytype, value: anytype, out: []u8) Error![]u8 {
     var measure = MeasureSink{};
     try writeFields(value, &measure);
@@ -261,7 +261,7 @@ fn encodeListWith(comptime writeFields: anytype, value: anytype, out: []u8) Erro
     return out[0 .. header.len + sink.pos];
 }
 
-/// EIP-2718 の型付きトランザクション（`0x02 || RLP(...)`）を `out` に書く。
+/// Writes an EIP-2718 typed transaction (`0x02 || RLP(...)`) to `out`.
 fn encodeTypedListWith(comptime writeFields: anytype, value: anytype, out: []u8) Error![]u8 {
     if (out.len < 1) return error.BufferTooSmall;
     out[0] = transaction_type_eip1559;
@@ -269,14 +269,14 @@ fn encodeTypedListWith(comptime writeFields: anytype, value: anytype, out: []u8)
     return out[0 .. 1 + body.len];
 }
 
-// ---------------------------------------------------------------- 署名対象
+// ---------------------------------------------------------------- signing payload
 
-/// EIP-155 の署名対象（9 要素の RLP）を `out` に書く。
+/// Writes the EIP-155 signing payload (a 9-element RLP list) to `out`.
 pub fn legacySigningPayload(out: []u8, tx: LegacyTx) Error![]u8 {
     return encodeListWith(writeLegacySigningFields, tx, out);
 }
 
-/// EIP-155 の署名対象ハッシュ。
+/// EIP-155 signing payload hash.
 pub fn legacySigningHash(tx: LegacyTx) Error![32]u8 {
     var measure = MeasureSink{};
     try writeLegacySigningFields(tx, &measure);
@@ -291,12 +291,12 @@ pub fn legacySigningHash(tx: LegacyTx) Error![32]u8 {
     return hash;
 }
 
-/// EIP-1559 の署名対象（`0x02 || RLP(...)`）を `out` に書く。
+/// Writes the EIP-1559 signing payload (`0x02 || RLP(...)`) to `out`.
 pub fn eip1559SigningPayload(out: []u8, tx: Eip1559Tx) Error![]u8 {
     return encodeTypedListWith(writeEip1559Fields, tx, out);
 }
 
-/// EIP-1559 の署名対象ハッシュ。
+/// EIP-1559 signing payload hash.
 pub fn eip1559SigningHash(tx: Eip1559Tx) Error![32]u8 {
     var measure = MeasureSink{};
     try writeEip1559Fields(tx, &measure);
@@ -312,36 +312,36 @@ pub fn eip1559SigningHash(tx: Eip1559Tx) Error![32]u8 {
     return hash;
 }
 
-// ---------------------------------------------------------------- 署名
+// ---------------------------------------------------------------- signing
 
-/// EIP-155 の `v`。`v = chain_id * 2 + 35 + yParity`。
+/// EIP-155 `v`. `v = chain_id * 2 + 35 + yParity`.
 pub fn legacyV(chain_id: u256, y_parity: u1) Error!u256 {
-    // v が u256 をあふれるチェーン ID は実在しないが、計算前に拒否する
-    // （35 と yParity の最大値 1 を足しても収まる上限）。
+    // No chain ID makes v overflow u256, but it is rejected before the computation
+    // (the bound that still fits after adding 35 and the maximum yParity of 1).
     const max_chain_id = (std.math.maxInt(u256) - 36) / 2;
     if (chain_id > max_chain_id) return error.InvalidEncoding;
     return chain_id * 2 + 35 + y_parity;
 }
 
-/// ECDSA 署名の成分。
+/// Components of an ECDSA signature.
 pub const Signature = struct {
-    /// `r`（32 バイトのビッグエンディアン）。
+    /// `r` (32 bytes, big-endian).
     r: u256,
-    /// `s`（32 バイトのビッグエンディアン、EIP-2 により low-s）。
+    /// `s` (32 bytes, big-endian; low-s as required by EIP-2).
     s: u256,
-    /// `y` 座標の偶奇。legacy の `v` と EIP-1559 の `yParity` に使う。
+    /// Parity of the `y` coordinate. Used for legacy `v` and EIP-1559 `yParity`.
     y_parity: u1,
 };
 
-// libsecp256k1 の recoverable 署名。
+// libsecp256k1 recoverable signatures.
 //
-// **注意**: `secp256k1_ecdsa_signature` の `data[64]` は内部表現であり、r || s の
-// ビッグエンディアンではない（ヘッダにも「不透明な型」と明記されている）。
-// 実際、この環境の libsecp256k1 0.8.0 では各スカラーがリトルエンディアンで入る。
-// r || s と recovery id は `core.crypto.secp256k1.signRecoverable` で取得する
-// （libsecp256k1 への extern 宣言は core に集約してある）。
+// **Note**: `data[64]` of `secp256k1_ecdsa_signature` is an internal representation, not
+// big-endian r || s (the header explicitly calls it an "opaque type" too).
+// Indeed, in libsecp256k1 0.8.0 on this environment each scalar is stored little-endian.
+// r || s and the recovery id are obtained from `core.crypto.secp256k1.signRecoverable`
+// (the extern declarations for libsecp256k1 are consolidated in core).
 
-/// ハッシュに署名し、`r` / `s` / `y_parity` を返す。**必ず検証してから返す。**
+/// Signs a hash and returns `r` / `s` / `y_parity`. **The signature is verified before returning.**
 fn signHash(hash: [32]u8, priv: [32]u8) Error!Signature {
     if (!secp256k1.isValidPrivateKey(priv)) return error.InvalidKey;
 
@@ -352,10 +352,10 @@ fn signHash(hash: [32]u8, priv: [32]u8) Error!Signature {
         .y_parity = @intCast(result.recovery_id),
     };
 
-    // EIP-2: トランザクションの s は low-s でなければならない
+    // EIP-2: a transaction's s must be low-s
     if (signature.s > secp256k1.curve_order / 2) return error.SignatureInvalid;
 
-    // 署名は必ず検証する（実装ミスの検出）
+    // Always verify the signature (to catch implementation mistakes)
     const parsed = try secp256k1.parseCompact(result.compact);
     if (!try secp256k1.verify(&parsed, hash, try secp256k1.pubKeyCompressed(priv))) {
         return error.SignatureInvalid;
@@ -363,25 +363,25 @@ fn signHash(hash: [32]u8, priv: [32]u8) Error!Signature {
     return signature;
 }
 
-/// EIP-155（legacy）トランザクションに署名し、署名済み raw tx を `out` に書く。
+/// Signs an EIP-155 (legacy) transaction and writes the signed raw tx to `out`.
 pub fn signLegacy(out: []u8, tx: LegacyTx, priv: [32]u8) Error![]u8 {
     const signature = try signHash(try legacySigningHash(tx), priv);
     return encodeLegacySigned(out, tx, try legacyV(tx.chain_id, signature.y_parity), signature.r, signature.s);
 }
 
-/// EIP-1559（type 2）トランザクションに署名し、署名済み raw tx を `out` に書く。
+/// Signs an EIP-1559 (type 2) transaction and writes the signed raw tx to `out`.
 pub fn signEip1559(out: []u8, tx: Eip1559Tx, priv: [32]u8) Error![]u8 {
     const signature = try signHash(try eip1559SigningHash(tx), priv);
     return encodeEip1559Signed(out, tx, signature.y_parity, signature.r, signature.s);
 }
 
-/// 外部で署名した成分から EIP-155 の署名済み raw tx を組み立てる
-/// （ハードウェア署名器の連携と、公式テストベクタとの突合に使う）。
+/// Assembles an EIP-155 signed raw tx from externally produced signature components
+/// (used for hardware signer integration and for checking against official test vectors).
 pub fn encodeLegacySigned(out: []u8, tx: LegacyTx, v: u256, r: u256, s: u256) Error![]u8 {
     return encodeListWith(writeLegacySignedFields, LegacySignedFields{ .tx = tx, .v = v, .r = r, .s = s }, out);
 }
 
-/// 外部で署名した成分から EIP-1559 の署名済み raw tx を組み立てる。
+/// Assembles an EIP-1559 signed raw tx from externally produced signature components.
 pub fn encodeEip1559Signed(out: []u8, tx: Eip1559Tx, y_parity: u1, r: u256, s: u256) Error![]u8 {
     return encodeTypedListWith(
         writeEip1559SignedFields,
@@ -390,15 +390,15 @@ pub fn encodeEip1559Signed(out: []u8, tx: Eip1559Tx, y_parity: u1, r: u256, s: u
     );
 }
 
-// ---------------------------------------------------------------- 表示用の解析
+// ---------------------------------------------------------------- display decoding
 
-/// トランザクションの種別。
+/// Transaction kind.
 pub const Kind = enum { legacy, eip2930, eip1559 };
 
-/// 表示用に解析したトランザクション。
+/// A transaction decoded for display.
 ///
-/// 署名済み・未署名のどちらでも解析できる（未署名なら `signed = false`）。
-/// 値が入っていないフィールドは null（壊れた入力を推測で埋めない）。
+/// Both signed and unsigned transactions can be decoded (unsigned gives `signed = false`).
+/// Fields without a value are null (broken input is not filled in by guessing).
 pub const Decoded = struct {
     kind: Kind,
     chain_id: ?u256 = null,
@@ -413,7 +413,7 @@ pub const Decoded = struct {
     signed: bool = false,
 };
 
-/// 生のトランザクション（署名済み・未署名）を解析する。
+/// Decodes a raw transaction (signed or unsigned).
 pub fn decode(allocator: std.mem.Allocator, raw: []const u8) Error!Decoded {
     if (raw.len == 0) return error.Truncated;
     return switch (raw[0]) {
@@ -423,7 +423,7 @@ pub fn decode(allocator: std.mem.Allocator, raw: []const u8) Error!Decoded {
     };
 }
 
-/// リスト直下の項目（入れ子のリストは 1 項目として飛ばす）を順に集める。
+/// Collects the items directly under the list in order (nested lists are skipped as one item).
 fn topLevelItems(allocator: std.mem.Allocator, payload: []const u8) Error![]const []const u8 {
     var items = std.ArrayList([]const u8).empty;
     errdefer items.deinit(allocator);
@@ -447,7 +447,7 @@ fn topLevelItems(allocator: std.mem.Allocator, payload: []const u8) Error![]cons
     return items.toOwnedSlice(allocator);
 }
 
-/// 20 バイトのアドレス。空ならコントラクト作成（null）。
+/// A 20-byte address. Empty means contract creation (null).
 fn payloadToAddress(payload: []const u8) Error!?[20]u8 {
     if (payload.len == 0) return null;
     if (payload.len != 20) return error.InvalidEncoding;
@@ -467,7 +467,7 @@ fn decodeLegacy(allocator: std.mem.Allocator, raw: []const u8) Error!Decoded {
     decoded.value = try rlp.decodeUintPayload(items[4]);
     decoded.data = items[5];
 
-    // 署名済みなら v, r, s が続く
+    // A signed transaction continues with v, r, s
     if (items.len >= 9) {
         decoded.signed = true;
         const v = try rlp.decodeUintPayload(items[6]);
@@ -496,8 +496,8 @@ fn decodeTyped(
             decoded.to = try payloadToAddress(items[5]);
             decoded.value = try rlp.decodeUintPayload(items[6]);
             decoded.data = items[7];
-            // アクセスリストは入れ子のリストなので items には数えない。
-            // 8 項目 + 署名（yParity, r, s）で 11 になる。
+            // The access list is a nested list, so it does not count as an item.
+            // 8 items + signature (yParity, r, s) makes 11.
             decoded.signed = items.len >= 11;
         },
         .eip2930 => {
@@ -509,7 +509,7 @@ fn decodeTyped(
             decoded.to = try payloadToAddress(items[4]);
             decoded.value = try rlp.decodeUintPayload(items[5]);
             decoded.data = items[6];
-            // 7 項目 + 署名（yParity, r, s）で 10 になる。
+            // 7 items + signature (yParity, r, s) makes 10.
             decoded.signed = items.len >= 10;
         },
         .legacy => unreachable,
@@ -517,7 +517,7 @@ fn decodeTyped(
     return decoded;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -541,9 +541,9 @@ fn expectHex(expected: []const u8, actual: []const u8) !void {
     try testing.expectEqualStrings(expected, toHex(&buf, actual));
 }
 
-test "EIP-155 の公式例（署名対象・署名ハッシュ・署名済み tx がバイト一致）" {
-    // https://eips.ethereum.org/EIPS/eip-155 の Example。
-    // nonce=9, gasPrice=20 gwei, gasLimit=21000, to=0x3535...35, value=1 ether, chainId=1。
+test "EIP-155 official example (signing payload, signing hash, and signed tx match byte for byte)" {
+    // The Example from https://eips.ethereum.org/EIPS/eip-155.
+    // nonce=9, gasPrice=20 gwei, gasLimit=21000, to=0x3535...35, value=1 ether, chainId=1.
     const tx = LegacyTx{
         .nonce = 9,
         .gas_price = 20000000000,
@@ -556,20 +556,20 @@ test "EIP-155 の公式例（署名対象・署名ハッシュ・署名済み tx
     var payload_buf: [256]u8 = undefined;
     var out: [256]u8 = undefined;
 
-    // 署名対象（9 要素。chain_id と 0, 0 が付く）
+    // Signing payload (9 elements; chain_id and 0, 0 are appended)
     try expectHex("ec098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a764000080018080", try legacySigningPayload(&payload_buf, tx));
-    // 署名ハッシュ
+    // Signing hash
     try expectHex("daf5a779ae972f972197303d7b574746c7ef83eadac0f2791ad23db92e4c8e53", &(try legacySigningHash(tx)));
-    // 署名済み tx（v = 37 = chainId * 2 + 35 + 1）
+    // Signed tx (v = 37 = chainId * 2 + 35 + 1)
     try expectHex("f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83", try signLegacy(&out, tx, hexBytes(32, "4646464646464646464646464646464646464646464646464646464646464646")));
-    // 公式例の v は 37（yParity = 0）。yParity = 1 なら 38 になる。
+    // The official example has v = 37 (yParity = 0). With yParity = 1 it becomes 38.
     try testing.expectEqual(@as(u256, 37), try legacyV(1, 0));
     try testing.expectEqual(@as(u256, 38), try legacyV(1, 1));
 }
 
-test "legacy のコントラクト作成（to が空）が独立実装とバイト一致" {
-    // 期待値は eth_account 0.13.7（Account.sign_transaction）で算出。
-    // to が null のときは空文字列（0x80）として符号化する。
+test "legacy contract creation (empty to) matches an independent implementation byte for byte" {
+    // The expected values were computed with eth_account 0.13.7 (Account.sign_transaction).
+    // When to is null it is encoded as the empty string (0x80).
     const tx = LegacyTx{
         .nonce = 0,
         .gas_price = 1000000000,
@@ -587,8 +587,8 @@ test "legacy のコントラクト作成（to が空）が独立実装とバイ�
     try expectHex("f86080843b9aca0082cf088080916080604052348015600f57600080fd5b5026a0cb1999858ff0f80c2b15403e13eb52ea1800956f33ecbf872bc80a32d81f35c1a02211da84cd48c02ad1a35eea03bb84442dc0c9869820e9670e13320ad1d6b8bf", try signLegacy(&out, tx, hexBytes(32, "4646464646464646464646464646464646464646464646464646464646464646")));
 }
 
-test "EIP-1559 の署名が独立実装（eth_account）とバイト一致" {
-    // 期待値は eth_account 0.13.7（TypedTransaction.encode/hash と Account.sign_transaction）。
+test "EIP-1559 signing matches an independent implementation (eth_account) byte for byte" {
+    // The expected values come from eth_account 0.13.7 (TypedTransaction.encode/hash and Account.sign_transaction).
     const tx = Eip1559Tx{
         .chain_id = 1,
         .nonce = 7,
@@ -608,9 +608,9 @@ test "EIP-1559 の署名が独立実装（eth_account）とバイト一致" {
     try expectHex("02f8730107843b9aca008506fc23ac00825208943535353535353535353535353535353535353535880de0b6b3a764000080c080a0505cdd8549b8122d419cc4ac67a0ed1e68e4255f1720efeefeb77add34487110a040008058ace1a5cf56b23649773433ddeaa338dcb18f9143857a01004e492850", try signEip1559(&out, tx, hexBytes(32, "4646464646464646464646464646464646464646464646464646464646464646")));
 }
 
-test "EIP-1559 のアクセスリストとコントラクト作成が独立実装とバイト一致" {
-    // 期待値は eth_account 0.13.7。アクセスリストの構造（アドレス + ストレージキーの入れ子）も
-    // ここで検証する。
+test "EIP-1559 access list and contract creation match an independent implementation byte for byte" {
+    // The expected values come from eth_account 0.13.7. The access list structure (an address
+    // with a nested list of storage keys) is checked here as well.
     const tx = Eip1559Tx{
         .chain_id = 137,
         .nonce = 0,
@@ -630,11 +630,12 @@ test "EIP-1559 のアクセスリストとコントラクト作成が独立実�
     try expectHex("02f8b98189808477359400850ba43b740082ea608080856080604052f85bf859943535353535353535353535353535353535353535f842a00000000000000000000000000000000000000000000000000000000000000001a0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff80a00930a6e3686fda2930fd48cacf757207598558136159552078e903a6768e263fa05f6dc3ed5307c88ee976370fd9a13035e604daa7815d47d8932ca9fbecb41343", try signEip1559(&out, tx, hexBytes(32, "4646464646464646464646464646464646464646464646464646464646464646")));
 }
 
-test "EIP-1559 の公式テストベクタ（ethereum/tests ttEIP1559 maxFeePerGas32BytesValue）" {
-    // TransactionTests/ttEIP1559/maxFeePerGas32BytesValue.json の txbytes とバイト一致すること。
-    // maxFeePerGas が 32 バイト（0xa0 + 32 バイト）。署名は filler が固定値（r/s は全ファイル共通のダミー）なので、
-    // 署名済み tx は署名成分から組み立てて比較する。署名対象と署名ハッシュは
-    // 独立実装（eth_account の TypedTransaction.encode/hash）と一致を確認済み。
+test "EIP-1559 official test vector (ethereum/tests ttEIP1559 maxFeePerGas32BytesValue)" {
+    // Must match the txbytes of TransactionTests/ttEIP1559/maxFeePerGas32BytesValue.json byte for byte.
+    // maxFeePerGas is 32 bytes (0xa0 + 32 bytes). The filler uses fixed signature values (r/s are
+    // the same dummy across all files), so the signed tx is assembled from the signature
+    // components for comparison. The signing payload and hash were verified to match an
+    // independent implementation (eth_account's TypedTransaction.encode/hash).
     const tx = Eip1559Tx{
         .chain_id = 1,
         .nonce = 0,
@@ -654,11 +655,12 @@ test "EIP-1559 の公式テストベクタ（ethereum/tests ttEIP1559 maxFeePerG
     try expectHex("02f88601808477359400a0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82520894095e7baea6a6c7c4c2dfeb977efac326af552d878080c080a05cbd172231fc0735e0fb994dd5b1a4939170a260b36f0427a8a80866b063b948a07c230f7f578dd61785c93361b9871c0706ebfa6d06e3f4491dc9558c5202ed36", try encodeEip1559Signed(&out, tx, 0, 41946875826971765900365732300593142460367773151448914018868876086522398619976, 56148739830921221639620957524060463709107052619168622154235151530996971793718));
 }
 
-test "EIP-1559 の公式テストベクタ（ethereum/tests ttEIP1559 maxPriorityFeePerGass32BytesValue）" {
-    // TransactionTests/ttEIP1559/maxPriorityFeePerGass32BytesValue.json の txbytes とバイト一致すること。
-    // maxPriorityFeePerGas が 32 バイト。署名は filler が固定値（r/s は全ファイル共通のダミー）なので、
-    // 署名済み tx は署名成分から組み立てて比較する。署名対象と署名ハッシュは
-    // 独立実装（eth_account の TypedTransaction.encode/hash）と一致を確認済み。
+test "EIP-1559 official test vector (ethereum/tests ttEIP1559 maxPriorityFeePerGass32BytesValue)" {
+    // Must match the txbytes of TransactionTests/ttEIP1559/maxPriorityFeePerGass32BytesValue.json byte for byte.
+    // maxPriorityFeePerGas is 32 bytes. The filler uses fixed signature values (r/s are the same
+    // dummy across all files), so the signed tx is assembled from the signature components for
+    // comparison. The signing payload and hash were verified to match an independent
+    // implementation (eth_account's TypedTransaction.encode/hash).
     const tx = Eip1559Tx{
         .chain_id = 1,
         .nonce = 0,
@@ -678,11 +680,12 @@ test "EIP-1559 の公式テストベクタ（ethereum/tests ttEIP1559 maxPriorit
     try expectHex("02f8860180a0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff84b2d05e0082520894095e7baea6a6c7c4c2dfeb977efac326af552d878080c080a05cbd172231fc0735e0fb994dd5b1a4939170a260b36f0427a8a80866b063b948a07c230f7f578dd61785c93361b9871c0706ebfa6d06e3f4491dc9558c5202ed36", try encodeEip1559Signed(&out, tx, 0, 41946875826971765900365732300593142460367773151448914018868876086522398619976, 56148739830921221639620957524060463709107052619168622154235151530996971793718));
 }
 
-test "EIP-1559 の公式テストベクタ（ethereum/tests ttEIP1559 GasLimitPriceProductOverflow）" {
-    // TransactionTests/ttEIP1559/GasLimitPriceProductOverflow.json の txbytes とバイト一致すること。
-    // maxFeePerGas が 31 バイト（0x9f + 31 バイト）。署名は filler が固定値（r/s は全ファイル共通のダミー）なので、
-    // 署名済み tx は署名成分から組み立てて比較する。署名対象と署名ハッシュは
-    // 独立実装（eth_account の TypedTransaction.encode/hash）と一致を確認済み。
+test "EIP-1559 official test vector (ethereum/tests ttEIP1559 GasLimitPriceProductOverflow)" {
+    // Must match the txbytes of TransactionTests/ttEIP1559/GasLimitPriceProductOverflow.json byte for byte.
+    // maxFeePerGas is 31 bytes (0x9f + 31 bytes). The filler uses fixed signature values (r/s are
+    // the same dummy across all files), so the signed tx is assembled from the signature
+    // components for comparison. The signing payload and hash were verified to match an
+    // independent implementation (eth_account's TypedTransaction.encode/hash).
     const tx = Eip1559Tx{
         .chain_id = 1,
         .nonce = 0,
@@ -702,20 +705,20 @@ test "EIP-1559 の公式テストベクタ（ethereum/tests ttEIP1559 GasLimitPr
     try expectHex("02f885018084773594009f03ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82520894095e7baea6a6c7c4c2dfeb977efac326af552d878080c080a05cbd172231fc0735e0fb994dd5b1a4939170a260b36f0427a8a80866b063b948a07c230f7f578dd61785c93361b9871c0706ebfa6d06e3f4491dc9558c5202ed36", try encodeEip1559Signed(&out, tx, 0, 41946875826971765900365732300593142460367773151448914018868876086522398619976, 56148739830921221639620957524060463709107052619168622154235151530996971793718));
 }
 
-test "v の計算（EIP-155）" {
+test "v computation (EIP-155)" {
     try testing.expectEqual(@as(u256, 35), try legacyV(0, 0));
     try testing.expectEqual(@as(u256, 37), try legacyV(1, 0));
     try testing.expectEqual(@as(u256, 38), try legacyV(1, 1));
     try testing.expectEqual(@as(u256, 46), try legacyV(5, 1));
 
-    // v が u256 をあふれるチェーン ID は拒否する
+    // Reject a chain ID that would make v overflow u256
     const max_chain_id = (std.math.maxInt(u256) - 36) / 2;
-    _ = try legacyV(max_chain_id, 1); // 上限（yParity = 1 でも収まる）
+    _ = try legacyV(max_chain_id, 1); // the bound (still fits with yParity = 1)
     try testing.expectError(error.InvalidEncoding, legacyV(max_chain_id + 1, 0));
 }
 
-test "r / s は先頭ゼロを付けずに正準 RLP で符号化する" {
-    // 公式ベクタではなく符号化の確認用（r = 0x80 は 0x8180、s = 1 は 0x01）。
+test "r / s are encoded as canonical RLP with no leading zeros" {
+    // Not an official vector, only an encoding check (r = 0x80 gives 0x8180, s = 1 gives 0x01).
     const tx = Eip1559Tx{
         .chain_id = 1,
         .nonce = 0,
@@ -728,11 +731,11 @@ test "r / s は先頭ゼロを付けずに正準 RLP で符号化する" {
     };
     var out: [64]u8 = undefined;
     const raw = try encodeEip1559Signed(&out, tx, 1, 0x80, 1);
-    // 末尾 4 バイトは yParity=1, r=0x80, s=1
+    // The last 4 bytes are yParity=1, r=0x80, s=1
     try expectHex("01818001", raw[raw.len - 4 ..]);
 }
 
-test "署名済み tx は正準な RLP である" {
+test "a signed tx is canonical RLP" {
     const tx = LegacyTx{
         .nonce = 1,
         .gas_price = 2,
@@ -744,7 +747,7 @@ test "署名済み tx は正準な RLP である" {
     };
     var out: [128]u8 = undefined;
     const raw = try signLegacy(&out, tx, hexBytes(32, "4646464646464646464646464646464646464646464646464646464646464646"));
-    // decodeList は正準性まで検査する（非正準な出力なら失敗する）
+    // decodeList also checks canonical form (a non-canonical output fails here)
     _ = try rlp.decodeList(raw);
 
     const tx2 = Eip1559Tx{
@@ -762,7 +765,7 @@ test "署名済み tx は正準な RLP である" {
     _ = try rlp.decodeList(raw2[1..]);
 }
 
-test "不正な鍵と小さすぎる出力バッファを拒否する" {
+test "rejects an invalid key and an output buffer that is too small" {
     const tx = LegacyTx{
         .nonce = 0,
         .gas_price = 1,
@@ -788,12 +791,12 @@ test "不正な鍵と小さすぎる出力バッファを拒否する" {
     try testing.expectError(error.BufferTooSmall, legacySigningPayload(&small_payload, tx));
 }
 
-test "署名済み legacy トランザクション（EIP-155 の公式例）を解析する" {
+test "decodes a signed legacy transaction (the EIP-155 official example)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // EIP-155 の例（9, 20 gwei, 21000, 0x3535…, 1 ether, chainId 1）
+    // The EIP-155 example (9, 20 gwei, 21000, 0x3535…, 1 ether, chainId 1)
     const raw_hex =
         "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a0" ++
         "28ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83";
@@ -814,7 +817,7 @@ test "署名済み legacy トランザクション（EIP-155 の公式例）を�
     try testing.expectEqual(@as(u8, 0x35), to[19]);
 }
 
-test "EIP-1559 の署名済みトランザクションを解析する（eth-account の出力）" {
+test "decodes a signed EIP-1559 transaction (eth-account output)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -835,12 +838,12 @@ test "EIP-1559 の署名済みトランザクションを解析する（eth-acco
     try testing.expectEqual(@as(?u256, null), decoded.gas_price);
 }
 
-test "未署名のトランザクションと calldata 付きも解析できる" {
+test "decodes unsigned transactions and transactions with calldata" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // ERC-20 transfer の calldata（selector は a9059cbb）
+    // ERC-20 transfer calldata (selector a9059cbb)
     const raw_hex = "02f8b001018459682f008509502f900082ea6094a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4880b844a9059cbb000000000000000000000000353535353535353535353535353535353535353a0000000000000000000000000000000000000000000000000000000005f5e100c080a0f81c6287143005ecacc19b19ed1f8929c0d1ac1304d1e4c365c97c9f0410b003a019c85ccdf57b11bb85a28151b1847ce6777524240ef8ec55441b3cda63643de9";
     const raw = try allocator.alloc(u8, raw_hex.len / 2);
     _ = try std.fmt.hexToBytes(raw, raw_hex);
@@ -849,7 +852,7 @@ test "未署名のトランザクションと calldata 付きも解析できる"
     try testing.expectEqual(@as(usize, 68), decoded.data.len);
     try testing.expectEqualSlices(u8, &[_]u8{ 0xa9, 0x05, 0x9c, 0xbb }, decoded.data[0..4]);
 
-    // 壊れた入力は拒否する
+    // Reject broken input
     try testing.expectError(error.Truncated, decode(allocator, &.{}));
     try testing.expectError(error.InvalidEncoding, decode(allocator, &[_]u8{0xc0}));
 }

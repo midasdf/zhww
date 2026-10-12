@@ -1,8 +1,8 @@
-//! BIP39 公式テストベクタ（24 件）。
+//! BIP39 official test vectors (24 cases).
 //!
-//! ベクタ: tests/vectors/bip39.json（https://github.com/trezor/python-mnemonic の公式ベクタ）
-//! 各要素は [entropy, mnemonic, seed, xprv] の 4 つ組。
-//! 最後の xprv まで一致させることで BIP39 → BIP32 の連結も同時に検証する。
+//! Vector: tests/vectors/bip39.json (official vectors from https://github.com/trezor/python-mnemonic)
+//! Each entry is a 4-tuple [entropy, mnemonic, seed, xprv].
+//! Matching all the way to the final xprv also validates the BIP39 -> BIP32 link.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -15,7 +15,7 @@ fn hexTo(out: []u8, hex: []const u8) ![]u8 {
     return std.fmt.hexToBytes(out, hex);
 }
 
-test "BIP39 公式テストベクタ 24 件" {
+test "BIP39 official test vectors, 24 cases" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -39,16 +39,16 @@ test "BIP39 公式テストベクタ 24 件" {
         const mnemonic = try zhww.bip39.entropyToMnemonic(&mnemonic_buf, entropy);
         try testing.expectEqualStrings(expected_mnemonic, mnemonic);
 
-        // mnemonic → entropy（チェックサム検証を含む）
+        // mnemonic -> entropy (including checksum validation)
         var back_buf: [32]u8 = undefined;
         const back = try zhww.bip39.mnemonicToEntropy(&back_buf, mnemonic);
         try testing.expectEqualSlices(u8, entropy, back);
 
         // mnemonic → seed
         //
-        // 注意: このベクタ集（Trezor / python-mnemonic の公式ベクタ）の seed は
-        // パスフレーズ "TREZOR" を使って導出された値である。空のパスフレーズでは
-        // 一致しない（BIP39 仕様のテストベクタも同様）。
+        // Note: the seed in this vector set (the official Trezor / python-mnemonic
+        // vectors) was derived with the passphrase "TREZOR". It does not match an
+        // empty passphrase (likewise for the BIP39 spec's own test vectors).
         var seed: [64]u8 = undefined;
         try zhww.bip39.mnemonicToSeed(&seed, mnemonic, "TREZOR");
         var seed_hex: [128]u8 = undefined;
@@ -56,7 +56,7 @@ test "BIP39 公式テストベクタ 24 件" {
         @memcpy(seed_hex[0..encoded.len], &encoded);
         try testing.expectEqualStrings(expected_seed_hex, &seed_hex);
 
-        // seed → マスター拡張秘密鍵（BIP32 との連結）
+        // seed -> master extended private key (the link to BIP32)
         const master = try zhww.bip32.ExtendedKey.fromSeed(&seed, .xprv);
         var xprv_buf: [128]u8 = undefined;
         try testing.expectEqualStrings(expected_xprv, try master.serialize(&xprv_buf));

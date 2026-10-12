@@ -1,10 +1,10 @@
-//! BIP174 の公式テストベクタによる PSBT 解析の検証。
+//! Validation of PSBT parsing against BIP174's official test vectors.
 //!
-//! ベクタ: tests/vectors/bip174.json（不正 20 件 / 妥当 27 件）
-//! 出典: https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki
+//! Vectors: tests/vectors/bip174.json (20 invalid / 27 valid)
+//! Source: https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki
 //!
-//! - **不正な PSBT はすべて拒否されること**（受理してはならない）
-//! - **妥当な PSBT はすべて受理されること**（過剰に厳しくてもならない）
+//! - **Every invalid PSBT must be rejected** (none may be accepted)
+//! - **Every valid PSBT must be accepted** (we must not be overly strict either)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -21,7 +21,7 @@ fn decodeBase64(allocator: std.mem.Allocator, encoded: []const u8) ![]u8 {
     return buffer;
 }
 
-test "BIP174: 不正な PSBT 20 件をすべて拒否する" {
+test "BIP174: rejects all 20 invalid PSBTs" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -38,13 +38,13 @@ test "BIP174: 不正な PSBT 20 件をすべて拒否する" {
         const result = zhww.btc_psbt.Psbt.parse(allocator, raw);
         _ = result catch continue;
 
-        // 受理してしまった = テスト失敗
-        std.debug.print("不正な PSBT を受理してしまった: {s}\n", .{case_name});
+        // We accepted it = test failure
+        std.debug.print("accepted an invalid PSBT: {s}\n", .{case_name});
         return error.TestUnexpectedResult;
     }
 }
 
-test "BIP174: 妥当な PSBT 27 件をすべて受理する" {
+test "BIP174: accepts all 27 valid PSBTs" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -59,7 +59,7 @@ test "BIP174: 妥当な PSBT 27 件をすべて受理する" {
         const raw = try decodeBase64(allocator, fields.get("base64").?.string);
 
         _ = zhww.btc_psbt.Psbt.parse(allocator, raw) catch |err| {
-            std.debug.print("妥当な PSBT を拒否してしまった: {s} ({s})\n", .{
+            std.debug.print("rejected a valid PSBT: {s} ({s})\n", .{
                 case_name,
                 @errorName(err),
             });
@@ -68,7 +68,7 @@ test "BIP174: 妥当な PSBT 27 件をすべて受理する" {
     }
 }
 
-test "BIP174: 解析して書き戻すと元のバイト列と一致する（未知フィールドを保持する）" {
+test "BIP174: parsing and writing back reproduces the original bytes (unknown fields are preserved)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -83,13 +83,13 @@ test "BIP174: 解析して書き戻すと元のバイト列と一致する（未
 
         const psbt = zhww.btc_psbt.Psbt.parse(allocator, raw) catch continue;
 
-        // 追加署名なしで書き戻す
+        // Write back without adding any signature
         const sigs = try allocator.alloc([]const zhww.btc_psbt.PartialSig, psbt.inputs.len);
         for (sigs) |*slot| slot.* = &.{};
         const reserialized = try zhww.btc_psbt.Psbt.serialize(allocator, psbt, sigs);
 
         if (!std.mem.eql(u8, raw, reserialized)) {
-            std.debug.print("書き戻しが一致しない: {s}\n", .{case_name});
+            std.debug.print("write-back does not match: {s}\n", .{case_name});
             return error.TestUnexpectedResult;
         }
     }

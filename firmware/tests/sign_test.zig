@@ -1,15 +1,15 @@
-//! 署名と最終化の統合テスト。
+//! Integration tests for signing and finalization.
 //!
-//! 外部のテストベクタが存在しない経路（P2PKH・P2SH-P2WPKH の最終化、鍵探索、
-//! 手数料計算、お釣り判定）を、**自己整合的に組み立てた PSBT** で検証する。
+//! Paths that have no external test vector (P2PKH and P2SH-P2WPKH finalization, key discovery,
+//! fee computation, change detection) are verified with **self-consistently assembled PSBTs**.
 //!
-//! 検証の考え方:
-//!   1. funding トランザクションを作り、その txid を参照する spending トランザクションを作る
-//!      （non_witness_utxo の txid 一致検証も同時に通る）
-//!   2. 3 種類の入力（P2WPKH / P2PKH / P2SH-P2WPKH）を持つ PSBT を組み立てる
-//!   3. 署名して最終化する
-//!   4. **各入力の署名を、テスト側で独立に再計算した sighash で検証する**
-//!      （実装の内部値を使わずに検証する）
+//! Verification approach:
+//!   1. Create a funding transaction, then a spending transaction that references its txid
+//!      (this also exercises non_witness_utxo txid matching)
+//!   2. Assemble a PSBT with 3 kinds of input (P2WPKH / P2PKH / P2SH-P2WPKH)
+//!   3. Sign and finalize it
+//!   4. **Verify each input's signature against a sighash recomputed independently on the
+//!      test side** (without using any internal value of the implementation)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -52,12 +52,12 @@ fn p2shP2wpkhScript(out: *[23]u8, redeem: *[22]u8, pub_key: [33]u8) void {
     out[22] = 0x87;
 }
 
-test "3 種類の入力（P2WPKH / P2PKH / P2SH-P2WPKH）に署名して最終化する" {
+test "signs and finalizes 3 kinds of input (P2WPKH / P2PKH / P2SH-P2WPKH)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // --- 鍵 ---
+    // --- keys ---
     var seed: [64]u8 = undefined;
     try zhww.bip39.mnemonicToSeed(&seed, mnemonic, "");
     const keys = try zhww.btc_sign.KeySource.fromSeed(&seed);
@@ -78,19 +78,19 @@ test "3 種類の入力（P2WPKH / P2PKH / P2SH-P2WPKH）に署名して最終�
     var redeem49: [22]u8 = undefined;
     p2shP2wpkhScript(&spk49, &redeem49, pub49);
 
-    // 受取アドレス（お釣りと誤判定してはならない）
+    // Receive address (must not be misjudged as change)
     const receive84_1 = try keys.derive(&[_]u32{ 84 | HARDENED, 0 | HARDENED, 0 | HARDENED, 0, 1 });
     const pub84_1 = try receive84_1.publicKey();
     var spk84_1: [22]u8 = undefined;
     p2wpkhScript(&spk84_1, pub84_1);
 
-    // お釣り用（BIP84 の change 鎖）
+    // For change (the BIP84 change chain)
     const change84 = try keys.derive(&[_]u32{ 84 | HARDENED, 0 | HARDENED, 0 | HARDENED, 1, 0 });
     const pub_change = try change84.publicKey();
     var spk_change: [22]u8 = undefined;
     p2wpkhScript(&spk_change, pub_change);
 
-    // --- funding トランザクション（3 つの出力を持つ）---
+    // --- funding transaction (with 3 outputs) ---
     var funding_prev_txid: [32]u8 = undefined;
     for (&funding_prev_txid, 0..) |*byte, i| byte.* = @intCast(i + 1);
 
@@ -116,7 +116,7 @@ test "3 種類の入力（P2WPKH / P2PKH / P2SH-P2WPKH）に署名して最終�
     const funding_txid = try funding.txid(allocator);
     const funding_bytes = try funding.serialize(allocator, false);
 
-    // --- spending トランザクション（入力 3 つ / 出力 2 つ）---
+    // --- spending transaction (3 inputs / 2 outputs) ---
     const spend_inputs = try allocator.alloc(zhww.btc_transaction.TxIn, 3);
     for (spend_inputs, 0..) |*input, i| {
         input.* = .{
@@ -127,8 +127,8 @@ test "3 種類の入力（P2WPKH / P2PKH / P2SH-P2WPKH）に署名して最終�
         };
     }
     const spend_outputs = try allocator.alloc(zhww.btc_transaction.TxOut, 2);
-    spend_outputs[0] = .{ .value = 99_400_000, .script_pubkey = &spk84_1 }; // 受取アドレス宛
-    spend_outputs[1] = .{ .value = 550_000, .script_pubkey = &spk_change }; // お釣り
+    spend_outputs[0] = .{ .value = 99_400_000, .script_pubkey = &spk84_1 }; // to the receive address
+    spend_outputs[1] = .{ .value = 550_000, .script_pubkey = &spk_change }; // change
 
     const spend = zhww.btc_transaction.Transaction{
         .version = 2,
@@ -139,60 +139,60 @@ test "3 種類の入力（P2WPKH / P2PKH / P2SH-P2WPKH）に署名して最終�
     };
     const spend_bytes = try spend.serialize(allocator, false);
 
-    // --- PSBT を組み立てる ---
+    // --- build the PSBT ---
     var psbt_bytes = std.ArrayList(u8).empty;
     defer psbt_bytes.deinit(allocator);
     try psbt_bytes.appendSlice(allocator, &zhww.btc_psbt.magic);
 
-    // グローバル: unsigned tx
+    // Global: unsigned tx
     try psbt_bytes.append(allocator, 1);
     try psbt_bytes.append(allocator, 0x00);
     try zhww.btc_transaction.writeVarInt(&psbt_bytes, allocator, spend_bytes.len);
     try psbt_bytes.appendSlice(allocator, spend_bytes);
     try psbt_bytes.append(allocator, 0);
 
-    // 入力 0: P2WPKH → witness_utxo
+    // Input 0: P2WPKH -> witness_utxo
     try appendWitnessUtxo(allocator, &psbt_bytes, 50_000_000, &spk84);
-    try psbt_bytes.append(allocator, 0); // 入力マップ終端
+    try psbt_bytes.append(allocator, 0); // end of input map
 
-    // 入力 1: P2PKH → non_witness_utxo（funding tx 全体）
+    // Input 1: P2PKH -> non_witness_utxo (the whole funding tx)
     try psbt_bytes.append(allocator, 1);
     try psbt_bytes.append(allocator, 0x00); // PSBT_IN_NON_WITNESS_UTXO
     try zhww.btc_transaction.writeVarInt(&psbt_bytes, allocator, funding_bytes.len);
     try psbt_bytes.appendSlice(allocator, funding_bytes);
-    try psbt_bytes.append(allocator, 0); // 入力マップ終端
+    try psbt_bytes.append(allocator, 0); // end of input map
 
-    // 入力 2: P2SH-P2WPKH → witness_utxo + redeemScript
+    // Input 2: P2SH-P2WPKH -> witness_utxo + redeemScript
     try appendWitnessUtxo(allocator, &psbt_bytes, 20_000_000, &spk49);
     try psbt_bytes.append(allocator, 1);
     try psbt_bytes.append(allocator, 0x04); // PSBT_IN_REDEEM_SCRIPT
     try zhww.btc_transaction.writeVarInt(&psbt_bytes, allocator, redeem49.len);
     try psbt_bytes.appendSlice(allocator, &redeem49);
-    try psbt_bytes.append(allocator, 0); // 入力マップ終端
+    try psbt_bytes.append(allocator, 0); // end of input map
 
-    // 出力マップ 2 つ（空）
+    // Two output maps (empty)
     try psbt_bytes.append(allocator, 0);
     try psbt_bytes.append(allocator, 0);
 
     const psbt = try zhww.btc_psbt.Psbt.parse(allocator, psbt_bytes.items);
     try testing.expectEqual(@as(usize, 3), psbt.inputs.len);
 
-    // --- 署名 ---
+    // --- signing ---
     const result = try zhww.btc_sign.sign(allocator, psbt, keys);
 
     try testing.expectEqual(@as(usize, 3), result.partial_sigs.len);
     try testing.expectEqual(@as(usize, 0), result.unsigned_inputs.len);
 
-    // 手数料 = 100,000,000 - 99,400,000 - 550,000
+    // fee = 100,000,000 - 99,400,000 - 550,000
     try testing.expectEqual(@as(?u64, 50_000), result.fee);
     try testing.expectEqual(@as(?u64, 100_000_000), result.total_input);
     try testing.expectEqual(@as(u64, 99_950_000), result.total_output);
 
-    // お釣りは出力 1 のみ（受取アドレス宛の出力 0 は含めない）
+    // Only output 1 is change (output 0, to the receive address, is not included)
     try testing.expectEqual(@as(usize, 1), result.change_outputs.len);
     try testing.expectEqual(@as(usize, 1), result.change_outputs[0]);
 
-    // --- 各署名を**テスト側で独立に**再計算した sighash で検証する ---
+    // --- verify each signature against a sighash **independently** recomputed on the test side ---
     for (result.partial_sigs) |partial| {
         const index = partial.index;
         const amount: u64 = switch (index) {
@@ -242,42 +242,42 @@ test "3 種類の入力（P2WPKH / P2PKH / P2SH-P2WPKH）に署名して最終�
             else => unreachable,
         };
 
-        // DER 署名（末尾の sighash タイプを除く）を解析して検証する
+        // Parse and verify the DER signature (excluding the trailing sighash type)
         const der = partial.signature[0 .. partial.signature.len - 1];
         try testing.expectEqual(@as(u8, 0x01), partial.signature[partial.signature.len - 1]);
         const signature = try zhww.secp256k1.parseDer(der);
         try testing.expect(try zhww.secp256k1.verify(&signature, message, partial.pubkey));
     }
 
-    // --- 最終化 ---
+    // --- finalization ---
     const final_bytes = result.final_tx.?;
     const final_tx = try zhww.btc_transaction.Transaction.parse(allocator, final_bytes);
     try testing.expectEqual(@as(usize, 3), final_tx.inputs.len);
 
-    // 入力 0（P2WPKH）: scriptSig は空、witness は [署名, 公開鍵]
+    // Input 0 (P2WPKH): scriptSig is empty, witness is [signature, public key]
     try testing.expectEqual(@as(usize, 0), final_tx.inputs[0].script_sig.len);
     try testing.expectEqual(@as(usize, 2), final_tx.inputs[0].witness.len);
     try testing.expectEqualSlices(u8, &pub84, final_tx.inputs[0].witness[1]);
 
-    // 入力 1（P2PKH）: scriptSig は [push 署名][push 公開鍵]、witness は無し
+    // Input 1 (P2PKH): scriptSig is [push signature][push public key], no witness
     try testing.expectEqual(@as(usize, 0), final_tx.inputs[1].witness.len);
     try testing.expectEqual(@as(usize, 1 + 72 + 1 + 33), final_tx.inputs[1].script_sig.len);
     try testing.expectEqual(@as(u8, 72), final_tx.inputs[1].script_sig[0]);
     try testing.expectEqual(@as(u8, 33), final_tx.inputs[1].script_sig[73]);
     try testing.expectEqualSlices(u8, &pub44, final_tx.inputs[1].script_sig[74..107]);
 
-    // 入力 2（P2SH-P2WPKH）: scriptSig は redeemScript の push、witness は [署名, 公開鍵]
+    // Input 2 (P2SH-P2WPKH): scriptSig pushes the redeemScript, witness is [signature, public key]
     try testing.expectEqual(@as(usize, 23), final_tx.inputs[2].script_sig.len);
     try testing.expectEqual(@as(u8, 22), final_tx.inputs[2].script_sig[0]);
     try testing.expectEqualSlices(u8, &redeem49, final_tx.inputs[2].script_sig[1..23]);
     try testing.expectEqual(@as(usize, 2), final_tx.inputs[2].witness.len);
     try testing.expectEqualSlices(u8, &pub49, final_tx.inputs[2].witness[1]);
 
-    // 直列化は往復して一致する
+    // Serialization round-trips identically
     const reserialized = try final_tx.serialize(allocator, true);
     try testing.expectEqualSlices(u8, final_bytes, reserialized);
 
-    // --- ワークフロー関数（バイト列 → 署名済み PSBT）でも同じ結果になること ---
+    // --- the workflow function (bytes -> signed PSBT) must give the same result ---
     const workflow = try zhww.btc_sign.signPsbtBytes(allocator, psbt_bytes.items, keys);
     try testing.expectEqual(@as(usize, 3), workflow.result.partial_sigs.len);
     try testing.expectEqual(@as(?u64, 50_000), workflow.result.fee);
@@ -285,12 +285,12 @@ test "3 種類の入力（P2WPKH / P2PKH / P2SH-P2WPKH）に署名して最終�
     try testing.expectEqualSlices(u8, final_bytes, workflow.result.final_tx.?);
     try testing.expect(workflow.signed_psbt.len > psbt_bytes.items.len);
 
-    // 署名済み PSBT を読み直すと、3 入力すべてに partial sig が入っている
+    // Reading the signed PSBT back shows partial sigs on all 3 inputs
     const reparsed = try zhww.btc_psbt.Psbt.parse(allocator, workflow.signed_psbt);
     for (reparsed.inputs) |input| {
         try testing.expectEqual(@as(usize, 1), input.partial_sigs.len);
     }
-    // 読み直した署名は元の署名と一致する
+    // The signatures read back match the original signatures
     try testing.expectEqualSlices(
         u8,
         reparsed.inputs[0].partial_sigs[0].signature,

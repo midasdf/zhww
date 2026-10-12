@@ -1,11 +1,11 @@
-//! Bech32 / Bech32m（BIP173 / BIP350）。
+//! Bech32 / Bech32m (BIP173 / BIP350).
 //!
-//! **重要な設計制約**: P2WPKH（witness v0）は Bech32、P2TR（witness v1）は Bech32m を使う。
-//! チェックサム方式の取り違えは資金喪失に直結するため、定数を型で分離し、
-//! テストで「v0 を Bech32m として受理しない」ことを検証する。
+//! **Important design constraint**: P2WPKH (witness v0) uses Bech32, P2TR (witness v1) uses Bech32m.
+//! Mixing up the checksum scheme leads directly to loss of funds, so the constants are kept
+//! apart by type and a test verifies that "v0 is not accepted as Bech32m".
 //!
-//! 参考: https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
-//!       https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki
+//! Reference: https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
+//!            https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -18,9 +18,9 @@ const bech32m_const: u32 = 0x2BC830A3;
 
 pub const Spec = enum { bech32, bech32m };
 
-/// Bech32 文字列の最大長（BIP173）。
+/// Maximum length of a Bech32 string (BIP173).
 pub const max_length = 90;
-/// HRP の最大長。
+/// Maximum HRP length.
 pub const max_hrp_len = 83;
 
 fn polymod(values: []const u8) u32 {
@@ -79,7 +79,7 @@ fn verifyChecksum(hrp: []const u8, data: []const u8, spec: Spec) bool {
     return polymod(values[0 .. expanded_len + data.len]) == const_value;
 }
 
-/// hrp と 5bit データ列から Bech32 / Bech32m 文字列を作る。
+/// Build a Bech32 / Bech32m string from an hrp and a 5-bit data sequence.
 pub fn encode(out: []u8, hrp: []const u8, data: []const u8, spec: Spec) Error![]u8 {
     if (hrp.len == 0 or hrp.len > max_hrp_len) return error.InvalidEncoding;
     const checksum = createChecksum(hrp, data, spec);
@@ -107,7 +107,7 @@ pub const Decoded = struct {
     spec: Spec,
 };
 
-/// Bech32 / Bech32m 文字列を検証して分解する。`expect` を指定すると方式も検査する。
+/// Validate and split a Bech32 / Bech32m string. If `expect` is given, the scheme is checked too.
 pub fn decode(
     hrp_buf: []u8,
     data_buf: []u8,
@@ -162,7 +162,7 @@ pub fn decode(
     return error.ChecksumMismatch;
 }
 
-/// ビット幅を変換する。`pad = false` のとき端数のビットが不正なら error を返す。
+/// Convert between bit widths. With `pad = false`, returns an error if the leftover bits are invalid.
 pub fn convertBits(
     out: []u8,
     data: []const u8,
@@ -199,7 +199,7 @@ pub fn convertBits(
     return out[0..pos];
 }
 
-/// SegWit アドレス（witness program）を生成する。v0 は Bech32、v1 以降は Bech32m。
+/// Generate a SegWit address (witness program). v0 uses Bech32, v1 and later use Bech32m.
 pub fn encodeSegwit(out: []u8, hrp: []const u8, witness_version: u8, program: []const u8) Error![]u8 {
     if (witness_version > 16) return error.InvalidEncoding;
     if (program.len < 2 or program.len > 40) return error.InvalidEncoding;
@@ -218,7 +218,7 @@ pub const SegwitDecoded = struct {
     program: []const u8,
 };
 
-/// SegWit アドレスを検証して分解する。v0 に Bech32m、v1 以降に Bech32 を使っていたら error。
+/// Validate and split a SegWit address. Errors if Bech32m is used for v0 or Bech32 for v1 and later.
 pub fn decodeSegwit(
     hrp: []const u8,
     program_buf: []u8,
@@ -243,14 +243,14 @@ pub fn decodeSegwit(
     return .{ .witness_version = witness_version, .program = program };
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
 const p2wpkh_address = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu";
 const p2tr_address = "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr";
 
-test "BIP173 の妥当なテストベクタ" {
+test "BIP173 valid test vectors" {
     var hrp_buf: [max_hrp_len]u8 = undefined;
     var data_buf: [max_length]u8 = undefined;
     for ([_][]const u8{
@@ -263,19 +263,19 @@ test "BIP173 の妥当なテストベクタ" {
     }
 }
 
-test "BIP173 の不正なテストベクタ" {
+test "BIP173 invalid test vectors" {
     var hrp_buf: [max_hrp_len]u8 = undefined;
     var data_buf: [max_length]u8 = undefined;
     for ([_][]const u8{ "", "pzry9x0s0muk", "1pzry9x0s0muk", "A1G7SGD8", "li1dgmt3" }) |address| {
-        // エラーの種類は問わない（書式違反かチェックサム不一致のいずれか）。
-        // 重要なのは「受理しないこと」。
+        // The kind of error does not matter (either a format violation or a checksum mismatch).
+        // What matters is that it is not accepted.
         const result = decode(&hrp_buf, &data_buf, address, null);
         _ = result catch continue;
         return error.TestUnexpectedResult;
     }
 }
 
-test "大文字小文字の混在を拒否する" {
+test "rejects mixed case" {
     var hrp_buf: [max_hrp_len]u8 = undefined;
     var data_buf: [max_length]u8 = undefined;
     try testing.expectError(
@@ -284,7 +284,7 @@ test "大文字小文字の混在を拒否する" {
     );
 }
 
-test "P2WPKH は Bech32（v0）" {
+test "P2WPKH uses Bech32 (v0)" {
     var program: [40]u8 = undefined;
     const decoded = try decodeSegwit("bc", &program, p2wpkh_address);
     try testing.expectEqual(@as(u8, 0), decoded.witness_version);
@@ -299,7 +299,7 @@ test "P2WPKH は Bech32（v0）" {
     try testing.expectEqual(Spec.bech32, raw.spec);
 }
 
-test "P2TR は Bech32m（v1）" {
+test "P2TR uses Bech32m (v1)" {
     var program: [40]u8 = undefined;
     const decoded = try decodeSegwit("bc", &program, p2tr_address);
     try testing.expectEqual(@as(u8, 1), decoded.witness_version);
@@ -314,7 +314,7 @@ test "P2TR は Bech32m（v1）" {
     try testing.expectEqual(Spec.bech32m, raw.spec);
 }
 
-test "v0 アドレスを Bech32m として受理しない" {
+test "does not accept a v0 address as Bech32m" {
     var hrp_buf: [max_hrp_len]u8 = undefined;
     var data_buf: [max_length]u8 = undefined;
     try testing.expectError(
@@ -327,7 +327,7 @@ test "v0 アドレスを Bech32m として受理しない" {
     );
 }
 
-test "異なる hrp を拒否する" {
+test "rejects a different hrp" {
     var program: [40]u8 = undefined;
     try testing.expectError(
         error.InvalidEncoding,
@@ -335,7 +335,7 @@ test "異なる hrp を拒否する" {
     );
 }
 
-test "witness version と program 長の検証" {
+test "witness version and program length validation" {
     var out: [max_length]u8 = undefined;
     const program_20: [20]u8 = @splat(0);
     const program_21: [21]u8 = @splat(0);

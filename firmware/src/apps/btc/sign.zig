@@ -1,15 +1,15 @@
-//! PSBT からの署名と最終化（Bitcoin 単一署名）。
+//! Signing and finalization from a PSBT (single-signature Bitcoin).
 //!
-//! 役割分担（[docs/02-architecture.md] の不変条件）:
-//! - 鍵の探索・署名対象の決定・署名・最終化をここで行う
-//! - `apps` は鍵素材を保持しない。鍵は `KeySource` として呼び出し側が渡し、
-//!   この層は「この鍵で署名した」という結果だけを返す
+//! Division of responsibilities (invariants in [docs/02-architecture.md]):
+//! - Key discovery, choosing what to sign, signing and finalization all happen here
+//! - `apps` holds no key material. The caller passes keys in as a `KeySource`, and
+//!   this layer returns only the result "this key signed it"
 //!
-//! **安全性の方針**
-//! - 署名したら必ず `secp256k1.verify` で検証してから返す（壊れた署名を返さない）
-//! - 入力額が分からない場合は手数料を計算しない（`amounts_complete = false`）。
-//!   表示層はこの場合に承認を求めてはならない
-//! - 非 witness 入力に対して `witness_utxo` しか無い場合は署名しない（BIP174 の規定）
+//! **Safety policy**
+//! - Always verify with `secp256k1.verify` before returning a signature (never return a broken one)
+//! - If an input amount is unknown, do not compute a fee (`amounts_complete = false`).
+//!   In that case the display layer must not ask for approval
+//! - Do not sign a non-witness input that only has `witness_utxo` (BIP174 rule)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -25,7 +25,7 @@ const psbt_mod = @import("psbt.zig");
 
 pub const SIGHASH_ALL: u32 = 0x01;
 
-/// scriptPubKey の種類。
+/// Kind of scriptPubKey.
 pub const ScriptKind = enum {
     p2pkh,
     p2sh,
@@ -43,7 +43,7 @@ pub const ScriptKind = enum {
     }
 };
 
-/// scriptPubKey から種類を判定する。
+/// Determine the kind from the scriptPubKey.
 pub fn detectScriptKind(script: []const u8) ScriptKind {
     if (script.len == 25 and script[0] == 0x76 and script[1] == 0xa9 and
         script[2] == 0x14 and script[23] == 0x88 and script[24] == 0xac) return .p2pkh;
@@ -57,15 +57,15 @@ pub fn detectScriptKind(script: []const u8) ScriptKind {
     return .unknown;
 }
 
-/// 署名に使う鍵の集合。
+/// The set of keys used for signing.
 ///
-/// - `master` を渡すと BIP32 で派生する（通常の利用）
-/// - `raw_keys` は個別にインポートした鍵（テストや復旧用）
+/// - Passing `master` derives keys via BIP32 (normal use)
+/// - `raw_keys` are individually imported keys (for tests and recovery)
 pub const KeySource = struct {
     master: ?bip32.ExtendedKey = null,
     master_fingerprint: [4]u8 = @splat(0),
     raw_keys: []const RawKey = &.{},
-    /// 鍵探索で辿る最大 index（受取・お釣りそれぞれ）。
+    /// Highest index walked during key discovery (for receive and change alike).
     max_index: u32 = 20,
 
     pub const RawKey = struct {
@@ -73,7 +73,7 @@ pub const KeySource = struct {
         public_key: [33]u8,
     };
 
-    /// seed から鍵集合を作る（BIP32 マスター鍵）。
+    /// Build a key set from a seed (BIP32 master key).
     pub fn fromSeed(seed: []const u8) Error!KeySource {
         const master = try bip32.ExtendedKey.fromSeed(seed, .xprv);
         return .{
@@ -82,7 +82,7 @@ pub const KeySource = struct {
         };
     }
 
-    /// 個別の鍵だけを使う。
+    /// Use only the individual keys.
     pub fn fromRawKeys(keys: []const RawKey) KeySource {
         return .{ .raw_keys = keys };
     }
@@ -95,31 +95,31 @@ pub const KeySource = struct {
     }
 };
 
-/// 署名できた入力。
+/// An input that was signed.
 pub const PartialSignature = struct {
     index: usize,
     pubkey: [33]u8,
-    /// DER 署名 + sighash タイプ（scriptSig / witness にそのまま入れられる形）。
+    /// DER signature + sighash type (in the form that goes straight into scriptSig / witness).
     signature: []const u8,
 };
 
-/// 署名の結果。
+/// The result of signing.
 pub const SignResult = struct {
     partial_sigs: []const PartialSignature,
-    /// すべての入力に署名できた場合の最終トランザクション（直列化済み）。
+    /// The final transaction (already serialized) when every input could be signed.
     final_tx: ?[]const u8,
-    /// 入力額の合計（1 つでも不明なら null）。
+    /// Total input amount (null if even one of them is unknown).
     total_input: ?u64,
     total_output: u64,
-    /// 手数料（入力額がすべて判明している場合のみ）。
+    /// The fee (only when every input amount is known).
     fee: ?u64,
-    /// お釣りと判定した出力の index。
+    /// Index of the output judged to be change.
     change_outputs: []const usize,
-    /// 署名できなかった入力の index。
+    /// Indices of the inputs that could not be signed.
     unsigned_inputs: []const usize,
 };
 
-/// PSBT に署名する。
+/// Sign a PSBT.
 pub fn sign(
     allocator: std.mem.Allocator,
     psbt: psbt_mod.Psbt,
@@ -131,13 +131,13 @@ pub fn sign(
     var unsigned = std.ArrayList(usize).empty;
     errdefer unsigned.deinit(allocator);
 
-    // 入力の scriptPubKey と金額を解決する
+    // Resolve each input's scriptPubKey and amount
     const resolved = try allocator.alloc(?ResolvedUtxo, tx.inputs.len);
     for (resolved, 0..) |*entry, i| {
         entry.* = try resolveUtxo(allocator, psbt, i);
     }
 
-    // 各入力に署名する
+    // Sign each input
     const signatures = try allocator.alloc(?[]const u8, tx.inputs.len);
     const signer_keys = try allocator.alloc(?KeySource.RawKey, tx.inputs.len);
     for (signatures) |*slot| slot.* = null;
@@ -150,13 +150,13 @@ pub fn sign(
         };
         const kind = detectScriptKind(utxo.script_pubkey);
 
-        // 鍵を探す
+        // Find the key
         const found = try findKeyForInput(allocator, psbt, keys, index, utxo, kind) orelse {
             try unsigned.append(allocator, index);
             continue;
         };
 
-        // 署名対象のハッシュを求める
+        // Compute the signature hash
         const message = try sighashForInput(
             allocator,
             psbt,
@@ -167,7 +167,7 @@ pub fn sign(
         );
 
         const signature = try secp256k1.sign(message, found.private_key);
-        // 署名は必ず検証してから採用する
+        // A signature is only accepted after it verifies
         if (!(try secp256k1.verify(&signature, message, found.public_key))) {
             return error.SignatureInvalid;
         }
@@ -187,7 +187,7 @@ pub fn sign(
         });
     }
 
-    // 入力額の合計と手数料
+    // Total input amount and fee
     var total_input: u64 = 0;
     var amounts_complete = true;
     for (resolved) |entry| {
@@ -203,10 +203,10 @@ pub fn sign(
         break :blk total_input - total_output;
     } else null;
 
-    // お釣り判定
+    // Change detection
     const change_outputs = try findChangeOutputs(allocator, psbt, keys);
 
-    // 最終化（すべて署名できた場合のみ）
+    // Finalization (only when every input could be signed)
     var final_tx: ?[]const u8 = null;
     if (unsigned.items.len == 0) {
         final_tx = try finalize(allocator, psbt, signatures, signer_keys, resolved);
@@ -226,7 +226,7 @@ pub fn sign(
 const ResolvedUtxo = struct {
     script_pubkey: []const u8,
     amount: u64,
-    /// P2SH-P2WPKH の場合の redeemScript。
+    /// The redeemScript in the P2SH-P2WPKH case.
     redeem_script: ?[]const u8 = null,
 };
 
@@ -238,8 +238,8 @@ fn resolveUtxo(
     const input = psbt.inputs[index];
     const prevout = psbt.unsigned_tx.inputs[index].prevout;
 
-    // witness 入力なら witness_utxo を使う。
-    // P2SH でも redeemScript が P2WPKH なら witness 入力（P2SH-P2WPKH）である。
+    // For a witness input, use witness_utxo.
+    // Even under P2SH, a P2WPKH redeemScript means a witness input (P2SH-P2WPKH).
     if (input.witness_utxo) |utxo| {
         const kind = detectScriptKind(utxo.script_pubkey);
         const is_witness_input = kind.isWitness() or (kind == .p2sh and
@@ -254,10 +254,10 @@ fn resolveUtxo(
         }
     }
 
-    // non-witness utxo から該当する出力を探す。
-    // **witness_utxo しか無い非 witness 入力は署名しない**（BIP174 の規定）。
+    // Find the matching output in the non-witness utxo.
+    // **A non-witness input that only has witness_utxo is not signed** (BIP174 rule).
     if (input.non_witness_utxo) |prev_tx| {
-        // txid の一致を確認する（差し替え攻撃の防止）
+        // Check that the txid matches (prevents replacement attacks)
         const txid = try prev_tx.txid(allocator);
         if (!std.mem.eql(u8, &txid, &prevout.txid)) return error.InvalidPsbt;
 
@@ -283,7 +283,7 @@ fn findKeyForInput(
     utxo: ResolvedUtxo,
     kind: ScriptKind,
 ) Error!?KeySource.RawKey {
-    // 1) PSBT の BIP32 派生情報を使う（fingerprint が一致するもの）
+    // 1) Use the PSBT's BIP32 derivation information (those whose fingerprint matches)
     for (psbt.inputs[index].bip32_derivations) |derivation| {
         if (!std.mem.eql(u8, &derivation.fingerprint, &keys.master_fingerprint)) continue;
         const node = try keys.derive(derivation.path);
@@ -295,12 +295,12 @@ fn findKeyForInput(
         }
     }
 
-    // 2) 個別に渡された鍵
+    // 2) Individually supplied keys
     for (keys.raw_keys) |raw| {
         if (matchesKey(utxo, kind, raw.public_key)) return raw;
     }
 
-    // 3) 標準的な派生パスを走査する
+    // 3) Walk the standard derivation paths
     if (keys.master != null) {
         const purposes = [_]u32{ 84, 49, 44 };
         for (purposes) |purpose| {
@@ -328,7 +328,7 @@ fn findKeyForInput(
     return null;
 }
 
-/// 公開鍵がこの UTXO の鍵として妥当かどうか。
+/// Whether the public key is plausible as the key for this UTXO.
 fn matchesKey(utxo: ResolvedUtxo, kind: ScriptKind, pub_key: [33]u8) bool {
     var h160: [20]u8 = undefined;
     hashes.hash160(&h160, &pub_key);
@@ -378,7 +378,7 @@ fn sighashForInput(
             );
         },
         .p2sh => {
-            // P2SH-P2WPKH として扱う（redeemScript が一致することを確認済み）
+            // Handle as P2SH-P2WPKH (the redeemScript match was already checked)
             const script_code = sighash.p2wpkhScriptCode(h160);
             return sighash.segwitV0Sighash(
                 allocator,
@@ -407,10 +407,10 @@ fn sighashForInput(
     }
 }
 
-/// 出力が自分の**お釣り用**の鍵に属するかを判定し、該当する index を返す。
+/// Decide whether an output belongs to one of our **change** keys, and return its index.
 ///
-/// 判定は BIP84/49/44 の change 鎖（`.../1/i`）のみを対象にする。
-/// **受取アドレス（`.../0/i`）への送金はお釣りとして扱わない**（誤判定を避けるため）。
+/// Only the change chains of BIP84/49/44 (`.../1/i`) are considered.
+/// **A payment to a receive address (`.../0/i`) is not treated as change** (to avoid misjudging it).
 fn findChangeOutputs(
     allocator: std.mem.Allocator,
     psbt: psbt_mod.Psbt,
@@ -452,7 +452,7 @@ fn outputMatchesChangeKey(keys: KeySource, script: []const u8, kind: ScriptKind)
     return false;
 }
 
-/// 署名を埋めて最終トランザクションを組み立てる。
+/// Fill in the signatures and assemble the final transaction.
 fn finalize(
     allocator: std.mem.Allocator,
     psbt: psbt_mod.Psbt,
@@ -470,8 +470,8 @@ fn finalize(
         const utxo = resolved[index] orelse return error.InvalidPsbt;
         const kind = detectScriptKind(utxo.script_pubkey);
 
-        // 公開鍵は安定した領域にコピーしてから witness に入れる。
-        // ローカル変数のアドレスを渡すと、ループを抜けた時点で不正な参照になる。
+        // Copy the public key into stable storage before putting it in the witness.
+        // Passing the address of a local variable becomes an invalid reference once the loop exits.
         const pub_key_copy = try allocator.dupe(u8, &key.public_key);
 
         switch (kind) {
@@ -523,7 +523,7 @@ fn finalize(
     return final.serialize(allocator, true);
 }
 
-/// Bitcoin のスクリプトにおける「データを push する」表現。
+/// The "push data" construct in Bitcoin Script.
 fn pushData(allocator: std.mem.Allocator, data: []const u8) Error![]const u8 {
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
@@ -545,18 +545,18 @@ fn pushData(allocator: std.mem.Allocator, data: []const u8) Error![]const u8 {
     return out.toOwnedSlice(allocator);
 }
 
-/// 署名済み PSBT を含む一連の結果。
+/// The whole set of results, including the signed PSBT.
 pub const SignedPsbt = struct {
-    /// 署名の詳細（手数料・お釣り・署名できなかった入力など）。
+    /// Signature details (fee, change, inputs that could not be signed, and so on).
     result: SignResult,
-    /// ホストに返す署名済み PSBT（元のフィールドを保持する）。
+    /// The signed PSBT returned to the host (the original fields are preserved).
     signed_psbt: []const u8,
 };
 
-/// PSBT のバイト列を受け取り、署名して署名済み PSBT を返す。
+/// Take PSBT bytes, sign them, and return the signed PSBT.
 ///
-/// エアギャップ運用では「バイト列を受けてバイト列を返す」形が基本になるため、
-/// 入出力をここで完結させる（QR / SD / USB のどの経路でも同じ関数を使う）。
+/// Air-gapped operation is fundamentally "take bytes, return bytes", so the input and
+/// output are completed here (QR / SD / USB all use the same function).
 pub fn signPsbtBytes(
     allocator: std.mem.Allocator,
     psbt_bytes: []const u8,
@@ -565,9 +565,9 @@ pub fn signPsbtBytes(
     const psbt = try psbt_mod.Psbt.parse(allocator, psbt_bytes);
     const result = try sign(allocator, psbt, keys);
 
-    // 入力ごとの追加署名をまとめる。
-    // 公開鍵は `result.partial_sigs` の要素を指す（安定した領域）ので、
-    // ループのローカル変数のアドレスを渡してはならない。
+    // Collect the additional signatures for each input.
+    // The public key points into `result.partial_sigs` (stable storage), so
+    // never pass the address of a loop-local variable.
     const sigs = try allocator.alloc([]const psbt_mod.PartialSig, psbt.inputs.len);
     for (sigs) |*slot| slot.* = &.{};
     for (result.partial_sigs, 0..) |partial, i| {
@@ -585,19 +585,19 @@ pub fn signPsbtBytes(
     };
 }
 
-/// seed から鍵集合を作る（BIP32 マスター鍵）。
+/// Build a key set from a seed (BIP32 master key).
 pub fn keysFromMnemonic(mnemonic: []const u8, passphrase: []const u8) Error!KeySource {
     var seed: [64]u8 = undefined;
-    defer @memset(&seed, 0); // 使い終わった seed は即座に消す
+    defer @memset(&seed, 0); // wipe the seed as soon as it is no longer needed
     try bip39.mnemonicToSeed(&seed, mnemonic, passphrase);
     return KeySource.fromSeed(&seed);
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "scriptPubKey の種類判定" {
+test "scriptPubKey kind detection" {
     var p2pkh: [25]u8 = undefined;
     _ = try std.fmt.hexToBytes(&p2pkh, "76a914000102030405060708090a0b0c0d0e0f1011121388ac");
     try testing.expectEqual(ScriptKind.p2pkh, detectScriptKind(&p2pkh));
@@ -628,7 +628,7 @@ test "scriptPubKey の種類判定" {
     try testing.expectEqual(ScriptKind.unknown, detectScriptKind(&[_]u8{}));
 }
 
-test "pushData の表現" {
+test "pushData representation" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -643,7 +643,7 @@ test "pushData の表現" {
     try testing.expectEqual(@as(usize, 82), long.len);
 }
 
-test "mnemonic から鍵集合を作れる（BIP84 テストベクタのアドレスと一致）" {
+test "builds a key set from a mnemonic (matches the BIP84 test vector address)" {
     const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     const keys = try keysFromMnemonic(mnemonic, "");
 
@@ -663,16 +663,16 @@ test "mnemonic から鍵集合を作れる（BIP84 テストベクタのアド�
     try testing.expectEqualSlices(u8, decoded.program, &h160);
 }
 
-test "seed から BIP84 の鍵を導出し、既知の witness program と一致する" {
+test "derives BIP84 keys from a seed and matches the known witness program" {
     const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     var seed: [64]u8 = undefined;
     try bip39.mnemonicToSeed(&seed, mnemonic, "");
     const keys = try KeySource.fromSeed(&seed);
 
-    // m/84'/0'/0'/0/0 の公開鍵の HASH160 が、BIP84 テストベクタのアドレスの
-    // witness program と一致することを確認する。
-    // アドレス文字列は公式ベクタ、デコードは BIP173 ベクタで検証済みの自前実装なので、
-    // 導出 → アドレス の経路に対する相互検証になる。
+    // Confirm that the HASH160 of the m/84'/0'/0'/0/0 public key matches the witness
+    // program of the BIP84 test vector address.
+    // The address string comes from the official vector and the decoder is our own
+    // implementation, validated against the BIP173 vectors, so this cross-checks the derivation -> address path.
     const node = try keys.derive(&[_]u32{
         84 | bip32.hardened, 0 | bip32.hardened, 0 | bip32.hardened, 0, 0,
     });
@@ -684,12 +684,12 @@ test "seed から BIP84 の鍵を導出し、既知の witness program と一致
     const decoded = try bech32.decodeSegwit(
         "bc",
         &program,
-        "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu", // BIP84 テストベクタ
+        "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu", // BIP84 test vector
     );
     try testing.expectEqual(@as(u8, 0), decoded.witness_version);
     try testing.expectEqualSlices(u8, decoded.program, &h160);
 
-    // マスター鍵の fingerprint が再現性をもって得られること
+    // The master key fingerprint is obtained reproducibly
     const master = try bip32.ExtendedKey.fromSeed(&seed, .xprv);
     try testing.expectEqualSlices(
         u8,

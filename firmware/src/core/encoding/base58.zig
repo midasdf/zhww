@@ -1,8 +1,8 @@
-//! Base58 / Base58Check（Bitcoin のアドレスと拡張鍵の直列化）。
+//! Base58 / Base58Check (serialization of Bitcoin addresses and extended keys).
 //!
-//! 動的メモリを使わない。出力は呼び出し側が用意したバッファに書き込む。
+//! No dynamic memory. Output is written into a buffer provided by the caller.
 //!
-//! 参考: https://en.bitcoin.it/wiki/Base58Check_encoding
+//! Reference: https://en.bitcoin.it/wiki/Base58Check_encoding
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -11,12 +11,12 @@ const hashes = @import("../crypto/hashes.zig");
 
 pub const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-/// Base58 エンコードで必要になる最大長（入力長 n に対し ceil(n * 138 / 100) + 1）。
+/// Maximum length needed for Base58 encoding (ceil(n * 138 / 100) + 1 for an input of length n).
 pub fn encodedLenMax(input_len: usize) usize {
     return input_len * 138 / 100 + 1;
 }
 
-/// Base58Check デコードで扱える最大ペイロード長。
+/// Maximum payload length that Base58Check decoding can handle.
 pub const max_payload_len = 128;
 
 const DigitBuf = [max_payload_len * 138 / 100 + 2]u8;
@@ -28,7 +28,7 @@ fn indexOf(ch: u8) ?u8 {
     return null;
 }
 
-/// `data` を Base58 文字列にして `out` へ書き、書き込んだスライスを返す。
+/// Encode `data` as a Base58 string into `out` and return the written slice.
 pub fn encode(out: []u8, data: []const u8) Error![]u8 {
     if (data.len > max_payload_len) return error.BufferTooSmall;
     if (out.len < encodedLenMax(data.len)) return error.BufferTooSmall;
@@ -36,7 +36,7 @@ pub fn encode(out: []u8, data: []const u8) Error![]u8 {
     var digits: DigitBuf = undefined;
     var digits_len: usize = 0;
 
-    // 先頭の 0x00 は '1' として保存されるので、ここでは数値変換から除外する
+    // Leading 0x00 bytes are preserved as '1', so exclude them from the numeric conversion here
     var zeros: usize = 0;
     while (zeros < data.len and data[zeros] == 0) : (zeros += 1) {}
 
@@ -69,7 +69,7 @@ pub fn encode(out: []u8, data: []const u8) Error![]u8 {
     return out[0..pos];
 }
 
-/// Base58 文字列をバイト列に戻し、書き込んだスライスを返す。
+/// Decode a Base58 string back to bytes and return the written slice.
 pub fn decode(out: []u8, text: []const u8) Error![]u8 {
     var bin: [max_payload_len + 1]u8 = undefined;
     var bin_len: usize = 0;
@@ -109,7 +109,7 @@ pub fn decode(out: []u8, text: []const u8) Error![]u8 {
     return out[0..pos];
 }
 
-/// 4 バイトのチェックサムを付けて Base58Check エンコードする。
+/// Base58Check-encode with a 4-byte checksum appended.
 pub fn checkEncode(out: []u8, payload: []const u8) Error![]u8 {
     if (payload.len + 4 > max_payload_len) return error.BufferTooSmall;
     var buf: [max_payload_len]u8 = undefined;
@@ -120,7 +120,7 @@ pub fn checkEncode(out: []u8, payload: []const u8) Error![]u8 {
     return encode(out, buf[0 .. payload.len + 4]);
 }
 
-/// Base58Check を検証してペイロード（チェックサムを除いた部分）を返す。
+/// Verify Base58Check and return the payload (the part excluding the checksum).
 pub fn checkDecode(out: []u8, text: []const u8) Error![]u8 {
     var raw: [max_payload_len + 1]u8 = undefined;
     const decoded = try decode(&raw, text);
@@ -135,11 +135,11 @@ pub fn checkDecode(out: []u8, text: []const u8) Error![]u8 {
     return out[0..payload.len];
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "先頭の 0x00 が '1' として保存される" {
+test "leading 0x00 is preserved as '1'" {
     var buf: [16]u8 = undefined;
     try testing.expectEqualStrings("11111", try encode(&buf, &[_]u8{ 0, 0, 0, 0, 0 }));
     try testing.expectEqualStrings("112", try encode(&buf, &[_]u8{ 0, 0, 1 }));
@@ -149,11 +149,11 @@ test "先頭の 0x00 が '1' として保存される" {
     try testing.expectEqualSlices(u8, &[_]u8{ 0, 0, 1 }, try decode(&out, "112"));
 }
 
-test "ラウンドトリップ（既知の Bitcoin アドレス）" {
+test "round trip (known Bitcoin address)" {
     const addr = "2Mww8dCYPUpKHofjgcXcBCEGmniw9CoaiD2";
     var payload: [64]u8 = undefined;
     const decoded = try checkDecode(&payload, addr);
-    // testnet P2SH のプレフィクスは 0xc4
+    // the testnet P2SH prefix is 0xc4
     try testing.expectEqual(@as(u8, 0xC4), decoded[0]);
     try testing.expectEqual(@as(usize, 21), decoded.len);
 
@@ -161,14 +161,14 @@ test "ラウンドトリップ（既知の Bitcoin アドレス）" {
     try testing.expectEqualStrings(addr, try checkEncode(&reencoded, decoded));
 }
 
-test "不正な文字を拒否する" {
+test "rejects invalid characters" {
     var out: [64]u8 = undefined;
     for ([_][]const u8{ "0", "O", "I", "l", "abc def" }) |bad| {
         try testing.expectError(error.InvalidEncoding, decode(&out, bad));
     }
 }
 
-test "チェックサム破損を検出する" {
+test "detects a corrupted checksum" {
     var payload: [21]u8 = @splat(0x11);
     payload[0] = 0x00;
     var encoded: [64]u8 = undefined;
@@ -177,14 +177,14 @@ test "チェックサム破損を検出する" {
     var out: [64]u8 = undefined;
     try testing.expectEqualSlices(u8, &payload, try checkDecode(&out, text));
 
-    // 最後の 1 文字を変える
+    // flip the last character
     var corrupted: [64]u8 = undefined;
     @memcpy(corrupted[0..text.len], text);
     corrupted[text.len - 1] = if (corrupted[text.len - 1] == '1') '2' else '1';
     try testing.expectError(error.ChecksumMismatch, checkDecode(&out, corrupted[0..text.len]));
 }
 
-test "短すぎる入力を拒否する" {
+test "rejects input that is too short" {
     var out: [64]u8 = undefined;
     try testing.expectError(error.InvalidEncoding, checkDecode(&out, "1111"));
 }

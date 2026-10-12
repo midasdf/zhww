@@ -1,11 +1,11 @@
-//! BIP32 階層的決定性ウォレット（secp256k1）。
+//! BIP32 hierarchical deterministic wallet (secp256k1).
 //!
-//! 参考: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki
+//! Reference: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki
 //!
-//! **実装上の要点**
-//! - CKDpriv / CKDpub で無効な tweak が出た場合は、BIP32 の仕様どおり次の index へ進む
-//! - 拡張鍵のバージョンバイトは SLIP-132 に従い、BIP44/49/84 で異なる接頭辞を出力できる
-//! - 秘密鍵を持たない経路では `neuter()` を使い、拡張秘密鍵を保持しない
+//! **Implementation notes**
+//! - When CKDpriv / CKDpub hits an invalid tweak, it moves on to the next index as the BIP32 spec says
+//! - Extended key version bytes follow SLIP-132, so BIP44/49/84 can emit different prefixes
+//! - Paths that must not hold a private key use `neuter()` and keep no extended private key
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -16,10 +16,10 @@ const base58 = @import("../encoding/base58.zig");
 
 const HmacSha512 = std.crypto.auth.hmac.sha2.HmacSha512;
 
-/// hardened 派生を表すビット。
+/// Bit that marks hardened derivation.
 pub const hardened: u32 = 0x80000000;
 
-/// 拡張鍵のバージョンバイト（SLIP-132 を含む）。
+/// Extended key version bytes (including SLIP-132).
 pub const Version = enum {
     xprv,
     xpub,
@@ -62,7 +62,7 @@ pub const Version = enum {
         return @tagName(self);
     }
 
-    /// 対応する公開鍵版のバージョン。
+    /// The matching public-key version.
     pub fn publicVersion(self: Version) Version {
         return switch (self) {
             .xprv, .xpub => .xpub,
@@ -74,7 +74,7 @@ pub const Version = enum {
         };
     }
 
-    /// 対応する秘密鍵版のバージョン。
+    /// The matching private-key version.
     pub fn privateVersion(self: Version) Version {
         return switch (self) {
             .xprv, .xpub => .xprv,
@@ -96,25 +96,25 @@ pub const Version = enum {
     }
 };
 
-/// 鍵素材。秘密鍵か公開鍵のどちらか一方のみを持つ。
+/// Key material. Holds either a private key or a public key, never both.
 pub const Key = union(enum) {
     priv: [32]u8,
     pub_key: [33]u8,
 };
 
-/// 派生パス。最大 16 レベルまで（BIP32 の実用上の上限）。
+/// Derivation path. Up to 16 levels (the practical BIP32 limit).
 pub const Path = struct {
     indices: [16]u32 = @splat(0),
     len: usize = 0,
-    /// 先頭が "m" の絶対パスかどうか。絶対パスはマスター鍵（depth 0）でのみ使える。
+    /// Whether the path is absolute, starting with "m". Absolute paths only work on the master key (depth 0).
     absolute: bool = false,
 };
 
-/// 'm/84'/0'/0'/0/0' 形式のパスを解析する。
+/// Parse a path in the 'm/84'/0'/0'/0/0' format.
 ///
-/// **安全性のための規則**: 先頭の "m" はマスター鍵からの絶対パスを意味する。
-/// "m" を省略した場合は現在のノードからの相対パスとして扱う。
-/// この区別を曖昧にすると、意図と異なる鍵を導出して資金を失う事故につながる。
+/// **Safety rule**: a leading "m" means an absolute path from the master key.
+/// Omitting "m" treats the path as relative to the current node.
+/// Blurring this distinction leads to deriving keys other than intended and losing funds.
 pub fn parsePath(path: []const u8) Error!Path {
     var result: Path = .{};
     if (path.len == 0) return error.InvalidPath;
@@ -153,7 +153,7 @@ fn appendLevel(result: *Path, raw: []const u8) Error!void {
     result.len += 1;
 }
 
-/// BIP32 拡張鍵。
+/// BIP32 extended key.
 pub const ExtendedKey = struct {
     version: Version,
     depth: u8,
@@ -162,7 +162,7 @@ pub const ExtendedKey = struct {
     chain_code: [32]u8,
     key: Key,
 
-    /// 圧縮公開鍵（33 バイト）。秘密鍵しか無い場合は導出する。
+    /// Compressed public key (33 bytes). Derived when only a private key is present.
     pub fn publicKey(self: ExtendedKey) Error![33]u8 {
         return switch (self.key) {
             .pub_key => |k| k,
@@ -170,7 +170,7 @@ pub const ExtendedKey = struct {
         };
     }
 
-    /// HASH160(公開鍵)。BIP32 の識別子。
+    /// HASH160(public key). The BIP32 identifier.
     pub fn identifier(self: ExtendedKey) Error![20]u8 {
         var id: [20]u8 = undefined;
         const pub_key = try self.publicKey();
@@ -178,13 +178,13 @@ pub const ExtendedKey = struct {
         return id;
     }
 
-    /// 親の fingerprint として使う 4 バイト。
+    /// The 4 bytes used as the parent fingerprint.
     pub fn fingerprint(self: ExtendedKey) Error![4]u8 {
         const id = try self.identifier();
         return id[0..4].*;
     }
 
-    /// 公開鍵版へ変換する（秘密鍵を持たない）。
+    /// Convert to the public-key version (holds no private key).
     pub fn neuter(self: ExtendedKey) Error!ExtendedKey {
         return switch (self.key) {
             .pub_key => self,
@@ -199,7 +199,7 @@ pub const ExtendedKey = struct {
         };
     }
 
-    /// バージョンバイトだけを差し替える（例: xprv を zprv にする）。
+    /// Replace only the version bytes (for example, turn an xprv into a zprv).
     pub fn withVersion(self: ExtendedKey, version: Version) Error!ExtendedKey {
         if (version.isPrivate() != self.keyIsPrivate()) return error.InvalidKey;
         return .{
@@ -219,7 +219,7 @@ pub const ExtendedKey = struct {
         };
     }
 
-    /// BIP32 マスター鍵を生成する。
+    /// Generate the BIP32 master key.
     pub fn fromSeed(seed: []const u8, version: Version) Error!ExtendedKey {
         if (seed.len < 16 or seed.len > 64) return error.InvalidKey;
         var digest: [64]u8 = undefined;
@@ -242,7 +242,7 @@ pub const ExtendedKey = struct {
         };
     }
 
-    /// CKDpriv: 秘密鍵から子鍵を導出する。
+    /// CKDpriv: derive a child key from a private key.
     pub fn ckdPriv(self: ExtendedKey, index: u32) Error!ExtendedKey {
         const parent = switch (self.key) {
             .priv => |p| p,
@@ -277,7 +277,7 @@ pub const ExtendedKey = struct {
         };
     }
 
-    /// CKDpub: 公開鍵から子公開鍵を導出する（hardened は不可）。
+    /// CKDpub: derive a child public key from a public key (hardened is not possible).
     pub fn ckdPub(self: ExtendedKey, index: u32) Error!ExtendedKey {
         if (index >= hardened) return error.InvalidPath;
 
@@ -304,7 +304,7 @@ pub const ExtendedKey = struct {
         };
     }
 
-    /// 子鍵を導出する。無効な tweak が出た場合は次の index を試す（BIP32 の仕様）。
+    /// Derive a child key. On an invalid tweak, try the next index (per the BIP32 spec).
     pub fn child(self: ExtendedKey, index: u32) Error!ExtendedKey {
         var attempt = index;
         while (true) {
@@ -319,11 +319,11 @@ pub const ExtendedKey = struct {
         }
     }
 
-    /// パスを辿って子鍵を返す。
+    /// Walk a path and return the child key.
     ///
-    /// 絶対パス（"m/..."）はマスター鍵でのみ受け付ける。相対パス（"0/1"）は
-    /// 現在のノードからの派生として扱う。誤った階層から派生する事故を防ぐため、
-    /// 非マスター鍵に絶対パスを与えると error.InvalidPath になる。
+    /// Absolute paths ("m/...") are accepted only on the master key. Relative paths ("0/1")
+    /// are treated as derivation from the current node. To prevent deriving from the wrong
+    /// level by accident, giving an absolute path to a non-master key yields error.InvalidPath.
     pub fn derivePath(self: ExtendedKey, path: []const u8) Error!ExtendedKey {
         const parsed = try parsePath(path);
         if (parsed.absolute and self.depth != 0) return error.InvalidPath;
@@ -334,7 +334,7 @@ pub const ExtendedKey = struct {
         return node;
     }
 
-    /// Base58Check 形式の拡張鍵文字列（xprv / zpub など）を返す。
+    /// Return the extended key string in Base58Check form (xprv / zpub etc.).
     pub fn serialize(self: ExtendedKey, out: []u8) Error![]u8 {
         var payload: [78]u8 = undefined;
         std.mem.writeInt(u32, payload[0..4], self.version.bytes(), .big);
@@ -352,7 +352,7 @@ pub const ExtendedKey = struct {
         return base58.checkEncode(out, &payload);
     }
 
-    /// 拡張鍵文字列を解析する。
+    /// Parse an extended key string.
     pub fn parse(text: []const u8) Error!ExtendedKey {
         var payload: [128]u8 = undefined;
         const decoded = try base58.checkDecode(&payload, text);
@@ -387,18 +387,18 @@ pub const ExtendedKey = struct {
     }
 };
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "パス解析" {
+test "path parsing" {
     const path = try parsePath("m/84'/0'/0'/0/0");
     try testing.expectEqual(@as(usize, 5), path.len);
     try testing.expectEqual(@as(u32, 84 | hardened), path.indices[0]);
     try testing.expectEqual(@as(u32, 0), path.indices[3]);
     try testing.expect(path.absolute);
 
-    // h / H 表記と相対パス
+    // h / H notation and relative paths
     const alt = try parsePath("84h/0H/0'");
     try testing.expectEqual(@as(usize, 3), alt.len);
     try testing.expectEqual(@as(u32, 84 | hardened), alt.indices[0]);
@@ -410,7 +410,7 @@ test "パス解析" {
     try testing.expect(master.absolute);
 }
 
-test "不正なパスを拒否する" {
+test "rejects invalid paths" {
     try testing.expectError(error.InvalidPath, parsePath(""));
     try testing.expectError(error.InvalidPath, parsePath("/0"));
     try testing.expectError(error.InvalidPath, parsePath("m/x"));
@@ -418,7 +418,7 @@ test "不正なパスを拒否する" {
     try testing.expectError(error.InvalidPath, parsePath("m/0''"));
 }
 
-test "マスター鍵と直列化（BIP32 テストベクタ 1）" {
+test "master key and serialization (BIP32 test vector 1)" {
     const seed = [_]u8{
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
         0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
@@ -435,7 +435,7 @@ test "マスター鍵と直列化（BIP32 テストベクタ 1）" {
     );
 }
 
-test "公開鍵からの派生と秘密鍵からの派生が一致する" {
+test "public and private derivation agree" {
     const seed = [_]u8{
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
         0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
@@ -444,8 +444,8 @@ test "公開鍵からの派生と秘密鍵からの派生が一致する" {
     const account = try master.derivePath("m/0'");
     const parent_pub = try account.neuter();
 
-    // m/0'/1 を秘密鍵側と公開鍵側の両方から導出して一致することを確認する
-    const node_from_private = try account.derivePath("1"); // 相対パス = m/0'/1
+    // derive m/0'/1 from both the private and the public side and check that they agree
+    const node_from_private = try account.derivePath("1"); // relative path = m/0'/1
     const node_from_public = try parent_pub.derivePath("1");
 
     var buf_a: [128]u8 = undefined;
@@ -455,14 +455,14 @@ test "公開鍵からの派生と秘密鍵からの派生が一致する" {
         try node_from_public.serialize(&buf_b),
     );
 
-    // 公開鍵から hardened は派生できない
+    // hardened cannot be derived from a public key
     try testing.expectError(
         error.InvalidPath,
         parent_pub.derivePath("0'"),
     );
 }
 
-test "非マスター鍵に絶対パスを与えると拒否する（誤階層からの派生防止）" {
+test "rejects an absolute path on a non-master key (prevents deriving from the wrong level)" {
     const seed = [_]u8{
         0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
         0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
@@ -470,13 +470,13 @@ test "非マスター鍵に絶対パスを与えると拒否する（誤階層�
     const master = try ExtendedKey.fromSeed(&seed, .xprv);
     const account = try master.derivePath("m/0'");
 
-    // 絶対パスは depth 0 のみ
+    // absolute paths only at depth 0
     try testing.expectError(error.InvalidPath, account.derivePath("m/1"));
-    // 相対パスは可
+    // relative paths are fine
     _ = try account.derivePath("1");
 }
 
-test "拡張鍵の解析（ラウンドトリップ）" {
+test "extended key parsing (round trip)" {
     const text = "zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs";
     const parsed = try ExtendedKey.parse(text);
     try testing.expectEqual(Version.zpub, parsed.version);
@@ -484,17 +484,17 @@ test "拡張鍵の解析（ラウンドトリップ）" {
     var buf: [128]u8 = undefined;
     try testing.expectEqualStrings(text, try parsed.serialize(&buf));
 
-    // 不明なバージョンバイトを拒否する
+    // reject unknown version bytes
     try testing.expectError(error.InvalidEncoding, ExtendedKey.parse("not-base58!"));
 }
 
-test "バージョン差し替え" {
+test "version replacement" {
     const seed: [32]u8 = @splat(0x01);
     const master = try ExtendedKey.fromSeed(&seed, .xprv);
     const zprv = try master.withVersion(.zprv);
     var buf: [128]u8 = undefined;
     try testing.expect(std.mem.startsWith(u8, try zprv.serialize(&buf), "zprv"));
 
-    // 秘密鍵版に公開鍵を入れ替えることはできない
+    // a public key cannot be swapped into a private-key version
     try testing.expectError(error.InvalidKey, (try master.neuter()).withVersion(.zprv));
 }

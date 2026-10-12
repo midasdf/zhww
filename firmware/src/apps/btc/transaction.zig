@@ -1,11 +1,11 @@
-//! Bitcoin トランザクションの解析・直列化。
+//! Bitcoin transaction parsing and serialization.
 //!
-//! 参考: https://en.bitcoin.it/wiki/Transaction
-//!       BIP144（SegWit の witness 直列化）
+//! Reference: https://en.bitcoin.it/wiki/Transaction
+//!            BIP144 (SegWit witness serialization)
 //!
-//! **設計方針**: トランザクションは可変長（入力数・出力数・スクリプト長）なので、
-//! 解析には呼び出し側が用意したアロケータ（セッション単位のアリーナを想定）を使う。
-//! **秘密情報はこの領域に置かない**（seed・鍵は固定長バッファのみで扱う）。
+//! **Design policy**: transactions are variable length (input count, output count, script
+//! length), so parsing uses an allocator supplied by the caller (a per-session arena is assumed).
+//! **No secret material is placed in this region** (seeds and keys live only in fixed-length buffers).
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -14,8 +14,8 @@ const hashes = @import("../../core/crypto/hashes.zig");
 const Cursor = @import("cursor.zig").Cursor;
 
 pub const OutPoint = struct {
-    /// 直前のトランザクション ID（**直列化されたままのバイト順**）。
-    /// 表示用の txid は逆順になることに注意。
+    /// The previous transaction ID (**in serialized byte order**).
+    /// Note that the txid shown to users is byte-reversed.
     txid: [32]u8,
     vout: u32,
 };
@@ -24,7 +24,7 @@ pub const TxIn = struct {
     prevout: OutPoint,
     script_sig: []const u8,
     sequence: u32,
-    /// SegWit の witness スタック（非 SegWit では空）。
+    /// The SegWit witness stack (empty for non-SegWit).
     witness: []const []const u8,
 };
 
@@ -38,23 +38,23 @@ pub const Transaction = struct {
     inputs: []TxIn,
     outputs: []TxOut,
     lock_time: u32,
-    /// witness 付きで直列化されていたかどうか。
+    /// Whether this was serialized with a witness.
     has_witness: bool,
 
-    /// ネットワーク直列化形式を解析する（witness 付き・無しの両方に対応）。
+    /// Parse the network serialization format (both with and without witness).
     pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) Error!Transaction {
         var cursor = Cursor{ .data = bytes };
         const version = try cursor.readI32();
 
         var input_count = try cursor.readVarInt();
         var has_witness = false;
-        // BIP144 の判定。入力数 0 のとき、次のバイトが 0x01 なら
-        // 「marker(0x00) + flag(0x01)」の witness 形式、それ以外は
-        // 「入力 0 の通常トランザクション」として出力数を続けて読む。
+        // The BIP144 rule. When the input count is 0, if the next byte is 0x01 this is
+        // the "marker(0x00) + flag(0x01)" witness form; otherwise the output count is
+        // read next, as a "normal transaction with 0 inputs".
         //
-        // この曖昧さは Bitcoin の直列化自体に由来する（Bitcoin Core も同じ規則で
-        // 判定している）。BIP174 のテストベクタには「入力 0・出力 2」の
-        // トランザクションが妥当な例として含まれている。
+        // This ambiguity comes from Bitcoin's serialization itself (Bitcoin Core applies
+        // the same rule to decide). The BIP174 test vectors include a "0 inputs, 2
+        // outputs" transaction as a valid example.
         if (input_count == 0) {
             if (try cursor.peekU8() == 0x01) {
                 _ = try cursor.readU8();
@@ -112,8 +112,8 @@ pub const Transaction = struct {
         };
     }
 
-    /// ネットワーク直列化形式に戻す。`include_witness` が false の場合は
-    /// BIP174 の PSBT_GLOBAL_UNSIGNED_TX が要求する「witness 無し」形式になる。
+    /// Back to the network serialization format. When `include_witness` is false this
+    /// becomes the "no witness" form that BIP174's PSBT_GLOBAL_UNSIGNED_TX requires.
     pub fn serialize(
         self: Transaction,
         allocator: std.mem.Allocator,
@@ -157,7 +157,7 @@ pub const Transaction = struct {
         return out.toOwnedSlice(allocator);
     }
 
-    /// txid（内部バイト順。表示する場合は逆順にすること）。
+    /// txid (internal byte order; reverse it for display).
     pub fn txid(self: Transaction, allocator: std.mem.Allocator) Error![32]u8 {
         const raw = try self.serialize(allocator, false);
         defer allocator.free(raw);
@@ -166,7 +166,7 @@ pub const Transaction = struct {
         return hash;
     }
 
-    /// 合計出力額（sats）。
+    /// Total output value (sats).
     pub fn totalOutput(self: Transaction) u64 {
         var total: u64 = 0;
         for (self.outputs) |output| total += output.value;
@@ -218,7 +218,7 @@ pub fn writeVarBytes(
     try out.appendSlice(allocator, bytes);
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -230,7 +230,7 @@ fn hexAlloc(allocator: std.mem.Allocator, hex: []const u8) ![]u8 {
     return out;
 }
 
-test "BIP143 の未署名トランザクションを解析して同一バイト列に戻せる" {
+test "parses a BIP143 unsigned transaction and round-trips the exact bytes" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -244,7 +244,7 @@ test "BIP143 の未署名トランザクションを解析して同一バイト�
     try testing.expectEqual(@as(u32, 0x11), tx.lock_time);
     try testing.expect(!tx.has_witness);
 
-    // input 0 の outpoint（直列化順）
+    // outpoint of input 0 (in serialization order)
     const expected_txid = try std.fmt.hexToBytes(
         try allocator.alloc(u8, 32),
         "fff7f7881a8099afa6940d42d1e7f6362bec38171ea3edf433541db4e4ad969f",
@@ -255,24 +255,24 @@ test "BIP143 の未署名トランザクションを解析して同一バイト�
     try testing.expectEqual(@as(u64, 0x06b22c20), tx.outputs[0].value);
     try testing.expectEqual(@as(u64, 0x0d519390), tx.outputs[1].value);
 
-    // 往復して同一バイト列になる
+    // Round-trips to the same byte string
     const reserialized = try tx.serialize(allocator, false);
     try testing.expectEqualSlices(u8, raw, reserialized);
 }
 
-test "SegWit 形式（witness 付き）の解析と直列化" {
+test "parsing and serializing the SegWit form (with witness)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // BIP143 の署名済みトランザクション（witness 付き）
+    // The BIP143 signed transaction (with witness)
     const signed = try hexAlloc(
         allocator,
         "01000000000102fff7f7881a8099afa6940d42d1e7f6362bec38171ea3edf433541db4e4ad969f00000000494830450221008b9d1dc26ba6a9cb62127b02742fa9d754cd3bebf337f7a55d114c8e5cdd30be022040529b194ba3f9281a99f2b1c0a19c0489bc22ede944ccf4ecbab4cc618ef3ed01eeffffffef51e1b804cc89d182d279655c3aa89e815b1b309fe287d9b2b55d57b90ec68a0100000000ffffffff02202cb206000000001976a9148280b37df378db99f66f85c95a783a76ac7a6d5988ac9093510d000000001976a9143bde42dbee7e4dbe6a21b2d50ce2f0167faa815988ac000247304402203609e17b84f6a7d30c80bfa610b5b4542f32a8a0d5447a12fb1366d7f01cc44a0220573a954c4518331561406f90300e8f3358f51928d43c212a8caed02de67eebee0121025476c2e83188368da1ff3e292e7acafcdb3566bb0ad253f62fc70f07aeee635711000000",
     );
     const tx = try Transaction.parse(allocator, signed);
     try testing.expect(tx.has_witness);
-    // input 0 は P2PK（witness 無し）、input 1 は P2WPKH（署名 + 公開鍵）
+    // input 0 is P2PK (no witness), input 1 is P2WPKH (signature + public key)
     try testing.expectEqual(@as(usize, 0), tx.inputs[0].witness.len);
     try testing.expectEqual(@as(usize, 2), tx.inputs[1].witness.len);
     try testing.expectEqual(@as(usize, 71), tx.inputs[1].witness[0].len);
@@ -281,13 +281,13 @@ test "SegWit 形式（witness 付き）の解析と直列化" {
     const reserialized = try tx.serialize(allocator, true);
     try testing.expectEqualSlices(u8, signed, reserialized);
 
-    // witness を除いた直列化: marker/flag が無く、scriptSig はそのまま保持される
+    // Serialization without witness: no marker/flag, and scriptSig is kept as-is
     const without_witness = try tx.serialize(allocator, false);
-    try testing.expectEqual(@as(u8, 0x02), without_witness[4]); // 先頭が input count（marker 無し）
+    try testing.expectEqual(@as(u8, 0x02), without_witness[4]); // first byte is the input count (no marker)
     try testing.expect(without_witness.len < signed.len);
 }
 
-test "合計出力額" {
+test "total output value" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();

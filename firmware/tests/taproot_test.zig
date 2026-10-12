@@ -1,18 +1,18 @@
-//! Bitcoin Core との相互運用テスト（Taproot 鍵パス署名）。
+//! Interoperability test against Bitcoin Core (Taproot key path signing).
 //!
-//! ベクタ: tests/vectors/core_taproot.json
+//! Vector: tests/vectors/core_taproot.json
 //!
-//! 手順（実際に regtest で実行した内容をそのまま固定している）:
-//!   1. Core から BIP86 の P2TR アドレス（`bcrt1p…`）へ送金して UTXO を作る
-//!   2. Core の `createpsbt` + `utxoupdatepsbt` でトランザクションを作る
-//!   3. 本実装で BIP341 の鍵パス署名を行い、署名済み PSBT を書き出す
-//!   4. Core の `finalizepsbt` が `complete: true` を返し、その出力 hex が
-//!      本実装の最終トランザクションと**バイト単位で一致**する
-//!   5. Core の `testmempoolaccept` が `allowed: true` を返す
+//! Procedure (frozen exactly as it was run on regtest):
+//!   1. Send from Core to a BIP86 P2TR address (`bcrt1p...`) to create a UTXO
+//!   2. Build a transaction with Core's `createpsbt` + `utxoupdatepsbt`
+//!   3. Sign the BIP341 key path with this implementation and write out the signed PSBT
+//!   4. Core's `finalizepsbt` returns `complete: true`, and its output hex
+//!      **matches byte for byte** this implementation's final transaction
+//!   5. Core's `testmempoolaccept` returns `allowed: true`
 //!
-//! **BIP143（SegWit v0）との違い**: 署名対象ハッシュは単一の SHA256 を使う
-//! `tagged_hash("TapSighash", …)` であり、署名は 64 バイトの Schnorr 署名
-//! （末尾に sighash タイプを付けない）。鍵は BIP341 の tweak を適用したものを使う。
+//! **Difference from BIP143 (SegWit v0)**: the signature hash uses a single SHA256,
+//! `tagged_hash("TapSighash", ...)`, and the signature is a 64-byte Schnorr signature
+//! (with no sighash type appended). The key used is one with the BIP341 tweak applied.
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");
@@ -33,7 +33,7 @@ fn decodeBase64(allocator: std.mem.Allocator, encoded: []const u8) ![]u8 {
     return buffer;
 }
 
-test "Bitcoin Core が受理する Taproot 鍵パス署名を作れる" {
+test "produces a Taproot key path signature Bitcoin Core accepts" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -48,14 +48,14 @@ test "Bitcoin Core が受理する Taproot 鍵パス署名を作れる" {
     const psbt = try zhww.btc_psbt.Psbt.parse(allocator, psbt_bytes);
     try testing.expectEqual(@as(usize, 1), psbt.inputs.len);
 
-    // --- UTXO は P2TR で、金額が分かっていること ---
+    // --- the UTXO is P2TR and its amount is known ---
     const utxo = psbt.inputs[0].witness_utxo.?;
     try testing.expectEqual(@as(u64, @intCast(root.get("input_amount_sats").?.integer)), utxo.value);
     const output_key = zhww.btc_taproot.outputKeyFromScript(utxo.script_pubkey) orelse {
         return error.InvalidEncoding;
     };
 
-    // --- 鍵の探索: 内部鍵から出力鍵を作り、UTXO と一致するものを探す ---
+    // --- key discovery: derive the output key from the internal key and find the one matching the UTXO ---
     const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, "");
     var private_key: ?[32]u8 = null;
     var index: u32 = 0;
@@ -76,7 +76,7 @@ test "Bitcoin Core が受理する Taproot 鍵パス署名を作れる" {
     }
     const priv = private_key orelse return error.NoMatchingKey;
 
-    // --- BIP341 の署名対象ハッシュと署名 ---
+    // --- BIP341 signature hash and signature ---
     const prevouts = try allocator.alloc(zhww.btc_transaction.TxOut, 1);
     prevouts[0] = utxo;
 
@@ -96,11 +96,11 @@ test "Bitcoin Core が受理する Taproot 鍵パス署名を作れる" {
     );
     try testing.expect(try zhww.secp256k1.schnorrVerify(signature, message, output_key));
 
-    // --- 最終トランザクションが Core の出力と一致する ---
+    // --- the final transaction matches Core's output ---
     const inputs = try allocator.alloc(zhww.btc_transaction.TxIn, 1);
     inputs[0] = psbt.unsigned_tx.inputs[0];
     const witness = try allocator.alloc([]const u8, 1);
-    witness[0] = &signature; // 鍵パスは 64 バイトの署名 1 つ
+    witness[0] = &signature; // the key path is a single 64-byte signature
     inputs[0].witness = witness;
 
     const final_tx = zhww.btc_transaction.Transaction{
@@ -113,7 +113,7 @@ test "Bitcoin Core が受理する Taproot 鍵パス署名を作れる" {
     const final_bytes = try final_tx.serialize(allocator, true);
     try testing.expectEqualSlices(u8, expected_tx, final_bytes);
 
-    // --- 署名済み PSBT（PSBT_IN_TAP_KEY_SIG = 0x13）を書き出し、読み直せること ---
+    // --- write out the signed PSBT (PSBT_IN_TAP_KEY_SIG = 0x13) and confirm it can be read back ---
     const fields = try allocator.alloc([]const zhww.btc_psbt.Psbt.Field, psbt.inputs.len);
     const one = try allocator.alloc(zhww.btc_psbt.Psbt.Field, 1);
     one[0] = .{ .key = &[_]u8{zhww.btc_psbt.IN_TAP_KEY_SIG}, .value = &signature };
@@ -124,7 +124,7 @@ test "Bitcoin Core が受理する Taproot 鍵パス署名を作れる" {
     try testing.expect(signed_psbt.len > psbt_bytes.len);
     try testing.expectEqual(@as(usize, 1), reparsed.inputs.len);
 
-    // 追加フィールドが元のマップを壊していないこと（witness_utxo が残っている）
+    // The added field must not break the original map (witness_utxo is still present)
     try testing.expect(reparsed.inputs[0].witness_utxo != null);
     try testing.expectEqualSlices(
         u8,

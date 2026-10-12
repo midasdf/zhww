@@ -1,13 +1,13 @@
-//! P2WSH マルチシグ（BIP67 の sortedmulti）の構築と署名。
+//! Construction and signing of P2WSH multisig (BIP67 sortedmulti).
 //!
-//! 参考: BIP67（鍵の辞書順ソート）, BIP141（P2WSH）, BIP143（署名対象ハッシュ）
+//! Reference: BIP67 (lexicographic key sorting), BIP141 (P2WSH), BIP143 (signature hash)
 //!
-//! **設計方針**
-//! - マルチシグは「1 台が壊れても・盗まれても資産を失わない」ための構成であり、
-//!   本プロジェクトの推奨運用（[docs/05-threat-model.md]）の中核である
-//! - witnessScript は `OP_m <pubkey>… OP_n OP_CHECKMULTISIG`。署名は
-//!   **スクリプトに現れる公開鍵の順**に並べなければならない（OP_CHECKMULTISIG の仕様）
-//! - 署名したら必ず `secp256k1.verify` で検証してから返す
+//! **Design policy**
+//! - Multisig is what keeps funds safe when one device breaks or is stolen, and it is
+//!   the core of this project's recommended operation ([docs/05-threat-model.md])
+//! - The witnessScript is `OP_m <pubkey>... OP_n OP_CHECKMULTISIG`. Signatures must be
+//!   ordered **as the public keys appear in the script** (an OP_CHECKMULTISIG rule)
+//! - Every signature is verified with `secp256k1.verify` before being returned
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;
@@ -18,13 +18,13 @@ const sighash = @import("sighash.zig");
 
 pub const SIGHASH_ALL: u32 = 0x01;
 
-/// 署名に使える鍵。
+/// A key usable for signing.
 pub const Signer = struct {
     private_key: [32]u8,
     public_key: [33]u8,
 };
 
-/// 公開鍵を BIP67（辞書順）に並べ替える。
+/// Sort public keys per BIP67 (lexicographic order).
 pub fn sortPubKeys(allocator: std.mem.Allocator, pubkeys: []const [33]u8) Error![][33]u8 {
     const out = try allocator.alloc([33]u8, pubkeys.len);
     @memcpy(out, pubkeys);
@@ -36,9 +36,9 @@ pub fn sortPubKeys(allocator: std.mem.Allocator, pubkeys: []const [33]u8) Error!
     return out;
 }
 
-/// `OP_m <pubkey>… OP_n OP_CHECKMULTISIG` を組み立てる。
+/// Build `OP_m <pubkey>... OP_n OP_CHECKMULTISIG`.
 ///
-/// `pubkeys` は BIP67 でソート済みであること（`sortPubKeys` を使う）。
+/// `pubkeys` must already be sorted per BIP67 (use `sortPubKeys`).
 pub fn witnessScript(
     allocator: std.mem.Allocator,
     required: usize,
@@ -60,7 +60,7 @@ pub fn witnessScript(
     return out.toOwnedSlice(allocator);
 }
 
-/// witnessScript から P2WSH の scriptPubKey（`0020{sha256}`）を作る。
+/// Build the P2WSH scriptPubKey (`0020{sha256}`) from a witnessScript.
 pub fn scriptPubKey(witness_script_bytes: []const u8) [34]u8 {
     var hash: [32]u8 = undefined;
     hashes.Sha256.hash(witness_script_bytes, &hash, .{});
@@ -76,15 +76,15 @@ pub const ParsedScript = struct {
     pubkeys: [15][33]u8,
     count: usize,
 
-    /// **注意**: `self` は値渡しにしてはならない。
-    /// 値渡しの構造体の内部を指すスライスを返すと、戻り値が呼び出し元で
-    /// 不正な参照になる（実際にこのバグをテストが検出した）。
+    /// **Caution**: `self` must not be passed by value.
+    /// Returning a slice that points inside a by-value struct leaves the caller with
+    /// an invalid reference (a test actually caught this bug).
     pub fn slice(self: *const ParsedScript) []const [33]u8 {
         return self.pubkeys[0..self.count];
     }
 };
 
-/// witnessScript を解析する（`OP_m <pubkey>… OP_n OP_CHECKMULTISIG` のみ対応）。
+/// Parse a witnessScript (only `OP_m <pubkey>... OP_n OP_CHECKMULTISIG` is supported).
 pub fn parseWitnessScript(script: []const u8) Error!ParsedScript {
     if (script.len < 3) return error.InvalidEncoding;
     if (script[script.len - 1] != 0xae) return error.InvalidEncoding; // OP_CHECKMULTISIG
@@ -95,7 +95,7 @@ pub fn parseWitnessScript(script: []const u8) Error!ParsedScript {
 
     var result: ParsedScript = .{ .required = required, .pubkeys = undefined, .count = 0 };
     var pos: usize = 1;
-    // 末尾の 2 バイト（OP_n と OP_CHECKMULTISIG）は公開鍵ではない
+    // The last 2 bytes (OP_n and OP_CHECKMULTISIG) are not public keys
     while (script.len - pos > 2) {
         const push = script[pos];
         if (push != 33) return error.InvalidEncoding;
@@ -106,7 +106,7 @@ pub fn parseWitnessScript(script: []const u8) Error!ParsedScript {
         pos += 34;
     }
 
-    // 最後の 1 バイト（OP_n）を確認する
+    // Check the last byte (OP_n)
     const total_op = script[script.len - 2];
     if (total_op < 0x51 or total_op > 0x60) return error.InvalidEncoding;
     if (total_op - 0x50 != result.count) return error.InvalidEncoding;
@@ -114,7 +114,7 @@ pub fn parseWitnessScript(script: []const u8) Error!ParsedScript {
     return result;
 }
 
-/// P2WSH 入力の署名対象ハッシュ（BIP143。scriptCode は witnessScript そのもの）。
+/// Signature hash for a P2WSH input (BIP143; the scriptCode is the witnessScript itself).
 pub fn sighashForP2wsh(
     allocator: std.mem.Allocator,
     tx: transaction.Transaction,
@@ -132,9 +132,9 @@ pub fn sighashForP2wsh(
     );
 }
 
-/// P2WSH 入力に署名し、**witnessScript に現れる順**の署名（DER + sighash タイプ）を返す。
+/// Sign a P2WSH input and return the signatures (DER + sighash type) **in the order they appear in the witnessScript**.
 ///
-/// `signers` に含まれる鍵のうち、witnessScript に現れる公開鍵に対応するものだけを使う。
+/// Of the keys in `signers`, only those matching a public key that appears in the witnessScript are used.
 pub fn signP2wsh(
     allocator: std.mem.Allocator,
     tx: transaction.Transaction,
@@ -155,7 +155,7 @@ pub fn signP2wsh(
     var signatures = std.ArrayList([]const u8).empty;
     errdefer signatures.deinit(allocator);
 
-    // OP_CHECKMULTISIG は公開鍵と同じ順に署名を要求する
+    // OP_CHECKMULTISIG requires signatures in the same order as the public keys
     for (parsed.slice()) |pub_key| {
         for (signers) |signer| {
             if (!std.mem.eql(u8, &signer.public_key, &pub_key)) continue;
@@ -178,9 +178,9 @@ pub fn signP2wsh(
     return signatures.toOwnedSlice(allocator);
 }
 
-/// 署名から witness スタックを組み立てる。
+/// Build the witness stack from the signatures.
 ///
-/// `[空要素, 署名…, witnessScript]`（先頭の空要素は OP_CHECKMULTISIG の仕様）。
+/// `[empty element, signature..., witnessScript]` (the leading empty element is required by OP_CHECKMULTISIG).
 pub fn buildWitness(
     allocator: std.mem.Allocator,
     signatures: []const []const u8,
@@ -193,7 +193,7 @@ pub fn buildWitness(
     return witness;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
@@ -203,17 +203,17 @@ fn hexToFixed(comptime n: usize, hex: []const u8) [n]u8 {
     return out;
 }
 
-test "2-of-3 の witnessScript が Bitcoin Core の createmultisig と一致する" {
+test "2-of-3 witnessScript matches Bitcoin Core's createmultisig" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // regtest で Bitcoin Core の createmultisig が出した値（実際に実行して取得）。
+    // The value Bitcoin Core's createmultisig produced on regtest (obtained by running it).
     //
-    // **注意**: Core の createmultisig は `multi()`（与えた順序を保持）を使う。
-    // BIP67 の `sortedmulti()`（鍵を辞書順に並べる）とは別物であり、
-    // 同じ鍵でも順序が違えばアドレスも変わる。ここでは Core が出した順序のまま
-    // 突き合わせ、ソートそのものは別のテストで検証する。
+    // **Caution**: Core's createmultisig uses `multi()` (which preserves the given order).
+    // That is a different thing from BIP67's `sortedmulti()` (which sorts keys
+    // lexicographically), and the same keys in a different order give a different address.
+    // Here we compare against the order Core produced, and verify sorting itself in a separate test.
     const k1 = hexToFixed(33, "03dc1953c2756c7c58d4f48ca1bbba767f414fd236bf4d662b67721ac626c514e0");
     const k2 = hexToFixed(33, "033416774e7264295034cd3db47e74113f74903a0d795ab54515cf1c454d4bf74f");
     const k3 = hexToFixed(33, "03bca5f67b028685140f87c46956647cd1d6042d83f8a0d5621c9c84d6148fe8d0");
@@ -225,7 +225,7 @@ test "2-of-3 の witnessScript が Bitcoin Core の createmultisig と一致す�
     _ = try std.fmt.hexToBytes(&expected, expected_hex);
     try testing.expectEqualSlices(u8, &expected, script);
 
-    // scriptPubKey も Core の witness_utxo と一致する
+    // The scriptPubKey also matches Core's witness_utxo
     const spk = scriptPubKey(script);
     var expected_spk: [34]u8 = undefined;
     _ = try std.fmt.hexToBytes(
@@ -234,14 +234,14 @@ test "2-of-3 の witnessScript が Bitcoin Core の createmultisig と一致す�
     );
     try testing.expectEqualSlices(u8, &expected_spk, &spk);
 
-    // BIP67 でソートすると（順序が変わるので）別のスクリプトになることも確認する
+    // Also confirm that sorting per BIP67 gives a different script (because the order changes)
     const sorted = try sortPubKeys(allocator, &[_][33]u8{ k1, k2, k3 });
     const sorted_script = try witnessScript(allocator, 2, sorted);
     try testing.expect(!std.mem.eql(u8, script, sorted_script));
     try testing.expect(std.mem.lessThan(u8, &sorted[0], &sorted[1]));
 }
 
-test "witnessScript の解析（往復）" {
+test "witnessScript parsing (round trip)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -264,14 +264,14 @@ test "witnessScript の解析（往復）" {
         try testing.expect(found);
     }
 
-    // 壊れたスクリプトを拒否する
+    // Reject a broken script
     try testing.expectError(error.InvalidEncoding, parseWitnessScript(&[_]u8{ 0x52, 0x21 }));
     var broken = try allocator.dupe(u8, script);
-    broken[broken.len - 1] = 0xad; // OP_CHECKMULTISIG でない
+    broken[broken.len - 1] = 0xad; // not OP_CHECKMULTISIG
     try testing.expectError(error.InvalidEncoding, parseWitnessScript(broken));
 }
 
-test "BIP67 のソートは辞書順" {
+test "BIP67 sorting is lexicographic" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -282,7 +282,7 @@ test "BIP67 のソートは辞書順" {
     try testing.expect(std.mem.lessThan(u8, &sorted[0], &sorted[1]));
 }
 
-test "buildWitness の形（先頭が空要素）" {
+test "buildWitness shape (leading empty element)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();

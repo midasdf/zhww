@@ -1,95 +1,97 @@
-//! QR コードのデコーダ（カメラ入力を想定）。
+//! QR code decoder (for camera input).
 //!
-//! 入力は「1 バイト 1 画素のグレースケール画像」だけ。カメラ固有の処理
-//! （露出・ホワイトバランス・RGB 変換）は呼び出し側の責任とし、このモジュールは
-//! 画像バッファから文字列を取り出すことだけを行う。
+//! The input is only a grayscale image (one byte per pixel). Camera-specific work
+//! (exposure, white balance, RGB conversion) is the caller's responsibility; this module
+//! only turns an image buffer into text.
 //!
-//! 処理の流れ:
-//!   1. 二値化 — 8×8 ブロックの局所平均を使う適応的二値化（ZXing の HybridBinarizer と
-//!      同じ考え方）。小さい画像では大津の手法（全体閾値）へ落とす。復号に失敗したら
-//!      もう一方の二値化・許容を広げた検出・白黒反転でも順に試す。
-//!   2. 位置検出パターン（3 つの角）を 1:1:3:1:1 のラン走査で探し、直交方向の
-//!      クロスチェックで中心をサブピクセルまで詰める。
-//!   3. 3 点の並び（左上・右上・左下）を外積で確定し、タイミングパターンの明暗遷移を
-//!      数えてバージョン（= 一辺のモジュール数）を決める。遷移数は距離に依存しないので
-//!      遠近があっても寸法を誤りにくい。
-//!   4. 右下のアラインメントパターンを探し、4 点から射影変換（ホモグラフィ）を解く。
-//!      見つからない場合は平行四辺形（アフィン）で代用する。
-//!   5. 各モジュール中心を 5 点サンプリング（多数決）して行列化する。
-//!   6. format 情報（15 ビット、ハミング距離で誤り訂正）から EC レベルとマスクを得て、
-//!      マスクを外しながらジグザグにデータコードワードを読み出す。
-//!   7. ブロックごとに Reed-Solomon で誤り訂正し、モード指示子を解釈して文字列にする。
+//! Pipeline:
+//!   1. Binarization — adaptive threshold from 8x8 block averages (the idea behind ZXing's
+//!      HybridBinarizer). Small images fall back to Otsu's global threshold. On failure we
+//!      retry with the other binarization, with a looser detection, and with inverted polarity.
+//!   2. Find the three finder patterns with a 1:1:3:1:1 run scan and refine each center to
+//!      sub-pixel accuracy with a perpendicular cross check. Candidates must be surrounded by
+//!      the light separator and share a consistent module size. If that fails we relax the
+//!      rules and rescan rows and columns.
+//!   3. Fix the (top-left, top-right, bottom-left) assignment with a cross product and derive
+//!      the version (= modules per side) by counting the light/dark transitions of the timing
+//!      pattern. The count does not depend on distance, so perspective does not fool it.
+//!      Several triples are tried; a triple whose timing size disagrees is tried last.
+//!   4. Look for the bottom-right alignment pattern and solve a projective transform
+//!      (homography) from four points. Without it, a parallelogram (affine) stands in.
+//!   5. Sample the center of every module five times (majority vote) to build the matrix.
+//!   6. Read EC level and mask from the format information (15 bits, corrected by Hamming
+//!      distance) and read the data codewords in zigzag order while undoing the mask.
+//!   7. Correct each block with Reed-Solomon and interpret the mode indicators.
 //!
-//! 対応する範囲: バージョン 1〜40、EC レベル L/M/Q/H、数字・英数字・バイトモード。
-//! ECI・漢字モード・構造的連接（structured append）・FNC1 は `Error.UnsupportedMode`。
+//! Supported: versions 1-40, EC levels L/M/Q/H, numeric/alphanumeric/byte modes.
+//! ECI, Kanji mode, structured append and FNC1 return `Error.UnsupportedMode`.
 //!
-//! メモリ: 二値画像とモジュール行列は 1 ビット 1 画素で持つ。`Image` の画素バッファは
-//! 呼び出し側が所有し、このモジュールは書き換えない。作業用の確保は `decode` の
-//! allocator から行い、すべて関数内で解放する。
+//! Memory: the binarized image and the module matrices use one bit per pixel. The `Image`
+//! pixel buffer belongs to the caller and is never modified. Scratch memory comes from the
+//! allocator passed to `decode` and is released inside this module.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
-const trace = true;
 const qr = @import("qr.zig");
 const CoreError = @import("../core/errors.zig").Error;
 
-/// デコード時のエラー。コア共通の `Error` に QR 固有のものを加える。
+/// Decoding errors: the shared core `Error` plus QR-specific ones.
 pub const Error = CoreError || error{
-    /// 画像から位置検出パターン（3 つの角）を見つけられなかった
+    /// No finder pattern triple (the three corners) was found in the image
     SymbolNotFound,
-    /// シンボルは見つかったが、誤り訂正の能力を超える誤りがあった
+    /// A symbol was found but had more errors than the error correction could fix
     TooManyErrors,
-    /// シンボルは見つかったが構造が規格に合わない（データモジュール不足など）
+    /// A symbol was found but its structure violates the standard (e.g. too few data modules)
     InvalidSymbol,
-    /// 規格上未対応の機能（ECI・漢字モード・構造的連接・FNC1）
+    /// Feature the standard defines but this decoder does not support (ECI, Kanji, structured append, FNC1)
     UnsupportedMode,
 };
 
-/// 対応する最小バージョン。
+/// Lowest supported version.
 pub const min_version: u8 = 1;
-/// 対応する最大バージョン。
+/// Highest supported version.
 pub const max_version: u8 = 40;
-/// バージョン 1 の一辺のモジュール数。
+/// Modules per side for version 1.
 pub const min_size: usize = 17 + 4 * @as(usize, min_version);
-/// バージョン 40 の一辺のモジュール数。
+/// Modules per side for version 40.
 pub const max_size: usize = 17 + 4 * @as(usize, max_version);
 
-/// 受け付ける画像の最大辺。これを超える画像は対象外（掛け算のオーバーフロー防止も兼ねる）。
+/// Largest accepted image side. Bigger images are rejected (this also avoids overflowing width * height).
 pub const max_image_dim: usize = 4096;
 
-/// グレースケール画像。1 バイト 1 画素（0 = 黒、255 = 白）、行優先。
+/// Grayscale image: one byte per pixel (0 = black, 255 = white), row-major.
 pub const Image = struct {
     width: usize,
     height: usize,
-    /// `width * height` バイト以上が必要（行優先）。
+    /// Must hold at least `width * height` bytes (row-major).
     pixels: []const u8,
 
-    /// (x, y) の画素。範囲外は白（255）として扱う。
+    /// Pixel at (x, y). Out-of-range coordinates read as white (255).
     pub fn pixel(self: *const Image, x: usize, y: usize) u8 {
         if (x >= self.width or y >= self.height) return 255;
         return self.pixels[y * self.width + x];
     }
 };
 
-/// 復号結果の付帯情報。
+/// Metadata that comes with a successful decode.
 pub const Info = struct {
-    /// 復号したテキスト。`decodeTo` に渡した `out` の先頭部分を指す。
+    /// Decoded text: the start of the `out` buffer passed to `decodeTo`.
     text: []const u8,
-    /// シンボルのバージョン（1〜40）。
+    /// Symbol version (1-40).
     version: u8,
-    /// 誤り訂正レベル。
+    /// Error correction level.
     ec: qr.EcLevel,
-    /// 使われていたマスク番号（0〜7）。
+    /// Mask number that was in use (0-7).
     mask: u3,
 };
 
-// ---------------------------------------------------------------- 公開 API
+// ---------------------------------------------------------------- public API
 
-/// 画像を復号して文字列を返す。
+/// Decode an image and return its text.
 ///
-/// 戻り値は `allocator` が確保したメモリなので、呼び出し側が同じ allocator で
-/// `allocator.free(result)` すること。バイトモードの内容はそのまま返す
-/// （UTF-8 の解釈は呼び出し側に任せる）。
+/// The result is memory owned by `allocator`; the caller must release it with
+/// `allocator.free(result)` using the same allocator. Byte-mode content is returned as is
+/// (interpreting it as UTF-8 is up to the caller).
 pub fn decode(allocator: std.mem.Allocator, image: Image) Error![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
@@ -99,14 +101,14 @@ pub fn decode(allocator: std.mem.Allocator, image: Image) Error![]const u8 {
     return try out.toOwnedSlice(allocator);
 }
 
-/// `out` に書き込んで復号する。
+/// Decode into `out`.
 ///
-/// 足りなければ `Error.BufferTooSmall`。戻り値は `out` の先頭部分を指す。
+/// Returns `Error.BufferTooSmall` when `out` is too small. The result points into `out`.
 pub fn decodeInto(allocator: std.mem.Allocator, image: Image, out: []u8) Error![]const u8 {
     return (try decodeTo(allocator, image, out)).text;
 }
 
-/// `out` に書き込み、バージョン・EC レベル・マスクも返す。
+/// Decode into `out` and also report version, EC level and mask.
 pub fn decodeTo(allocator: std.mem.Allocator, image: Image, out: []u8) Error!Info {
     var sink = Sink{ .allocator = allocator, .fixed = out };
     var info: Info = .{ .text = out[0..0], .version = 0, .ec = .l, .mask = 0 };
@@ -114,9 +116,9 @@ pub fn decodeTo(allocator: std.mem.Allocator, image: Image, out: []u8) Error!Inf
     return info;
 }
 
-// ---------------------------------------------------------------- 出力先
+// ---------------------------------------------------------------- output sink
 
-/// 復号結果の書き込み先。可変長（ArrayList）と固定長を同じ経路で扱う。
+/// Where decoded bytes go. Handles growable (ArrayList) and fixed buffers through one path.
 const Sink = struct {
     allocator: std.mem.Allocator,
     list: ?*std.ArrayList(u8) = null,
@@ -133,7 +135,7 @@ const Sink = struct {
         self.len += 1;
     }
 
-    /// 直前の試行の書き込みを捨てる（候補ごとにやり直すため）。
+    /// Drop what the previous attempt wrote (each candidate starts over).
     fn reset(self: *Sink) void {
         if (self.list) |l| l.clearRetainingCapacity();
         self.len = 0;
@@ -146,9 +148,9 @@ const Sink = struct {
     }
 };
 
-// ---------------------------------------------------------------- ビット行列
+// ---------------------------------------------------------------- bit matrix
 
-/// 1 ビット 1 画素の二値行列。二値画像とモジュール行列の両方に使う。
+/// Binary matrix with one bit per cell, used for both the binarized image and module grids.
 const BitMatrix = struct {
     width: usize,
     height: usize,
@@ -177,23 +179,23 @@ const BitMatrix = struct {
         self.words[i >> 6] |= @as(u64, 1) << @intCast(i & 63);
     }
 
-    /// 全ビットを反転する（白黒反転した画像への最後の抵抗）。
+    /// Flip every bit (last resort for images with inverted polarity).
     fn invert(self: *BitMatrix) void {
         for (self.words) |*w| w.* = ~w.*;
     }
 };
 
-// ---------------------------------------------------------------- 二値化
+// ---------------------------------------------------------------- binarization
 
-/// 二値化の方針。
+/// How to binarize.
 const BinarizePlan = struct {
-    /// 8×8 ブロックの局所平均を使う（照明むらに強い）。false なら大津の全体閾値。
+    /// Use local 8x8 block averages (robust against uneven lighting). false uses Otsu's global threshold.
     adaptive: bool,
-    /// 白黒反転した画像とみなして反転する。
+    /// Treat the image as inverted and flip it.
     invert: bool = false,
 };
 
-/// ZXing と同じ「平坦とみなす明暗差」。
+/// Same "flat block" dynamic range as ZXing.
 const min_dynamic_range: u32 = 24;
 
 fn clampUsize(value: usize, low: usize, high: usize) usize {
@@ -202,7 +204,7 @@ fn clampUsize(value: usize, low: usize, high: usize) usize {
     return value;
 }
 
-/// 二値化する。`bin` は画像と同じ寸法で確保済みであること。
+/// Binarize `image` into `bin`, which must already be sized like the image.
 fn binarize(bin: *BitMatrix, image: *const Image, plan: BinarizePlan, black_points: []u8) void {
     const sub_w = (image.width + 7) / 8;
     const sub_h = (image.height + 7) / 8;
@@ -214,7 +216,7 @@ fn binarize(bin: *BitMatrix, image: *const Image, plan: BinarizePlan, black_poin
     if (plan.invert) bin.invert();
 }
 
-/// 大津の手法で全体閾値を決めて二値化する（小さい画像・照明が一様な画像向け）。
+/// Binarize with a global Otsu threshold (for small images and evenly lit scenes).
 fn globalBinarize(bin: *BitMatrix, image: *const Image) void {
     var histogram: [256]u32 = @splat(0);
     const n = image.width * image.height;
@@ -260,10 +262,11 @@ fn globalBinarize(bin: *BitMatrix, image: *const Image) void {
     }
 }
 
-/// 8×8 ブロックごとの局所平均で二値化する（ZXing の HybridBinarizer 相当）。
+/// Binarize with local 8x8 block averages (equivalent to ZXing's HybridBinarizer).
 ///
-/// 各ブロックの平均（平坦なブロックは近傍の値で補う）を求め、その 5×5 近傍の平均を
-/// 閾値にする。照明の勾配や軽い影があっても局所的に白黒を分けられる。
+/// Average each block (flat blocks borrow a value from their neighbours) and threshold with
+/// the average of the surrounding 5x5 blocks. Even with a lighting gradient or a soft shadow,
+/// black and white stay separated locally.
 fn adaptiveBinarize(bin: *BitMatrix, image: *const Image, black_points: []u8) void {
     const w = image.width;
     const h = image.height;
@@ -296,7 +299,7 @@ fn adaptiveBinarize(bin: *BitMatrix, image: *const Image, black_points: []u8) vo
             }
             var average: u8 = if (count == 0) 255 else @intCast(sum / count);
             if (@as(u32, max) - @as(u32, min) <= min_dynamic_range) {
-                // 平坦なブロック（一様な白地・黒地）は近傍の閾値を借りる。
+                // A flat block (uniform white or black) borrows the threshold of its neighbours.
                 average = min / 2;
                 if (by > 0 and bx > 0) {
                     const neighbor = (@as(u32, black_points[(by - 1) * sub_w + bx]) +
@@ -340,7 +343,7 @@ fn adaptiveBinarize(bin: *BitMatrix, image: *const Image, black_points: []u8) vo
     }
 }
 
-// ---------------------------------------------------------------- 幾何
+// ---------------------------------------------------------------- geometry
 
 const Point = struct { x: f64, y: f64 };
 
@@ -354,7 +357,7 @@ fn cross(a: Point, b: Point, origin: Point) f64 {
     return (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
 }
 
-/// 射影変換（モジュール座標 → 画素座標）。h[6], h[7] が 0 ならアフィン。
+/// Projective transform (module coordinates -> pixel coordinates). With h[6] and h[7] zero it is affine.
 const Homography = struct {
     h: [8]f64,
 
@@ -368,7 +371,7 @@ const Homography = struct {
     }
 };
 
-/// 4 点対応から射影変換を解く。退化している場合は null。
+/// Solve a projective transform from four point correspondences. Returns null when degenerate.
 fn solveHomography(src: [4]Point, dst: [4]Point) ?Homography {
     var m: [8][9]f64 = undefined;
     for (0..4) |k| {
@@ -408,9 +411,9 @@ fn solveHomography(src: [4]Point, dst: [4]Point) ?Homography {
     return .{ .h = h };
 }
 
-// ---------------------------------------------------------------- ラン走査
+// ---------------------------------------------------------------- run scanning
 
-/// 走査で見つかった候補（位置検出パターン・アラインメントパターンの中心）。
+/// A candidate found by scanning (center of a finder or alignment pattern).
 const Candidate = struct {
     x: f64,
     y: f64,
@@ -418,15 +421,15 @@ const Candidate = struct {
     count: usize = 1,
 };
 
-/// 5 連ラン（暗・明・暗・明・暗）の相対幅。位置検出は 1:1:3:1:1、アラインは 1:1:1:1:1。
+/// Relative widths of five runs (dark, light, dark, light, dark): 1:1:3:1:1 for finders, 1:1:1:1:1 for alignment.
 const finder_ratio = [5]f64{ 1, 1, 3, 1, 1 };
-/// 位置検出パターンの候補リストの上限（溢れたら弱いものから捨てる）。
+/// Upper bound on the finder candidate list (the weakest entries are dropped when full).
 const max_finder_candidates: usize = 512;
 const align_ratio = [5]f64{ 1, 1, 1, 1, 1 };
 
 const RatioResult = struct { center: usize, module: f64 };
 
-/// 5 連ランの中心（走査軸方向、先頭からの距離）とモジュール長。比が合わなければ null。
+/// Center of a five-run pattern (along the scan axis, measured from its start) and module size. Null when the ratios do not fit.
 fn ratioCenter(counts: [5]usize, expected: [5]f64, tolerance: f64) ?RatioResult {
     var total: usize = 0;
     for (counts) |c| total += c;
@@ -443,11 +446,12 @@ fn ratioCenter(counts: [5]usize, expected: [5]f64, tolerance: f64) ?RatioResult 
     return .{ .center = counts[0] + counts[1] + counts[2] / 2, .module = module };
 }
 
-/// アラインメントパターン用のラン判定。
+/// Run test for alignment patterns.
 ///
-/// 中心の 1 モジュール（暗）とその周りの明の輪は、隣のデータモジュールと融合しない
-/// ので厳密に見る。一方、外側の暗い枠は隣のデータと繋がって長くなりうるため、
-/// 「1 モジュール以上」だけを要求する（ZXing の AlignmentPatternFinder と同じ考え方）。
+/// The dark center module and the light ring around it never merge with neighbouring data
+/// modules, so they are checked strictly. The outer dark ring can merge with adjacent data and
+/// grow, so it only has to be at least one module wide (the idea behind ZXing's
+/// AlignmentPatternFinder).
 fn alignRatio(counts: [5]usize, tolerance: f64) ?f64 {
     const inner = counts[1] + counts[2] + counts[3];
     if (inner < 3) return null;
@@ -463,7 +467,7 @@ fn alignRatio(counts: [5]usize, tolerance: f64) ?f64 {
     return module;
 }
 
-/// ラン走査の作業領域（1 行分のラン開始位置）。
+/// Scratch space for run scanning (run start positions of one row).
 const RunScanner = struct {
     starts: []usize,
 
@@ -476,7 +480,7 @@ const RunScanner = struct {
     }
 };
 
-/// 走査軸 `major` の 1 行（列）分のラン開始位置を作り、ラン数を返す。
+/// Build the run start positions of one row (or column) along the scan axis `major` and return the run count.
 fn buildRuns(self: *const RunScanner, bin: *const BitMatrix, vertical: bool, major: usize, lo: usize, hi: usize) usize {
     var n: usize = 0;
     self.starts[0] = lo;
@@ -494,7 +498,7 @@ fn buildRuns(self: *const RunScanner, bin: *const BitMatrix, vertical: bool, maj
     return n;
 }
 
-/// 走査軸に沿って (major, minor) の画素を読む。
+/// Read the pixel at (major, minor) along the scan axis.
 fn runPixel(bin: *const BitMatrix, vertical: bool, major: isize, minor: isize) bool {
     if (major < 0 or minor < 0) return false;
     const ma: usize = @intCast(major);
@@ -507,10 +511,11 @@ fn runPixel(bin: *const BitMatrix, vertical: bool, major: isize, minor: isize) b
     return bin.get(ma, mi);
 }
 
-/// 中心画素から走査軸の両側へ 5 連ランを測り、比が合えば中心を返す。
+/// Measure five runs from a center pixel towards both sides of the scan axis and return the
+/// refined center when the ratios fit.
 ///
-/// 中心が暗でない場合や、比が合わない場合は null。`total_hint` を渡すと、
-/// 直交方向の全長が大きく違う候補を弾く（位置検出パターンの縦横比の確認）。
+/// Null when the center is not dark or the ratios do not fit. Passing `total_hint` rejects
+/// candidates whose perpendicular length differs too much (a squareness check for finders).
 const ScanKind = enum { finder, alignment };
 
 fn crossCheck(
@@ -535,7 +540,7 @@ fn crossCheck(
     var center_neg: usize = 0;
     const limit: usize = 128;
 
-    // 負方向: 暗（中央ラン）→ 明 → 暗。
+    // Negative direction: dark (center run) -> light -> dark.
     {
         var k: isize = 1;
         while (k < @as(isize, @intCast(limit))) : (k += 1) {
@@ -554,7 +559,7 @@ fn crossCheck(
             counts[0] += 1;
         }
     }
-    // 正方向: 中央ラン → 明 → 暗。
+    // Positive direction: center run -> light -> dark.
     {
         var k: isize = 1;
         while (k < @as(isize, @intCast(limit))) : (k += 1) {
@@ -582,8 +587,8 @@ fn crossCheck(
     if (total_hint) |hint| {
         if (@abs(total - hint) > 0.5 * hint + 1.0) return null;
     }
-    // 中心ランの画素範囲は [c_major - center_neg, c_major + center_pos] なので、
-    // 連続座標での中心は +0.5 した値になる（画素 i は [i, i+1) を占める）。
+    // The center run covers pixels [c_major - center_neg, c_major + center_pos], so its
+    // center in continuous coordinates is +0.5 (pixel i occupies [i, i+1)).
     const center_pos = counts[2] - 1 - center_neg;
     const t = (@as(f64, @floatFromInt(center_pos)) - @as(f64, @floatFromInt(center_neg))) / 2.0;
     const major_f = @as(f64, @floatFromInt(c_major)) + t + 0.5;
@@ -595,11 +600,12 @@ fn crossCheck(
     };
 }
 
-/// 位置検出パターンの外側（中心から 4 モジュール）が明るいか確かめる。
+/// Check that the outside of a finder pattern (four modules from its center) is light.
 ///
-/// 本物の位置検出パターンは分離帯（明）と静穏域に囲まれているので、中心から
-/// ±4 モジュールの 4 点は必ず明になる。走査で測ったモジュール長は画像軸に沿った
-/// 長さなので、シンボルが回転していてもこの 4 点は分離帯の上に落ちる。
+/// A real finder pattern is surrounded by the light separator and the quiet zone, so the four
+/// points at +/-4 modules from the center are always light. The module size measured by the
+/// scan is a length along the image axis, so those four points still land on the separator
+/// even when the symbol is rotated.
 fn hasLightRing(bin: *const BitMatrix, cx: f64, cy: f64, module: f64) bool {
     const d = 4.0 * module;
     const points = [4]Point{
@@ -615,13 +621,14 @@ fn hasLightRing(bin: *const BitMatrix, cx: f64, cy: f64, module: f64) bool {
     return light >= 3;
 }
 
-/// すでに複数行で確認できている候補のモジュール長。
+/// Module size of a candidate already confirmed by several rows.
 ///
-/// データ領域に偶然現れる 1:1:3:1:1 は本物よりずっと小さい（1〜3 画素）ことが多いので、
-/// 基準から外れたものを捨てると候補リストが溢れない。位置検出パターンは 3 つとも
-/// 同じモジュール長なので、回転していてもこの判定は使える。
+/// Accidental 1:1:3:1:1 patterns in the data area are usually much smaller (one to three
+/// pixels) than a real finder, so dropping candidates far from this reference keeps the
+/// candidate list from overflowing. All three finder patterns share one module size, so the
+/// test works for rotated symbols too.
 fn referenceModule(items: []const Candidate) ?f64 {
-    var best_count: usize = 2; // count >= 3 のものだけを基準にする
+    var best_count: usize = 2; // only candidates with count >= 3 become the reference
     var best: ?f64 = null;
     for (items) |c| {
         if (c.count > best_count) {
@@ -632,12 +639,12 @@ fn referenceModule(items: []const Candidate) ?f64 {
     return best;
 }
 
-/// 既存候補に近ければまとめ、そうでなければ追加する。
+/// Merge into a nearby candidate, or append a new one.
 fn mergeCandidate(list: *std.ArrayList(Candidate), allocator: std.mem.Allocator, c: Candidate) Error!void {
     for (list.items) |*p| {
         const near = @abs(p.x - c.x) <= p.module * 1.0 and @abs(p.y - c.y) <= p.module * 1.0;
-        // モジュール長が大きく違うものは統合しない（データ領域の 1 画素パターンが
-        // 本物の位置検出パターンに吸着して、寸法推定を壊すのを防ぐ）。
+        // Do not merge candidates whose module sizes differ a lot (a one-pixel pattern in the
+        // data area must not stick to a real finder and spoil the size estimate).
         const similar = @abs(p.module - c.module) <= 0.35 * @max(p.module, c.module) + 0.3;
         if (near and similar) {
             const n = @as(f64, @floatFromInt(p.count));
@@ -648,7 +655,7 @@ fn mergeCandidate(list: *std.ArrayList(Candidate), allocator: std.mem.Allocator,
             return;
         }
     }
-    // 上限に達したら、いちばん弱い（確認回数の少ない）候補を追い出す。
+    // Once the list is full, evict the weakest (least confirmed) candidate.
     if (list.items.len >= max_finder_candidates) {
         var weakest: usize = 0;
         for (list.items, 0..) |p, i| {
@@ -661,10 +668,10 @@ fn mergeCandidate(list: *std.ArrayList(Candidate), allocator: std.mem.Allocator,
     try list.append(allocator, c);
 }
 
-/// 5 連ランを走査して中心候補を集める。
+/// Collect center candidates by scanning five-run patterns.
 ///
-/// `vertical` が true なら列方向に走査する（回転したシンボルや、行走査で拾えない
-/// 場合の保険）。`minor` は走査しない側の座標。
+/// With `vertical` true the scan runs along columns (a fallback for rotated symbols and for
+/// cases the row scan misses). `minor` is the coordinate on the axis that is not scanned.
 fn scanRuns(
     allocator: std.mem.Allocator,
     bin: *const BitMatrix,
@@ -701,14 +708,14 @@ fn scanRuns(
             const cx = if (vertical) minor_center else major_center;
             const cy = if (vertical) major_center else minor_center;
             const total_px: f64 = @floatFromInt(counts[0] + counts[1] + counts[2] + counts[3] + counts[4]);
-            // 直交方向のクロスチェック → 走査方向で中心を詰める。
+            // Perpendicular cross check, then refine the center along the scan axis.
             const first = crossCheck(bin, cx, cy, vertical, .finder, expected, tolerance, total_px) orelse continue;
             const second = crossCheck(bin, first.x, first.y, !vertical, .finder, expected, tolerance, total_px) orelse continue;
             const measured = (first.module + second.module) / 2.0;
-            // 分離帯に囲まれていないものは位置検出パターンではない。
+            // Without a light separator around it, this is not a finder pattern.
             if (!relaxed_ring and !hasLightRing(bin, second.x, second.y, measured)) continue;
-            // すでに複数行で確認できた候補があるなら、モジュール長が大きく違うものを
-            // 落とす（データ領域に偶然現れる小さな 1:1:3:1:1 をふるい落とす）。
+            // Once a candidate has been confirmed by several rows, drop candidates whose
+            // module size differs a lot (small accidental 1:1:3:1:1 patterns in the data area).
             if (referenceModule(out.items)) |reference| {
                 if (measured < 0.5 * reference or measured > 2.0 * reference) continue;
             }
@@ -721,12 +728,13 @@ fn scanRuns(
     }
 }
 
-// ---------------------------------------------------------------- 位置検出
+// ---------------------------------------------------------------- finder detection
 
-/// 位置検出パターンを探す（確認回数の多い順、呼び出し側が free する）。
+/// Find finder patterns, most confirmed first; the caller frees the result.
 ///
-/// `relaxed` が false のときは分離帯の判定を入れて厳しく絞る。true のときは
-/// 判定を外し、許容も広げて、行と列の両方を走査する（汚れた画像・欠けた画像向け）。
+/// With `relaxed` false the separator test narrows candidates strictly. With `relaxed` true
+/// that test is dropped, the tolerances widen, and both rows and columns are scanned (for
+/// dirty or partially damaged images).
 fn findFinderPatterns(
     allocator: std.mem.Allocator,
     bin: *const BitMatrix,
@@ -742,7 +750,7 @@ fn findFinderPatterns(
     if (relaxed or out.items.len < 3) {
         try scanRuns(allocator, bin, &scanner, true, 0, bin.height, finder_ratio, tolerance, relaxed, &out);
     }
-    // 確認回数の多い順（単純な挿入ソート。候補は多くても数百）。
+    // Most confirmed first (a plain insertion sort; there are at most a few hundred candidates).
     const items = out.items;
     var i: usize = 1;
     while (i < items.len) : (i += 1) {
@@ -751,40 +759,7 @@ fn findFinderPatterns(
         while (j > 0 and items[j - 1].count < key.count) : (j -= 1) items[j] = items[j - 1];
         items[j] = key;
     }
-    if (trace) {
-        std.debug.print("[cand] relaxed={} total={d}\n", .{ relaxed, items.len });
-        for (items, 0..) |c, ci| {
-            if (ci < 8) {
-                std.debug.print("[cand] {d}: ({d:.2},{d:.2}) module={d:.3} count={d}\n", .{ ci, c.x, c.y, c.module, c.count });
-            }
-        }
-    }
     return try out.toOwnedSlice(allocator);
-}
-
-/// 3 点の組み合わせを選ぶ。直角・辺の比・モジュール長の整合で採点する。
-fn selectPatterns(pats: []const Candidate, relaxed: bool) ?[3]usize {
-    if (pats.len < 3) return null;
-    if (pats.len == 3) return .{ 0, 1, 2 };
-    const n = @min(pats.len, 24);
-    var best: ?[3]usize = null;
-    var best_score: f64 = -1.0e18;
-    var a: usize = 0;
-    while (a < n) : (a += 1) {
-        var b = a + 1;
-        while (b < n) : (b += 1) {
-            var c = b + 1;
-            while (c < n) : (c += 1) {
-                if (scoreTriple(pats[a], pats[b], pats[c], relaxed)) |s| {
-                    if (s > best_score) {
-                        best_score = s;
-                        best = .{ a, b, c };
-                    }
-                }
-            }
-        }
-    }
-    return best;
 }
 
 fn scoreTriple(p: Candidate, q: Candidate, r: Candidate, relaxed: bool) ?f64 {
@@ -792,7 +767,7 @@ fn scoreTriple(p: Candidate, q: Candidate, r: Candidate, relaxed: bool) ?f64 {
     const m_min = @min(mods[0], @min(mods[1], mods[2]));
     const m_max = @max(mods[0], @max(mods[1], mods[2]));
     if (m_min < 1.0) return null;
-    // 3 つの位置検出パターンのモジュール長は（多少の遠近を除けば）揃っているはず。
+    // The three finder patterns must share a module size (up to some perspective).
     const module_ratio_limit: f64 = if (relaxed) 1.8 else 1.35;
     if (m_max > m_min * module_ratio_limit) return null;
 
@@ -822,14 +797,14 @@ fn scoreTriple(p: Candidate, q: Candidate, r: Candidate, relaxed: bool) ?f64 {
     const l1 = @sqrt(e1.x * e1.x + e1.y * e1.y);
     const l2 = @sqrt(e2.x * e2.x + e2.y * e2.y);
     if (l1 < 1.0 or l2 < 1.0) return null;
-    // 直角の頂点なので 2 辺のなす角は 90 度に近いはず。
+    // The vertex of a right angle, so the two legs must meet at close to 90 degrees.
     const cos = (e1.x * e2.x + e1.y * e2.y) / (l1 * l2);
     const cos_limit: f64 = if (relaxed) 0.6 else 0.35;
     if (@abs(cos) > cos_limit) return null;
     const leg_ratio = @max(l1, l2) / @min(l1, l2);
     const leg_limit: f64 = if (relaxed) 3.0 else 2.2;
     if (leg_ratio > leg_limit) return null;
-    // 2 辺は「辺の長さ / モジュール長」がほぼ同じで、規格上の寸法（17 + 4v）に近いはず。
+    // Both legs, measured in modules, must agree and be close to a valid size (17 + 4v).
     const module = (p.module + q.module + r.module) / 3.0;
     const dim_h = @max(l1, l2) / module + 7.0;
     const dim_v = @min(l1, l2) / module + 7.0;
@@ -845,7 +820,7 @@ fn scoreTriple(p: Candidate, q: Candidate, r: Candidate, relaxed: bool) ?f64 {
     return counts - spread * 12.0 - dim_dev * 2.0 - @abs(cos) * 3.0;
 }
 
-/// 3 点を左上・右上・左下に並べる。画像座標（y 下向き）で右手系になるようにする。
+/// Order three points as top-left, top-right and bottom-left, right-handed in image coordinates (y downwards).
 fn orderPatterns(a: Candidate, b: Candidate, c: Candidate) [3]Candidate {
     const pts = [3]Candidate{ a, b, c };
     const d01 = distance(.{ .x = pts[0].x, .y = pts[0].y }, .{ .x = pts[1].x, .y = pts[1].y });
@@ -876,16 +851,16 @@ fn orderPatterns(a: Candidate, b: Candidate, c: Candidate) [3]Candidate {
     return .{ pts[tl], pts[q], pts[p] };
 }
 
-// ---------------------------------------------------------------- 寸法の推定
+// ---------------------------------------------------------------- size estimation
 
-/// 中心から方向 (dx, dy)（単位ベクトル）へ「暗・明・暗」の並びを測り、その長さを返す。
+/// Measure the length of a dark-light-dark sequence from a center towards (dx, dy) (a unit vector).
 ///
-/// 位置検出パターンの中心から外へ向かうと、中心の暗ラン（1.5 モジュール）、明の輪
-/// （1 モジュール）、外側の暗い枠（1 モジュール）で 3.5 モジュールになる。ZXing の
-/// `sizeOfBlackWhiteBlackRun` と同じ考え方。端に達したら null。
+/// Walking outwards from a finder center crosses the dark center run (1.5 modules), the light
+/// ring (one module) and the dark outer border (one module): 3.5 modules in total. Same idea as
+/// ZXing's `sizeOfBlackWhiteBlackRun`. Null when the image edge is reached first.
 fn walkBlackWhiteBlack(bin: *const BitMatrix, cx: f64, cy: f64, dx: f64, dy: f64, max_len: f64) ?f64 {
     var t: f64 = 0.25;
-    var state: u8 = 0; // 0 = 中心の暗 / 1 = 明の輪 / 2 = 外側の暗
+    var state: u8 = 0; // 0 = dark center, 1 = light ring, 2 = dark outer border
     while (t <= max_len) : (t += 0.25) {
         const x = cx + dx * t;
         const y = cy + dy * t;
@@ -907,9 +882,9 @@ fn walkBlackWhiteBlack(bin: *const BitMatrix, cx: f64, cy: f64, dx: f64, dy: f64
     return null;
 }
 
-/// 位置検出パターンの中心から指定方向の両側の暗ラン（7 モジュール分）からモジュール長を
-/// 求める。方向は画像軸ではなく「相手の位置検出パターンへ向かう向き」なので、回転して
-/// いても正しい値になる。
+/// Estimate the module size from the dark runs (seven modules' worth) on both sides of a finder
+/// center along the given direction. The direction points at the neighbouring finder rather
+/// than along an image axis, so the value stays correct for rotated symbols.
 fn measureModuleAlong(bin: *const BitMatrix, c: Candidate, dx: f64, dy: f64, fallback: f64, max_len: f64) f64 {
     const plus = walkBlackWhiteBlack(bin, c.x, c.y, dx, dy, max_len) orelse return fallback;
     const minus = walkBlackWhiteBlack(bin, c.x, c.y, -dx, -dy, max_len) orelse return fallback;
@@ -918,8 +893,8 @@ fn measureModuleAlong(bin: *const BitMatrix, c: Candidate, dx: f64, dy: f64, fal
     return total / 7.0;
 }
 
-/// 走査線に沿って明暗の遷移を数える。境界のばたつきは「一定距離同じ色が続いたら遷移と
-/// みなす」ことで抑える。
+/// Count light/dark transitions along a line. Bouncing at boundaries is suppressed by only
+/// counting a transition once the new color has held for a minimum distance.
 fn countTransitions(bin: *const BitMatrix, from: Point, to: Point, hold_px: f64) ?usize {
     const dist = distance(from, to);
     if (dist < 8.0) return null;
@@ -964,12 +939,13 @@ fn countTransitions(bin: *const BitMatrix, from: Point, to: Point, hold_px: f64)
     return transitions;
 }
 
-/// タイミングパターンの遷移数から一辺のモジュール数を推定する。
+/// Estimate the modules per side from the number of timing-pattern transitions.
 ///
-/// 左上の中心から右上（または左下）の中心まで、タイミングパターンの行（列）を通る
-/// 直線を歩き、明暗の切り替わりを数える。タイミングパターンは 1 モジュールごとに
-/// 反転するので、遷移数 = 寸法 - 13 になる（両端の位置検出パターンと分離帯で 4 回）。
-/// 遷移の「数」は距離に依存しないため、遠近や回転があっても寸法を誤りにくい。
+/// Walk the straight line that runs along the timing pattern row (or column) from the
+/// top-left center to the top-right (or bottom-left) center and count the light/dark changes.
+/// The timing pattern alternates every module, so transitions = size - 13 (the finder patterns
+/// and separators at both ends account for four of them). The count does not depend on
+/// distance, so perspective and rotation rarely fool it.
 fn timingDimension(bin: *const BitMatrix, tl: Point, other: Point, offset: Point, module: f64) ?usize {
     const hold = @max(1.0, module * 0.35);
     var counts: [3]usize = undefined;
@@ -1000,7 +976,7 @@ fn timingDimension(bin: *const BitMatrix, tl: Point, other: Point, offset: Point
     return best;
 }
 
-/// 生の推定値に最も近い「規格上の寸法」（17 + 4v）を返す。
+/// Nearest valid size (17 + 4v) to a raw estimate.
 fn nearestDimension(raw: f64) ?usize {
     if (raw < 19.0 or raw > 179.0) return null;
     const rounded: isize = @intFromFloat(@round(raw));
@@ -1009,7 +985,7 @@ fn nearestDimension(raw: f64) ?usize {
     return 17 + 4 * @as(usize, @intCast(v));
 }
 
-/// 寸法候補のリスト（重複なし、優先順）。
+/// List of size candidates (no duplicates, in priority order).
 const DimensionCandidates = struct {
     dims: [4]usize = @splat(0),
     len: usize = 0,
@@ -1026,9 +1002,9 @@ const DimensionCandidates = struct {
     }
 };
 
-// ---------------------------------------------------------------- アラインメント
+// ---------------------------------------------------------------- alignment pattern
 
-/// 射影変換の逆写像（画素 → モジュール座標）。ニュートン法で解く。
+/// Inverse of the projective transform (pixel -> module coordinates), solved with Newton's method.
 fn inverseMap(affine: *const Homography, px: f64, py: f64) ?Point {
     var u = px;
     var v = py;
@@ -1053,7 +1029,7 @@ fn inverseMap(affine: *const Homography, px: f64, py: f64) ?Point {
     return null;
 }
 
-/// 画素位置の色。範囲外は明（false）。
+/// Color at a pixel position. Out of range counts as light (false).
 fn samplePixel(bin: *const BitMatrix, p: Point) bool {
     if (p.x < 0.0 or p.y < 0.0) return false;
     const xi: usize = @intFromFloat(@floor(p.x));
@@ -1061,8 +1037,8 @@ fn samplePixel(bin: *const BitMatrix, p: Point) bool {
     return bin.get(xi, yi);
 }
 
-/// 候補位置が 5×5 のアラインメントパターン（中心が暗・その周りが明・外側が暗）らしいかを
-/// 0〜1 で採点する。
+/// Score from 0 to 1 how much a position looks like a 5x5 alignment pattern (dark center,
+/// light ring, dark border).
 fn scoreAlignment(bin: *const BitMatrix, affine: *const Homography, px: f64, py: f64) f64 {
     const base = inverseMap(affine, px, py) orelse return 0.0;
     var score: f64 = 0.0;
@@ -1085,7 +1061,7 @@ fn scoreAlignment(bin: *const BitMatrix, affine: *const Homography, px: f64, py:
     return if (total == 0.0) 0.0 else score / total;
 }
 
-/// モジュール座標の 1 ステップ分の画素ベクトル（射影変換の偏微分から）。
+/// Pixel vector of one module step (from the partial derivatives of the projective transform).
 fn moduleStepX(affine: *const Homography, u: f64, v: f64) Point {
     const eps = 0.5;
     const a = affine.map(u - eps, v);
@@ -1104,7 +1080,7 @@ fn moduleStepY(affine: *const Homography, u: f64, v: f64) Point {
     return step;
 }
 
-/// 矩形領域内をラン走査してアラインメントパターンの候補を集める。
+/// Collect alignment pattern candidates by scanning runs inside a rectangle.
 fn scanRunsInRect(
     allocator: std.mem.Allocator,
     bin: *const BitMatrix,
@@ -1132,9 +1108,9 @@ fn scanRunsInRect(
             var counts: [5]usize = undefined;
             for (0..5) |k| counts[k] = scanner.starts[i + k + 1] - scanner.starts[i + k];
             const module_est = alignRatio(counts, 0.7) orelse continue;
-            // モジュール長が想定から離れすぎた候補は落とす（データ領域の偶然を減らす）。
+            // Drop candidates whose module size is far from the expectation (fewer accidents in the data area).
             if (module_est < module_px * 0.4 or module_est > module_px * 2.5) continue;
-            // 中心は中央のラン（= 中心の暗モジュール）の中央。
+            // The center is the middle of the middle run (the dark center module).
             const major_center = (@as(f64, @floatFromInt(scanner.starts[i + 2])) +
                 @as(f64, @floatFromInt(scanner.starts[i + 3]))) / 2.0;
             const minor_center = @as(f64, @floatFromInt(minor)) + 0.5;
@@ -1152,7 +1128,7 @@ fn scanRunsInRect(
     }
 }
 
-/// 右下のアラインメントパターン（5×5）を探す。見つかれば中心の画素座標。
+/// Look for the bottom-right alignment pattern (5x5). Returns the pixel center when found.
 fn findAlignmentPattern(
     allocator: std.mem.Allocator,
     bin: *const BitMatrix,
@@ -1193,7 +1169,7 @@ fn findAlignmentPattern(
     }
     const coarse = best orelse return null;
 
-    // 0.1 モジュール刻みで中心を詰める（テンプレートの当たりが最も良い位置へ）。
+    // Refine the center in 0.1 module steps towards the best template match.
     var refined = coarse;
     var best_raw = scoreAlignment(bin, affine, refined.x, refined.y);
     const step_x = moduleStepX(affine, coarse.x, coarse.y);
@@ -1214,9 +1190,9 @@ fn findAlignmentPattern(
     return refined;
 }
 
-// ---------------------------------------------------------------- 格子の抽出
+// ---------------------------------------------------------------- grid sampling
 
-/// 射影変換に従って各モジュールの中心を 5 点サンプリング（多数決）する。
+/// Sample the center of every module five times (majority vote) according to the projective transform.
 fn sampleGrid(
     allocator: std.mem.Allocator,
     bin: *const BitMatrix,
@@ -1242,7 +1218,7 @@ fn sampleGrid(
     return grid;
 }
 
-/// 転置した格子を作る（鏡像・裏返しの画像への保険）。
+/// Build the transposed grid (a fallback for mirrored or flipped images).
 fn transposeGrid(allocator: std.mem.Allocator, grid: *const BitMatrix) Error!BitMatrix {
     const dim = grid.width;
     var out = try BitMatrix.init(allocator, dim, dim);
@@ -1256,15 +1232,15 @@ fn transposeGrid(allocator: std.mem.Allocator, grid: *const BitMatrix) Error!Bit
     return out;
 }
 
-// ---------------------------------------------------------------- 機能モジュール
+// ---------------------------------------------------------------- function modules
 
-/// アラインメントパターンの中心位置（規格 Annex E）。`pos[0..len]` を使う。
+/// Alignment pattern center positions (standard Annex E). Only `pos[0..len]` is used.
 const AlignmentPositions = struct {
     pos: [7]usize = @splat(0),
     len: usize = 0,
 };
 
-/// バージョンごとのアラインメントパターン中心（qrcodegen と同じ導出）。
+/// Alignment pattern centers for a version (same derivation as qrcodegen).
 fn alignmentPositions(version: u8) AlignmentPositions {
     const size = 17 + 4 * @as(usize, version);
     const num: usize = version / 7 + 2;
@@ -1274,7 +1250,7 @@ fn alignmentPositions(version: u8) AlignmentPositions {
         (@as(usize, version) * 4 + num * 2 + 1) / (num * 2 - 2) * 2;
     var out = AlignmentPositions{ .len = num };
     out.pos[0] = 6;
-    // 最後の位置が「一辺 - 7」で、そこから step ずつ左へ戻る。
+    // The last position is size - 7; earlier ones step back by `step`.
     var i: usize = 1;
     while (i < num) : (i += 1) {
         out.pos[i] = size - 7 - (num - 1 - i) * step;
@@ -1292,19 +1268,19 @@ fn markRect(func: *BitMatrix, x0: usize, y0: usize, w: usize, h: usize) void {
     }
 }
 
-/// 機能モジュール（データを含まないモジュール）の地図を作る。座標は (x = 列, y = 行)。
+/// Build the map of function modules (modules that carry no data). Coordinates are (x = column, y = row).
 fn buildFunctionMap(func: *BitMatrix, dim: usize, version: u8) void {
-    // 位置検出パターン + 分離帯 + format 情報（9×9 の角 3 つ）。
+    // Finder patterns, separators and format information (a 9x9 square at three corners).
     markRect(func, 0, 0, 9, 9);
     markRect(func, dim - 8, 0, 8, 9);
     markRect(func, 0, dim - 8, 9, 8);
-    // タイミングパターン。
+    // Timing patterns.
     var i: usize = 8;
     while (i < dim - 8) : (i += 1) {
         func.set(i, 6);
         func.set(6, i);
     }
-    // アラインメントパターン（位置検出パターンと重なる 3 つは置かれない）。
+    // Alignment patterns (the three that would overlap a finder pattern are not placed).
     if (version >= 2) {
         const ap = alignmentPositions(version);
         for (0..ap.len) |a| {
@@ -1316,7 +1292,7 @@ fn buildFunctionMap(func: *BitMatrix, dim: usize, version: u8) void {
             }
         }
     }
-    // version 情報（バージョン 7 以上）。
+    // Version information (version 7 and above).
     if (version >= 7) {
         for (0..18) |k| {
             const a = dim - 11 + k % 3;
@@ -1335,12 +1311,12 @@ const FormatResult = struct {
     distance: u3,
 };
 
-/// (x, y) のモジュールを 0/1 で返す（x = 列、y = 行）。
+/// Module at (x, y) as 0 or 1 (x = column, y = row).
 fn bitAt(grid: *const BitMatrix, x: usize, y: usize) u32 {
     return @intFromBool(grid.get(x, y));
 }
 
-/// 規格 Table C.1 の有効な format 情報 32 通り。添字は (EC ビット << 3) | マスク。
+/// The 32 valid format information values of standard Table C.1. Indexed by (EC bits << 3) | mask.
 const format_codes: [32]u15 = blk: {
     var table: [32]u15 = undefined;
     for (0..32) |k| {
@@ -1352,7 +1328,7 @@ const format_codes: [32]u15 = blk: {
     break :blk table;
 };
 
-/// 規格 Table D.1 の有効な version 情報（バージョン 7〜40）。添字はバージョン。
+/// Valid version information values of standard Table D.1 (versions 7-40). Indexed by version.
 const version_codes: [41]u18 = blk: {
     var table: [41]u18 = @splat(0);
     for (7..41) |v| {
@@ -1373,7 +1349,7 @@ fn ecFromFormatBits(bits: u2) qr.EcLevel {
     };
 }
 
-/// format 情報を 2 か所から読み、ハミング距離が最小の有効な組み合わせを返す。
+/// Read the format information from both copies and return the valid combination with the smallest Hamming distance.
 fn readFormat(grid: *const BitMatrix, dim: usize) ?FormatResult {
     var copy1: u32 = 0;
     var i: usize = 0;
@@ -1411,7 +1387,7 @@ fn readFormat(grid: *const BitMatrix, dim: usize) ?FormatResult {
 
 const VersionResult = struct { version: u8, distance: u3 };
 
-/// version 情報（18 ビット、2 か所）を読み、ハミング距離が最小の有効な値を返す。
+/// Read the version information (18 bits, two copies) and return the valid value with the smallest Hamming distance.
 fn readVersionInfo(grid: *const BitMatrix, dim: usize) ?VersionResult {
     var copy1: u32 = 0;
     var copy2: u32 = 0;
@@ -1436,9 +1412,9 @@ fn readVersionInfo(grid: *const BitMatrix, dim: usize) ?VersionResult {
     return best;
 }
 
-// ---------------------------------------------------------------- データ読み出し
+// ---------------------------------------------------------------- data extraction
 
-/// マスクパターン（規格 Table 10）。true なら反転する。x = 列、y = 行。
+/// Mask pattern (standard Table 10). True means flip. x = column, y = row.
 fn maskBit(mask: u3, x: usize, y: usize) bool {
     return switch (mask) {
         0 => (x + y) % 2 == 0,
@@ -1452,7 +1428,7 @@ fn maskBit(mask: u3, x: usize, y: usize) bool {
     };
 }
 
-/// ジグザグ（右下から 2 列ずつ、上下交互）に読み出してマスクを外す。
+/// Read in zigzag order (two columns at a time from the right, alternating up and down) and undo the mask.
 fn readCodewords(
     grid: *const BitMatrix,
     func: *const BitMatrix,
@@ -1464,7 +1440,7 @@ fn readCodewords(
     var bit: usize = 0;
     var right: usize = dim - 1;
     while (true) {
-        if (right == 6) right = 5; // タイミング列を飛ばす
+        if (right == 6) right = 5; // skip the timing column
         var vert: usize = 0;
         while (vert < dim) : (vert += 1) {
             var j: usize = 0;
@@ -1486,10 +1462,10 @@ fn readCodewords(
     if (bit != total_bits) return Error.InvalidSymbol;
 }
 
-// ---------------------------------------------------------------- 容量テーブル
+// ---------------------------------------------------------------- capacity tables
 
-/// ブロックあたりの誤り訂正コードワード数（規格 Table 9）。添字は [EC][version]。
-/// qr.zig と同じ値（テストで qr.zig の公開 API と突き合わせる）。
+/// Error correction codewords per block (standard Table 9). Indexed by [EC][version].
+/// Same values as qr.zig (a test cross-checks them against qr.zig's public API).
 const ecc_codewords_per_block = [4][41]u8{
     .{ 0, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30 },
     .{ 0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28 },
@@ -1497,7 +1473,7 @@ const ecc_codewords_per_block = [4][41]u8{
     .{ 0, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30 },
 };
 
-/// 誤り訂正ブロック数（規格 Table 9）。添字は [EC][version]。
+/// Number of error correction blocks (standard Table 9). Indexed by [EC][version].
 const num_ec_blocks = [4][41]u8{
     .{ 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25 },
     .{ 0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49 },
@@ -1505,15 +1481,15 @@ const num_ec_blocks = [4][41]u8{
     .{ 0, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81 },
 };
 
-/// QR の 1 ブロックの最大長（データ + ECC）は 186（バージョン 40-L）なので 255 で足りる。
+/// The longest QR block (data + ECC) is 186 codewords (version 40-L), so 255 is enough.
 const max_block_len = 255;
 const max_ec_codewords = 30;
 const max_errors = max_ec_codewords / 2;
 const max_blocks = 81;
 
-// ---------------------------------------------------------------- GF(2^8) と RS
+// ---------------------------------------------------------------- GF(2^8) and Reed-Solomon
 
-/// GF(2^8)（原始多項式 0x11D、生成多項式の根は α^0 から）。
+/// GF(2^8) with primitive polynomial 0x11D; generator roots start at alpha^0.
 const gf_exp: [512]u8 = blk: {
     var table: [512]u8 = undefined;
     var x: u16 = 1;
@@ -1548,7 +1524,7 @@ fn gfPow(a: u8, e: usize) u8 {
     return gf_exp[(@as(usize, gf_log[a]) * e) % 255];
 }
 
-/// Reed-Solomon 訂正の作業領域（すべてスタック上、確保なし）。
+/// Scratch space for Reed-Solomon correction (all on the stack, no allocation).
 const RsScratch = struct {
     syndromes: [max_ec_codewords]u8 = @splat(0),
     locator: [max_errors + 1]u8 = @splat(0),
@@ -1559,8 +1535,8 @@ const RsScratch = struct {
     work: [max_block_len]u8 = @splat(0),
 };
 
-/// GF(256) の連立一次方程式を掃き出し法で解く。`a` は rows × (cols+1) の行優先。
-/// 解が一意でなければ false。
+/// Solve a linear system over GF(256) by Gaussian elimination. `a` is a row-major
+/// rows x (cols+1) augmented matrix. False when the solution is not unique.
 fn solveLinear(a: []u8, rows: usize, cols: usize, x: []u8) bool {
     const stride = cols + 1;
     var prow: usize = 0;
@@ -1602,11 +1578,11 @@ fn solveLinear(a: []u8, rows: usize, cols: usize, x: []u8) bool {
     return true;
 }
 
-/// 仮定した誤り数 `nu` で訂正を試す。成功したら誤り数を、だめなら null を返す。
+/// Try to correct assuming `nu` errors. Returns the number of errors, or null on failure.
 fn tryCorrectCount(cw: []u8, nsym: usize, nu: usize, scratch: *RsScratch) ?usize {
     const n = cw.len;
     const stride = nu + 1;
-    // 誤り位置多項式 Λ の係数（Λ_1..Λ_ν）を PGZ の連立方程式から求める。
+    // Find the coefficients of the error locator polynomial (L_1..L_nu) from the PGZ system.
     for (0..nu) |i| {
         for (0..nu) |j| scratch.matrix[i * stride + j] = scratch.syndromes[i + nu - 1 - j];
         scratch.matrix[i * stride + nu] = scratch.syndromes[i + nu];
@@ -1614,7 +1590,7 @@ fn tryCorrectCount(cw: []u8, nsym: usize, nu: usize, scratch: *RsScratch) ?usize
     if (!solveLinear(scratch.matrix[0 .. nu * stride], nu, nu, scratch.locator[1 .. nu + 1])) return null;
     scratch.locator[0] = 1;
 
-    // Chien 探索: Λ(α^-p) = 0 となる p を探す。誤り位置は指数 p（X = α^p）。
+    // Chien search: find p with L(alpha^-p) = 0. The error position is the exponent p (X = alpha^p).
     var found: usize = 0;
     var p: usize = 0;
     while (p < n) : (p += 1) {
@@ -1634,7 +1610,7 @@ fn tryCorrectCount(cw: []u8, nsym: usize, nu: usize, scratch: *RsScratch) ?usize
     }
     if (found != nu) return null;
 
-    // 誤りの大きさ: Σ_k e_k X_k^i = S_i (i = 0..ν-1) を解く。
+    // Error magnitudes: solve sum_k e_k X_k^i = S_i for i = 0..nu-1.
     for (0..nu) |i| {
         for (0..nu) |k| scratch.matrix[i * stride + k] = gfPow(scratch.roots[k], i);
         scratch.matrix[i * stride + nu] = scratch.syndromes[i];
@@ -1643,7 +1619,7 @@ fn tryCorrectCount(cw: []u8, nsym: usize, nu: usize, scratch: *RsScratch) ?usize
 
     @memcpy(scratch.work[0..n], cw);
     for (0..nu) |k| scratch.work[scratch.positions[k]] ^= scratch.magnitudes[k];
-    // 検算: 訂正後のシンドロームがすべて 0 でなければ、この仮定は誤り。
+    // Verification: unless every syndrome is zero after the correction, the assumption was wrong.
     for (0..nsym) |i| {
         var s: u8 = 0;
         const x = gf_exp[i];
@@ -1654,7 +1630,7 @@ fn tryCorrectCount(cw: []u8, nsym: usize, nu: usize, scratch: *RsScratch) ?usize
     return nu;
 }
 
-/// 1 ブロック（データ + ECC）をその場で誤り訂正する。訂正した個数を返す。
+/// Correct one block (data + ECC) in place. Returns how many errors were corrected.
 fn rsCorrect(cw: []u8, nsym: usize, scratch: *RsScratch) Error!usize {
     const n = cw.len;
     if (n > max_block_len or nsym == 0 or nsym >= n) return Error.InvalidSymbol;
@@ -1676,7 +1652,7 @@ fn rsCorrect(cw: []u8, nsym: usize, scratch: *RsScratch) Error!usize {
     return Error.TooManyErrors;
 }
 
-/// インターリーブを解いてブロックごとに訂正し、データコードワードを連結する。
+/// De-interleave, correct block by block, and concatenate the data codewords.
 fn correctAndExtract(
     allocator: std.mem.Allocator,
     raw: []const u8,
@@ -1695,10 +1671,10 @@ fn correctAndExtract(
     const short_len = total_data / nblocks;
     const num_long = total_data % nblocks;
     const max_dlen = short_len + @intFromBool(num_long > 0);
-    // 規格 7.6: データ長が 1 多いブロックは**最後**に置かれる（qr.zig / ZXing / segno と同じ）。
+    // Standard 7.6: blocks with one extra data codeword come **last** (as in qr.zig, ZXing and segno).
     const first_long = nblocks - num_long;
 
-    // 作業領域は「ブロックごとに [データ | ECC] が連続」するように置く。
+    // Lay out the scratch space so each block is contiguous as [data | ECC].
     var region: [max_blocks]usize = @splat(0);
     var data_start: [max_blocks]usize = @splat(0);
     var acc: usize = 0;
@@ -1714,7 +1690,7 @@ fn correctAndExtract(
     const work = try allocator.alloc(u8, raw.len);
     defer allocator.free(work);
 
-    // データ部のインターリーブを解く。
+    // De-interleave the data codewords.
     var pos: usize = 0;
     var k: usize = 0;
     while (k < max_dlen) : (k += 1) {
@@ -1726,7 +1702,7 @@ fn correctAndExtract(
             }
         }
     }
-    // ECC 部のインターリーブを解く。
+    // De-interleave the ECC codewords.
     for (0..ecc_per) |j| {
         for (0..nblocks) |b| {
             const dlen = short_len + @intFromBool(b >= first_long);
@@ -1739,15 +1715,12 @@ fn correctAndExtract(
     for (0..nblocks) |b| {
         const dlen = short_len + @intFromBool(b >= first_long);
         const block = work[region[b] .. region[b] + dlen + ecc_per];
-        const corrected = try rsCorrect(block, ecc_per, &scratch);
-        if (trace) {
-            std.debug.print("[rs] block {d}/{d} dlen={d} ecc={d} corrected={d} first={x:0>2},{x:0>2},{x:0>2},{x:0>2}\n", .{ b, nblocks, dlen, ecc_per, corrected, block[0], block[1], block[2], block[3] });
-        }
+        _ = try rsCorrect(block, ecc_per, &scratch);
         @memcpy(data_out[data_start[b] .. data_start[b] + dlen], work[region[b] .. region[b] + dlen]);
     }
 }
 
-// ---------------------------------------------------------------- ビット列の解釈
+// ---------------------------------------------------------------- bit stream parsing
 
 const BitReader = struct {
     data: []const u8,
@@ -1771,7 +1744,7 @@ const BitReader = struct {
     }
 };
 
-/// 英数字モードの文字集合（規格 Table 5）。
+/// Alphanumeric mode character set (standard Table 5).
 const alphanumeric_charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
 
 fn parseNumeric(reader: *BitReader, version: u8, sink: *Sink) Error!void {
@@ -1821,29 +1794,29 @@ fn parseByte(reader: *BitReader, version: u8, sink: *Sink) Error!void {
     }
 }
 
-/// モード指示子を順に解釈してテキストを書き出す。
+/// Interpret the mode indicators in order and write the text out.
 fn parseBitStream(data: []const u8, version: u8, sink: *Sink) Error!void {
     var reader = BitReader{ .data = data };
     while (reader.remaining() >= 4) {
         const mode = try reader.read(4);
         switch (mode) {
-            0b0000 => return, // ターミネータ
+            0b0000 => return, // terminator
             0b0001 => try parseNumeric(&reader, version, sink),
             0b0010 => try parseAlphanumeric(&reader, version, sink),
             0b0100 => try parseByte(&reader, version, sink),
-            // 構造的連接・FNC1・ECI・漢字（JIS / GB2312）は未対応。
+            // Structured append, FNC1, ECI and Kanji (JIS / GB2312) are not supported.
             0b0011, 0b0101, 0b0111, 0b1000, 0b1001, 0b1101 => return Error.UnsupportedMode,
             else => return Error.InvalidSymbol,
         }
     }
 }
 
-// ---------------------------------------------------------------- 1 シンボルの復号
+// ---------------------------------------------------------------- decoding one symbol
 
-/// 格子の 3 隅に位置検出パターン（7×7）が正しく現れているか。
+/// Check that the three corners of the grid really hold finder patterns (7x7).
 ///
-/// QR ではない画像（文章の画面など）を「QR らしいが見つからない」と誤って報告しない
-/// ための確認と、明らかに違う格子を早めに捨てるための足切りを兼ねる。
+/// This keeps a non-QR image (a screen full of text, say) from being reported as "something
+/// QR-like was found but could not be read", and it discards obviously wrong grids early.
 fn gridLooksLikeQr(grid: *const BitMatrix, dim: usize) bool {
     const origins = [3][2]usize{ .{ 0, 0 }, .{ dim - 7, 0 }, .{ 0, dim - 7 } };
     var mismatch: usize = 0;
@@ -1852,7 +1825,7 @@ fn gridLooksLikeQr(grid: *const BitMatrix, dim: usize) bool {
         while (y < 7) : (y += 1) {
             var x: usize = 0;
             while (x < 7) : (x += 1) {
-                // 中心 (3,3) からのチェビシェフ距離: 0-1 が暗、2 が明、3 が暗。
+                // Chebyshev distance from the center (3,3): 0-1 dark, 2 light, 3 dark.
                 const dx = if (x > 3) x - 3 else 3 - x;
                 const dy = if (y > 3) y - 3 else 3 - y;
                 const cheb = @max(dx, dy);
@@ -1864,7 +1837,7 @@ fn gridLooksLikeQr(grid: *const BitMatrix, dim: usize) bool {
     return mismatch <= 12;
 }
 
-/// 格子（モジュール行列）からテキストを取り出す。失敗したら false（別候補を試す）。
+/// Extract text from a grid (module matrix). False means "try another candidate".
 fn decodeGrid(
     allocator: std.mem.Allocator,
     grid: *const BitMatrix,
@@ -1878,29 +1851,16 @@ fn decodeGrid(
     confirmed.* = true;
     const version: u8 = @intCast((dim - 17) / 4);
     const fmt = readFormat(grid, dim) orelse {
-        if (trace) std.debug.print("[grid] dim={d} format NG\n", .{dim});
         return false;
     };
-    if (trace) std.debug.print("[grid] dim={d} v={d} ec={s} mask={d} dist={d}\n", .{ dim, (dim - 17) / 4, fmt.ec.name(), fmt.mask, fmt.distance });
 
-    // バージョン 7 以上は version 情報でも照合する（食い違えば格子が疑わしい）。
+    // From version 7 on, cross-check against the version information (a mismatch means the grid is suspect).
     if (version >= 7) {
         if (readVersionInfo(grid, dim)) |v| {
             if (v.distance <= 1 and v.version != version) return false;
         }
     }
 
-    if (trace and dim <= 45) {
-        var yy: usize = 0;
-        while (yy < dim) : (yy += 1) {
-            var buf: [200]u8 = @splat('.');
-            var xx: usize = 0;
-            while (xx < dim) : (xx += 1) {
-                if (grid.get(xx, yy)) buf[xx] = '#';
-            }
-            std.debug.print("GRID {s}\n", .{buf[0..dim]});
-        }
-    }
     var func = try BitMatrix.init(allocator, dim, dim);
     defer func.deinit(allocator);
     buildFunctionMap(&func, dim, version);
@@ -1916,7 +1876,6 @@ fn decodeGrid(
     defer allocator.free(data);
     correctAndExtract(allocator, raw, fmt.ec, version, data) catch |e| switch (e) {
         Error.TooManyErrors => {
-            if (trace) std.debug.print("[grid] dim={d} RS NG\n", .{dim});
             return false;
         },
         else => return e,
@@ -1935,23 +1894,23 @@ fn decodeGrid(
     return true;
 }
 
-/// 1 回の試行の結果。
+/// Outcome of one attempt.
 const AttemptResult = enum {
-    /// 位置検出パターンの組が見つからなかった
+    /// No finder pattern triple was found
     not_found,
-    /// 見つかったが復号できなかった
+    /// Something was found but it could not be decoded
     corrupt,
-    /// 復号できた
+    /// Decoded successfully
     ok,
 };
 
-/// 3 点組とその採点（スコア降順に並べる）。
+/// A triple of points and its score (sorted by descending score).
 const TripleScore = struct {
     score: f64,
     idx: [3]usize,
 };
 
-/// すべての 3 点組を採点してスコアの降順に並べる（上位だけを使う）。
+/// Score every triple and sort by descending score (only the best few are used).
 fn collectTriples(
     allocator: std.mem.Allocator,
     pats: []const Candidate,
@@ -1978,7 +1937,7 @@ fn collectTriples(
     }.lessThan);
 }
 
-/// 見つけた位置検出パターンから 1 シンボルの復号を試す。
+/// Try to decode one symbol from the finder patterns that were found.
 fn tryPatterns(
     allocator: std.mem.Allocator,
     bin: *const BitMatrix,
@@ -1995,7 +1954,7 @@ fn tryPatterns(
 
     const limit = @min(triples.items.len, 6);
     var sampled = false;
-    // 1 周目はタイミングパターンと整合する組だけ、2 周目で残りを試す。
+    // First pass tries only triples consistent with the timing pattern; the second pass tries the rest.
     var phase: usize = 0;
     while (phase < 2) : (phase += 1) {
         const want_consistent = phase == 0;
@@ -2012,14 +1971,14 @@ fn tryPatterns(
             const dist_v = distance(tl_pt, bl_pt);
             if (dist_h < 10.0 or dist_v < 10.0) continue;
 
-            // 方向ごとのモジュール長（回転していても正しい値になる測り方）。
+            // Module size per direction (measured so that rotation does not distort it).
             const ux = (tr.x - tl.x) / dist_h;
             const uy = (tr.y - tl.y) / dist_h;
             const vx = (bl.x - tl.x) / dist_v;
             const vy = (bl.y - tl.y) / dist_v;
             const run_module = (tl.module + tr.module + bl.module) / 3.0;
-            // 位置検出パターンの暗ランは 7 モジュール分。相手との距離から上限を見積もる
-            // （いちばん短い辺でも 14 モジュールなので 0.35 倍あれば足りる）。
+            // A finder's dark run spans seven modules. Derive the walk limit from the distance
+            // to its partner (even the shortest side is 14 modules, so 0.35x is enough).
             const walk_limit = @max(8.0, 0.35 * @min(dist_h, dist_v));
             const m_h_tl = measureModuleAlong(bin, tl, ux, uy, run_module, walk_limit);
             const m_h_tr = measureModuleAlong(bin, tr, ux, uy, run_module, walk_limit);
@@ -2029,14 +1988,14 @@ fn tryPatterns(
             const m_v = (m_v_tl + m_v_bl) / 2.0;
             if (m_h < 1.0 or m_v < 1.0) continue;
 
-            // モジュール座標系の基底（1 モジュール分の画素ベクトル）。
+            // Basis of the module coordinate system (pixel vector of one module).
             const dm_h = dist_h / m_h;
             const dm_v = dist_v / m_v;
             if (dm_h < 10.0 or dm_v < 10.0) continue;
             const ex = Point{ .x = (tr.x - tl.x) / dm_h, .y = (tr.y - tl.y) / dm_h };
             const ey = Point{ .x = (bl.x - tl.x) / dm_v, .y = (bl.y - tl.y) / dm_v };
 
-            // タイミングパターンの遷移数から寸法を測る（距離に依存しないので遠近に強い）。
+            // Measure the size from timing pattern transitions (independent of distance, so perspective is fine).
             const dim_timing_h = timingDimension(
                 bin,
                 tl_pt,
@@ -2065,11 +2024,8 @@ fn tryPatterns(
             }
             const consistent = if (timing_raw) |t| @abs(t - dim_geo_raw) <= 5.0 else false;
             if (consistent != want_consistent) continue;
-            if (trace) {
-                std.debug.print("[att] phase={d} score={d:.1} tl=({d:.1},{d:.1}) tr=({d:.1},{d:.1}) bl=({d:.1},{d:.1}) mh={d:.3} mv={d:.3} dim_t=({?},{?}) geo={d:.1}\n", .{ phase, ts.score, tl.x, tl.y, tr.x, tr.y, bl.x, bl.y, m_h, m_v, dim_timing_h, dim_timing_v, dim_geo_raw });
-            }
 
-            // 寸法の候補（優先順）。タイミング → 幾何 → ±1 段。
+            // Size candidates in priority order: timing, geometry, then one step either way.
             var dims: DimensionCandidates = .{};
             if (timing_raw) |t| {
                 if (nearestDimension(t)) |d| dims.push(d);
@@ -2086,7 +2042,7 @@ fn tryPatterns(
 
             for (dims.dims[0..dims.len]) |dim| {
                 const df: f64 = @floatFromInt(dim);
-                // 4 点目は右下（アラインメント中心、無ければ平行四辺形の頂点）。
+                // The fourth point is the bottom-right corner (alignment center, else the parallelogram corner).
                 const br = Point{ .x = tr.x + bl.x - tl.x, .y = tr.y + bl.y - tl.y };
                 var transform = solveHomography(
                     .{ .{ .x = 3.5, .y = 3.5 }, .{ .x = df - 3.5, .y = 3.5 }, .{ .x = 3.5, .y = df - 3.5 }, .{ .x = df - 3.5, .y = df - 3.5 } },
@@ -2098,9 +2054,6 @@ fn tryPatterns(
                     const expected = transform.map(df - 6.5, df - 6.5);
                     const search_modules = @max(4.0, df / 8.0);
                     if (try findAlignmentPattern(allocator, bin, &transform, expected, module_px, search_modules)) |center| {
-                        if (trace) {
-                            std.debug.print("[att] dim={d} align=({d:.2},{d:.2}) expected=({d:.1},{d:.1})\n", .{ dim, center.x, center.y, expected.x, expected.y });
-                        }
                         if (solveHomography(
                             .{ .{ .x = 3.5, .y = 3.5 }, .{ .x = df - 3.5, .y = 3.5 }, .{ .x = 3.5, .y = df - 3.5 }, .{ .x = df - 6.5, .y = df - 6.5 } },
                             .{ tl_pt, tr_pt, bl_pt, center },
@@ -2117,7 +2070,7 @@ fn tryPatterns(
                 sink.reset();
                 if (try decodeGrid(allocator, &grid, dim, sink, info, confirmed)) return .ok;
 
-                // 鏡像（裏返し）で撮られた場合の保険として転置でも試す。
+                // Also try the transpose, as a fallback for mirrored or flipped images.
                 var flipped = try transposeGrid(allocator, &grid);
                 defer flipped.deinit(allocator);
                 sink.reset();
@@ -2128,9 +2081,9 @@ fn tryPatterns(
     return if (sampled) .corrupt else .not_found;
 }
 
-/// 二値画像 1 枚から 1 シンボルを取り出す。
+/// Extract one symbol from a binarized image.
 ///
-/// まず厳しく（分離帯の判定つきで）探し、だめなら緩く探し直す。
+/// Search strictly first (with the separator test) and, if that fails, search again loosely.
 fn attemptDecode(
     allocator: std.mem.Allocator,
     bin: *const BitMatrix,
@@ -2152,7 +2105,7 @@ fn attemptDecode(
     return if (detected) .corrupt else .not_found;
 }
 
-/// 二値化の条件を変えながら復号を試す。
+/// Try decoding while varying the binarization settings.
 fn decodeInternal(
     allocator: std.mem.Allocator,
     image: *const Image,
@@ -2177,23 +2130,12 @@ fn decodeInternal(
         .{ .adaptive = false },
         .{ .adaptive = false, .invert = true },
     };
-    // 「QR らしい格子が取れた」印。取れていないのに失敗した場合は
-    // 「シンボルが見つからない」として報告する。
+    // Marker for "a QR-like grid was sampled". When nothing was confirmed, a failure is
+    // reported as "no symbol found" instead.
     var confirmed = false;
     var detected = false;
     for (plans) |plan| {
         binarize(&bin, image, plan, black_points);
-        if (trace and image.width > 300) {
-            var yy: usize = image.height - 26;
-            while (yy < image.height) : (yy += 1) {
-                var buf: [64]u8 = @splat('.');
-                var xx: usize = 0;
-                while (xx < 40) : (xx += 1) {
-                    if (bin.get(xx, yy)) buf[xx] = '#';
-                }
-                std.debug.print("BIN {s}\n", .{buf[0..40]});
-            }
-        }
         sink.reset();
         const result = try attemptDecode(allocator, &bin, sink, info, &confirmed);
         switch (result) {
@@ -2206,11 +2148,11 @@ fn decodeInternal(
     return Error.SymbolNotFound;
 }
 
-// ---------------------------------------------------------------- テスト
+// ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-/// テストで使う画像（画素バッファは allocator 所有）。
+/// Test image (the pixel buffer is owned by the allocator).
 const RenderedImage = struct {
     pixels: []u8,
     image: Image,
@@ -2220,7 +2162,7 @@ const RenderedImage = struct {
     }
 };
 
-/// 行列をグレースケール画像に描く（テスト用）。
+/// Render a matrix into a grayscale image (test helper).
 fn renderMatrix(
     allocator: std.mem.Allocator,
     m: *const qr.Matrix,
@@ -2251,7 +2193,7 @@ fn renderMatrix(
     return .{ .pixels = pixels, .image = .{ .width = total, .height = total, .pixels = pixels } };
 }
 
-/// 画像を 90 度単位で回す（テスト用）。
+/// Rotate an image by multiples of 90 degrees (test helper).
 fn rotateQuarter(allocator: std.mem.Allocator, image: *const Image, quarters: usize) Error!RenderedImage {
     const w = image.width;
     const h = image.height;
@@ -2261,11 +2203,11 @@ fn rotateQuarter(allocator: std.mem.Allocator, image: *const Image, quarters: us
     while (y < h) : (y += 1) {
         var x: usize = 0;
         while (x < w) : (x += 1) {
-            // 出力は (h, w) または (w, h)。
+            // The output is either (h, w) or (w, h).
             const src = image.pixels[y * w + x];
             switch (q) {
                 0 => pixels[y * w + x] = src,
-                1 => pixels[x * h + (h - 1 - y)] = src, // 90 度時計回り
+                1 => pixels[x * h + (h - 1 - y)] = src, // 90 degrees clockwise
                 2 => pixels[(h - 1 - y) * w + (w - 1 - x)] = src,
                 else => pixels[(w - 1 - x) * h + y] = src,
             }
@@ -2276,7 +2218,7 @@ fn rotateQuarter(allocator: std.mem.Allocator, image: *const Image, quarters: us
     return .{ .pixels = pixels, .image = .{ .width = out_w, .height = out_h, .pixels = pixels } };
 }
 
-/// テスト用の簡単なぼかし（3×3 の平均を 1 回）。
+/// Simple test blur (one pass of a 3x3 average).
 fn boxBlur(allocator: std.mem.Allocator, image: *const Image) Error!RenderedImage {
     const w = image.width;
     const h = image.height;
@@ -2304,7 +2246,7 @@ fn boxBlur(allocator: std.mem.Allocator, image: *const Image) Error!RenderedImag
     return .{ .pixels = pixels, .image = .{ .width = w, .height = h, .pixels = pixels } };
 }
 
-/// 局所的な明暗（照明むら）を掛ける（テスト用）。
+/// Multiply by a local light gradient (test helper).
 fn shade(allocator: std.mem.Allocator, image: *const Image, strength: f64) Error!RenderedImage {
     const w = image.width;
     const h = image.height;
@@ -2322,7 +2264,7 @@ fn shade(allocator: std.mem.Allocator, image: *const Image, strength: f64) Error
     return .{ .pixels = pixels, .image = .{ .width = w, .height = h, .pixels = pixels } };
 }
 
-/// 画像を 2 倍に拡大する（テスト用、最近傍）。
+/// Scale an image up (test helper, nearest neighbour).
 fn upscale(allocator: std.mem.Allocator, image: *const Image, factor: usize) Error!RenderedImage {
     const w = image.width * factor;
     const h = image.height * factor;
@@ -2337,7 +2279,7 @@ fn upscale(allocator: std.mem.Allocator, image: *const Image, factor: usize) Err
     return .{ .pixels = pixels, .image = .{ .width = w, .height = h, .pixels = pixels } };
 }
 
-/// 復号して期待値と比べる（テスト用の共通処理）。
+/// Decode and compare against the expected text (shared test helper).
 fn expectDecode(
     allocator: std.mem.Allocator,
     image: *const Image,
@@ -2348,12 +2290,13 @@ fn expectDecode(
     try testing.expectEqualStrings(expected, text);
 }
 
-test "自己整合: EC レベルとモードの組み合わせ" {
+test "self-consistency: combinations of EC level and mode" {
     const allocator = testing.allocator;
     const cases = [_]struct { text: []const u8, ec: qr.EcLevel }{
         .{ .text = "0123456789012345678901234567890", .ec = .l },
         .{ .text = "HELLO WORLD $%*+-./: 1234", .ec = .m },
         .{ .text = "Hello, QR decoder! zig 0.17", .ec = .q },
+        // Multi-byte UTF-8 payload: exercises byte mode with non-ASCII data.
         .{ .text = "日本語のテスト/QRデコーダ", .ec = .h },
         .{ .text = "12345", .ec = .h },
         .{ .text = "A", .ec = .l },
@@ -2367,7 +2310,7 @@ test "自己整合: EC レベルとモードの組み合わせ" {
     }
 }
 
-test "自己整合: 8 種類のマスクすべて" {
+test "self-consistency: all eight masks" {
     const allocator = testing.allocator;
     const text = "MASK TEST 0123456789";
     var mask: u3 = 0;
@@ -2385,7 +2328,7 @@ test "自己整合: 8 種類のマスクすべて" {
     }
 }
 
-test "自己整合: バージョン 1〜40" {
+test "self-consistency: versions 1 to 40" {
     const allocator = testing.allocator;
     const text = "ABCDEF123456";
     var version: u8 = 1;
@@ -2403,7 +2346,7 @@ test "自己整合: バージョン 1〜40" {
     }
 }
 
-test "劣化: 90/180/270 度回転" {
+test "degradation: 90/180/270 degree rotation" {
     const allocator = testing.allocator;
     const text = "ROTATE ME 12345";
     const m = try qr.encode(allocator, text, .m);
@@ -2418,7 +2361,7 @@ test "劣化: 90/180/270 度回転" {
     }
 }
 
-test "劣化: 拡大縮小" {
+test "degradation: scaling" {
     const allocator = testing.allocator;
     const text = "SCALE 0123456789";
     const m = try qr.encode(allocator, text, .m);
@@ -2434,7 +2377,7 @@ test "劣化: 拡大縮小" {
     try expectDecode(allocator, &big.image, text);
 }
 
-test "劣化: クワイエットゾーンなし" {
+test "degradation: no quiet zone" {
     const allocator = testing.allocator;
     const text = "NO QUIET ZONE";
     const m = try qr.encode(allocator, text, .m);
@@ -2444,7 +2387,7 @@ test "劣化: クワイエットゾーンなし" {
     try expectDecode(allocator, &rendered.image, text);
 }
 
-test "劣化: 明暗のむらとぼかし" {
+test "degradation: uneven lighting and blur" {
     const allocator = testing.allocator;
     const text = "ILLUMINATION 0123456789";
     const m = try qr.encode(allocator, text, .m);
@@ -2461,7 +2404,7 @@ test "劣化: 明暗のむらとぼかし" {
     try expectDecode(allocator, &blurred.image, text);
 }
 
-test "劣化: 一部を塗りつぶしても EC の範囲内なら復号できる" {
+test "degradation: paint over part of the symbol within the EC budget" {
     const allocator = testing.allocator;
     const text = "Hello, QR decoder! zig 0.17";
     const m = try qr.encode(allocator, text, .h);
@@ -2469,7 +2412,7 @@ test "劣化: 一部を塗りつぶしても EC の範囲内なら復号でき�
     const rendered = try renderMatrix(allocator, &m, 6, 4, 0, 255);
     defer rendered.deinit(allocator);
 
-    // シンボル中央のやや右下（位置検出パターンを避ける）を黒く塗る。
+    // Paint a black patch over the lower-right of the symbol center (away from the finders).
     var pixels = rendered.pixels;
     const side = rendered.image.width;
     const quiet_px = 4 * 6;
@@ -2484,7 +2427,41 @@ test "劣化: 一部を塗りつぶしても EC の範囲内なら復号でき�
     try expectDecode(allocator, &rendered.image, text);
 }
 
-test "劣化: ノイズ" {
+test "degradation: painting beyond the EC budget fails with an error" {
+    const allocator = testing.allocator;
+    const text = "Hello, QR decoder! zig 0.17";
+    const m = try qr.encode(allocator, text, .l);
+    defer m.deinit(allocator);
+    const rendered = try renderMatrix(allocator, &m, 6, 4, 0, 255);
+    defer rendered.deinit(allocator);
+
+    // Paint a large patch over the symbol center, away from the finders and format information.
+    const side = rendered.image.width;
+    const quiet_px = 4 * 6;
+    const lo = quiet_px + (m.size * 6 * 25) / 100;
+    const hi = quiet_px + (m.size * 6 * 75) / 100;
+    var y = lo;
+    while (y < hi) : (y += 1) {
+        @memset(rendered.pixels[y * side + lo .. y * side + hi], 0);
+    }
+    // Decoding must fail with an error rather than crash.
+    const result = decode(allocator, rendered.image);
+    try testing.expectError(Error.TooManyErrors, result);
+}
+
+test "degradation: inverted image" {
+    const allocator = testing.allocator;
+    const text = "INVERTED 0123456789";
+    const m = try qr.encode(allocator, text, .m);
+    defer m.deinit(allocator);
+    const rendered = try renderMatrix(allocator, &m, 4, 4, 0, 255);
+    defer rendered.deinit(allocator);
+    // Swap light and dark (some cameras deliver inverted polarity).
+    for (rendered.pixels) |*p| p.* = 255 - p.*;
+    try expectDecode(allocator, &rendered.image, text);
+}
+
+test "degradation: noise" {
     const allocator = testing.allocator;
     const text = "NOISE 0123456789";
     const m = try qr.encode(allocator, text, .m);
@@ -2505,7 +2482,7 @@ test "劣化: ノイズ" {
     try expectDecode(allocator, &image, text);
 }
 
-test "壊れた入力では落ちない（エラーを返す）" {
+test "broken input returns an error instead of crashing" {
     const allocator = testing.allocator;
     const empty = Image{ .width = 0, .height = 0, .pixels = &.{} };
     try testing.expectError(Error.SymbolNotFound, decode(allocator, empty));
@@ -2528,7 +2505,7 @@ test "壊れた入力では落ちない（エラーを返す）" {
     const noise = try allocator.alloc(u8, 128 * 96);
     defer allocator.free(noise);
     for (noise) |*p| p.* = random.int(u8);
-    // でたらめな画像は「見つからない」か「見つかったが読めない」のどちらか。落ちてはならない。
+    // A random image either finds nothing or finds something unreadable; it must not crash.
     const noise_image = Image{ .width = 128, .height = 96, .pixels = noise };
     if (decode(allocator, noise_image)) |text| {
         allocator.free(text);
@@ -2536,7 +2513,7 @@ test "壊れた入力では落ちない（エラーを返す）" {
         try testing.expect(e == Error.SymbolNotFound or e == Error.TooManyErrors);
     }
 
-    // 極端に細い画像。
+    // Extremely thin images.
     const thin = try allocator.alloc(u8, 1 * 64);
     defer allocator.free(thin);
     @memset(thin, 0);
@@ -2548,7 +2525,7 @@ test "壊れた入力では落ちない（エラーを返す）" {
     try testing.expectError(Error.SymbolNotFound, decode(allocator, .{ .width = 64, .height = 1, .pixels = thin2 }));
 }
 
-test "decodeInto: ちょうどの大きさと不足" {
+test "decodeInto: exact size and undersized buffer" {
     const allocator = testing.allocator;
     const text = "Hello, QR decoder! zig 0.17";
     const m = try qr.encode(allocator, text, .q);
@@ -2564,10 +2541,10 @@ test "decodeInto: ちょうどの大きさと不足" {
     try testing.expectError(Error.BufferTooSmall, decodeInto(allocator, rendered.image, &small));
 }
 
-test "Reed-Solomon: 能力内の誤りを訂正し、超えると失敗する" {
+test "Reed-Solomon: corrects errors within capacity, fails beyond it" {
     const allocator = testing.allocator;
     _ = allocator;
-    // テスト専用の RS 符号化（生成多項式による剰余）。本実装の復号と独立に用意する。
+    // Test-only RS encoding (remainder modulo the generator polynomial), independent of the decoder under test.
     const data = [_]u8{ 0x10, 0x20, 0x0C, 0x56, 0x61, 0x80, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11 };
     inline for (.{ 7, 10, 13, 17, 22, 30 }) |ecc_len| {
         var codeword: [16 + 30]u8 = @splat(0);
@@ -2575,7 +2552,7 @@ test "Reed-Solomon: 能力内の誤りを訂正し、超えると失敗する" {
         testRsEncode(&data, ecc_len, codeword[data.len .. data.len + ecc_len]);
         const total = data.len + ecc_len;
 
-        // 符号語のシンドロームが 0（= 妥当な符号語）であること。
+        // The syndromes of the codeword must all be zero (a valid codeword).
         var scratch: RsScratch = .{};
         var all_zero = true;
         for (0..ecc_len) |i| {
@@ -2586,7 +2563,7 @@ test "Reed-Solomon: 能力内の誤りを訂正し、超えると失敗する" {
         }
         try testing.expect(all_zero);
 
-        // 能力内（t = ecc/2 個）の誤りを訂正できる。
+        // Errors within capacity (t = ecc/2) are corrected.
         var prng = std.Random.DefaultPrng.init(0x1234 + ecc_len);
         const random = prng.random();
         var trial: usize = 0;
@@ -2599,13 +2576,13 @@ test "Reed-Solomon: 能力内の誤りを訂正し、超えると失敗する" {
             try testing.expectEqualSlices(u8, codeword[0..total], damaged[0..total]);
         }
 
-        // 能力を超える誤り（t + 2 個）は、遅くとも誤り訂正で失敗するか別の符号語になる。
+        // Beyond capacity (t + 2 errors) the decoder either fails or lands on another codeword.
         var damaged: [16 + 30]u8 = @splat(0);
         @memcpy(damaged[0..total], codeword[0..total]);
         _ = corruptDistinct(&damaged, total, ecc_len / 2 + 2, random);
         const outcome = rsCorrect(damaged[0..total], ecc_len, &scratch);
         if (outcome) |_| {
-            // 別の符号語に化けた場合は、元と一致しないことを確認する。
+            // When it turns into a different codeword, it must differ from the original.
             try testing.expect(!std.mem.eql(u8, codeword[0..total], damaged[0..total]));
         } else |e| {
             try testing.expectEqual(Error.TooManyErrors, e);
@@ -2613,7 +2590,7 @@ test "Reed-Solomon: 能力内の誤りを訂正し、超えると失敗する" {
     }
 }
 
-/// テスト専用: 異なる位置に `count` 個の誤りを入れて、実際に入れた個数を返す。
+/// Test-only: corrupt `count` distinct positions and return how many were actually placed.
 fn corruptDistinct(codeword: *[16 + 30]u8, total: usize, count: usize, random: std.Random) usize {
     var used: [16 + 30]bool = @splat(false);
     var placed: usize = 0;
@@ -2629,9 +2606,9 @@ fn corruptDistinct(codeword: *[16 + 30]u8, total: usize, count: usize, random: s
     return placed;
 }
 
-/// テスト専用: データコードワード列に対する RS の ECC を計算する。
+/// Test-only: compute the RS ECC codewords for a data codeword sequence.
 fn testRsEncode(data: []const u8, ecc_len: usize, out: []u8) void {
-    // 生成多項式 g(x) = Π (x - α^i) を昇順係数で持つ。
+    // Hold the generator polynomial g(x) = prod (x - alpha^i) with ascending coefficients.
     var gen: [31]u8 = @splat(0);
     gen[0] = 1;
     var degree: usize = 0;
@@ -2644,7 +2621,7 @@ fn testRsEncode(data: []const u8, ecc_len: usize, out: []u8) void {
         gen[0] = gfMul(gen[0], root);
         degree += 1;
     }
-    // LFSR による剰余（データは最高次が先頭）。
+    // Remainder by LFSR division (the data starts with the highest degree term).
     var rem: [30]u8 = @splat(0);
     for (data) |d| {
         const factor = d ^ rem[ecc_len - 1];
@@ -2657,7 +2634,7 @@ fn testRsEncode(data: []const u8, ecc_len: usize, out: []u8) void {
     for (0..ecc_len) |k| out[k] = rem[ecc_len - 1 - k];
 }
 
-test "容量テーブルが qr.zig の公開 API と一致する" {
+test "capacity tables agree with qr.zig's public API" {
     for (0..4) |i| {
         const ec: qr.EcLevel = switch (i) {
             0 => .l,
@@ -2671,7 +2648,7 @@ test "容量テーブルが qr.zig の公開 API と一致する" {
             const data = qr.dataCodewords(ec, version);
             const ecc_total = @as(usize, ecc_codewords_per_block[i][version]) * num_ec_blocks[i][version];
             try testing.expectEqual(raw, data + ecc_total);
-            // データコードワードはブロックに 1 個差で分配できる（規格 Table 9 の前提）。
+            // The data codewords split into blocks that differ by one (the premise of standard Table 9).
             const blocks: usize = num_ec_blocks[i][version];
             try testing.expect(blocks >= 1);
             if (data / blocks < 1) return error.TestUnexpectedResult;
@@ -2679,8 +2656,8 @@ test "容量テーブルが qr.zig の公開 API と一致する" {
     }
 }
 
-test "アラインメントパターン位置が規格の表と一致する" {
-    // ISO/IEC 18004 Annex E の代表値。
+test "alignment pattern positions match the standard's table" {
+    // Representative values from ISO/IEC 18004 Annex E.
     const expected_7 = [_]usize{ 6, 22, 38 };
     const ap7 = alignmentPositions(7);
     try testing.expectEqual(expected_7.len, ap7.len);
@@ -2696,7 +2673,7 @@ test "アラインメントパターン位置が規格の表と一致する" {
     try testing.expectEqual(expected_40.len, ap40.len);
     for (expected_40, 0..) |v, i| try testing.expectEqual(v, ap40.pos[i]);
 
-    // 最後の位置は必ず「一辺 - 7」。
+    // The last position is always size - 7.
     var version: u8 = 2;
     while (version <= 40) : (version += 1) {
         const ap = alignmentPositions(version);
@@ -2704,9 +2681,9 @@ test "アラインメントパターン位置が規格の表と一致する" {
     }
 }
 
-test "format 情報の復号: 全 32 通り" {
+test "format information: all 32 combinations" {
     const allocator = testing.allocator;
-    // 行列を作って format 情報だけを読み取る（データ部は無関係）。
+    // Build a matrix and read only its format information (the data area is irrelevant).
     const text = "FORMAT";
     for (0..32) |k| {
         const ec: qr.EcLevel = ecFromFormatBits(@intCast(k >> 3));
@@ -2729,7 +2706,7 @@ test "format 情報の復号: 全 32 通り" {
     }
 }
 
-test "version 情報の復号: バージョン 7〜40" {
+test "version information: versions 7 to 40" {
     const allocator = testing.allocator;
     var version: u8 = 7;
     while (version <= 40) : (version += 1) {

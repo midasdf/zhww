@@ -1,7 +1,7 @@
-//! アドレス生成の公式テストベクタ（BIP49 / BIP84 / BIP86）。
+//! Official test vectors for address generation (BIP49 / BIP84 / BIP86).
 //!
-//! ベクタ: tests/vectors/bip49.json, bip84.json, bip86.json
-//! 出典: https://github.com/bitcoin/bips （bip-0049 / bip-0084 / bip-0086 .mediawiki）
+//! Vectors: tests/vectors/bip49.json, bip84.json, bip86.json
+//! Source: https://github.com/bitcoin/bips (bip-0049 / bip-0084 / bip-0086 .mediawiki)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
@@ -16,7 +16,7 @@ fn hexTo(out: []u8, hex: []const u8) ![]u8 {
     return std.fmt.hexToBytes(out, hex);
 }
 
-test "BIP84: P2WPKH（mainnet / zprv・zpub・WIF・アドレス）" {
+test "BIP84: P2WPKH (mainnet / zprv, zpub, WIF, address)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -28,7 +28,7 @@ test "BIP84: P2WPKH（mainnet / zprv・zpub・WIF・アドレス）" {
     var seed: [64]u8 = undefined;
     try zhww.bip39.mnemonicToSeed(&seed, mnemonic, "");
 
-    // ルート鍵（xprv → zprv にバージョン差し替え、zpub は neuter で得る）
+    // Root key (xprv with the version swapped to zprv; zpub is obtained via neuter)
     const master = try zhww.bip32.ExtendedKey.fromSeed(&seed, .xprv);
     const root_zprv = try master.withVersion(.zprv);
     var buf: [128]u8 = undefined;
@@ -38,7 +38,7 @@ test "BIP84: P2WPKH（mainnet / zprv・zpub・WIF・アドレス）" {
         try (try root_zprv.neuter()).serialize(&buf),
     );
 
-    // アカウント鍵
+    // Account key
     const account_info = root.get("account").?.object;
     const account = try root_zprv.derivePath(account_info.get("path").?.string);
     try testing.expectEqualStrings(account_info.get("zprv").?.string, try account.serialize(&buf));
@@ -47,7 +47,7 @@ test "BIP84: P2WPKH（mainnet / zprv・zpub・WIF・アドレス）" {
         try (try account.neuter()).serialize(&buf),
     );
 
-    // アドレス（WIF・公開鍵・アドレス）
+    // Address (WIF, public key, address)
     for (root.get("addresses").?.array.items) |entry| {
         const fields = entry.object;
         const node = try root_zprv.derivePath(fields.get("path").?.string);
@@ -73,7 +73,7 @@ test "BIP84: P2WPKH（mainnet / zprv・zpub・WIF・アドレス）" {
     }
 }
 
-test "BIP49: P2SH-P2WPKH（testnet / uprv・upub・アドレス）" {
+test "BIP49: P2SH-P2WPKH (testnet / uprv, upub, address)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -122,7 +122,7 @@ test "BIP49: P2SH-P2WPKH（testnet / uprv・upub・アドレス）" {
     }
 }
 
-test "BIP86: P2TR（mainnet / 内部鍵・出力鍵・アドレス）" {
+test "BIP86: P2TR (mainnet / internal key, output key, address)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -165,7 +165,7 @@ test "BIP86: P2TR（mainnet / 内部鍵・出力鍵・アドレス）" {
     );
 }
 
-test "アドレスのラウンドトリップ（Bech32 / Bech32m の取り違え検出）" {
+test "address round trip (detects Bech32 / Bech32m mix-ups)" {
     const p2wpkh = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu";
     const p2tr = "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr";
 
@@ -175,7 +175,7 @@ test "アドレスのラウンドトリップ（Bech32 / Bech32m の取り違え
     const v1 = try zhww.bech32.decodeSegwit("bc", &program, p2tr);
     try testing.expectEqual(@as(u8, 1), v1.witness_version);
 
-    // v0 アドレスを Bech32m として受理しない
+    // Do not accept a v0 address as Bech32m
     var hrp_buf: [83]u8 = undefined;
     var data_buf: [90]u8 = undefined;
     try testing.expectError(
