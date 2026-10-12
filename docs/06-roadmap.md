@@ -43,7 +43,7 @@
 | ERC-7730（clear signing）・ABI デコード | 🔄 実装中 |
 | 実機（signet）での送金 | ⬜ 未着手（実機が必要） |
 | 画面 UI・QR 送受信 | ⬜ 未着手（実機が必要） |
-| 開発用 CLI | ⬜ 未着手（Zig 0.17 の `std.Io` API の確定待ち） |
+| 開発用 CLI | ✅ 完了（`address` / `sign` / `mnemonic`。Zig 0.17 の `std.Io` に対応） |
 
 ---
 

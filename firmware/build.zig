@@ -23,11 +23,28 @@ pub fn build(b: *std.Build) void {
     });
     linkSecp256k1(lib);
 
-    // 開発用 CLI
-    //
-    // TODO: Zig 0.17 では標準出力が `std.Io` 経由に変わったため、
-    //       CLI（src/cli/main.zig）は Io の初期化方法を確定させてから追加する。
-    //       検証は `zig build test` の公式テストベクタで行う。
+    // 開発用 CLI（実機に画面 UI を作る前の確認手段）
+    const cli_module = b.createModule(.{
+        .root_source_file = b.path("src/cli/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    cli_module.addImport("zhww", lib);
+    linkSecp256k1(cli_module);
+
+    const exe = b.addExecutable(.{
+        .name = "zhww",
+        .root_module = cli_module,
+    });
+    b.installArtifact(exe);
+
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.step.dependOn(b.getInstallStep());
+    // 注意: Zig 0.17 ではビルド経由で引数を渡す仕組み（旧 b.args）が無いため、
+    // 引数付きで使う場合は生成物を直接実行する:
+    //   ./zig-out/bin/zhww address --mnemonic "..." --path "m/84'/0'/0'/0/0"
+    const run_step = b.step("run", "開発用 CLI を実行する（引数は生成物に直接渡すこと）");
+    run_step.dependOn(&run_cmd.step);
 
     // テスト（tests.zig がコアと公式テストベクタの両方をまとめる）
     const test_module = b.createModule(.{

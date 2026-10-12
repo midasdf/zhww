@@ -89,8 +89,8 @@ zhww/
 | 設計ドキュメント | 作成済み（要求仕様・アーキテクチャ・BOM・チェーン対応・脅威モデル・ロードマップ・実機手順） |
 | ファームウェア（Zig + libsecp256k1） | **Bitcoin**: BIP39（ダイス entropy 含む）/ BIP32 / Base58 / Bech32・Bech32m / RIPEMD-160 / ECDSA（RFC6979）/ アドレス生成 / トランザクション解析 / Legacy・BIP143 sighash / PSBT の解析・検証・書き出し / **PSBT からの署名と最終化** / 手数料とお釣り判定 **EVM**: RLP / EIP-55 アドレス / **EIP-155・EIP-1559 の署名** / EIP-191 / **EIP-712 型付きデータ** |
 | テスト | **123 件すべて成功**（BTC: BIP143 の署名がバイト単位で一致・BIP174 の PSBT 不正 20 件/妥当 27 件・統合テスト・**Bitcoin Core が署名を受理することを確認** / EVM: RLP 公式ベクタ・**EIP-155 の公式例とバイト一致**・EIP-55・EIP-191・**EIP-712（仕様の既知値と一致）**） |
-| 実機 | Raspberry Pi Zero 2 W のセットアップ手順を [docs/07](docs/07-zero2w-setup.md) に記載 |
-| 次の作業 | ERC-7730（clear signing）、画面 UI、QR 送受信、開発用 CLI |
+| 実機 | Raspberry Pi Zero 2 W のセットアップ手順を [docs/07](docs/07-zero2w-setup.md) に記載。**開発用 CLI（`address` / `sign` / `mnemonic`）実装済み** |
+| 次の作業 | ERC-7730（clear signing）、画面 UI、QR 送受信 |
 
 ```bash
 cd firmware && zig build test

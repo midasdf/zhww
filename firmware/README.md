@@ -15,7 +15,7 @@
 | 実装済み（Bitcoin） | BIP39（ダイス・カメラ等の entropy 結合を含む） / BIP32 / アドレス生成（P2PKH・P2SH-P2WPKH・P2WPKH・P2TR） / トランザクション解析・直列化 / Legacy・BIP143 sighash / PSBT の解析・検証・書き出し（BIP174） / **PSBT からの署名と最終化（P2WPKH・P2PKH・P2SH-P2WPKH・P2PK）** / **手数料計算とお釣り判定** / バイト列入出力のワークフロー（`signPsbtBytes`） |
 | 実装済み（EVM） | RLP のエンコード・デコード / EIP-55 チェックサム付きアドレス / **EIP-155（legacy）と EIP-1559（type 2）の署名**（両方とも署名して検証まで行う） / EIP-191 `personal_sign` / **EIP-712 型付きデータ**（encodeType の依存型ソート・配列・入れ子・ドメイン推論） |
 | テスト | **123 件すべて成功**（BTC: BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件・統合テスト・**Bitcoin Core が署名を受理することの確認** / EVM: RLP 公式ベクタ・**EIP-155 の公式例とバイト一致**・EIP-55・EIP-191・EIP-712（仕様の既知値と一致し、署名も独立実装と一致）） |
-| 未実装 | 画面 UI、QR 送受信、ERC-7730（clear signing）、開発用 CLI |
+| 未実装 | 画面 UI、QR 送受信、ERC-7730（clear signing） |
 
 ```bash
 zig build test     # 公式テストベクタを含む全テスト
@@ -90,10 +90,31 @@ firmware/
 | **`derivePath` は絶対パス（`m/...`）をマスター鍵でのみ受け付ける** | 「m/0'/1」を非マスター鍵に与えると 1 階層余分に潜る事故が起きる。実際に本実装でこのバグをテストが検出したため、API で禁止した |
 | **非 ASCII のパスフレーズを明示的に拒否** | NFKD 正規化が未実装のため。黙って異なる seed を作るより、エラーにする方が安全 |
 
-## 開発用 CLI（未実装）
+## 開発用 CLI
 
-Zig 0.17 で標準出力が `std.Io` 経由に変わったため、`src/cli/main.zig` は Io の初期化方法を
-確定させてから追加する。現時点の検証は `zig build test`（公式テストベクタ）で行う。
+画面 UI を作る前でも、ターミナルから操作できる（実機ではこれで動作確認する）。
+
+```bash
+zig build                      # zig-out/bin/zhww ができる
+cd firmware
+
+# アドレス（結果は標準出力、診断は標準エラー）
+./zig-out/bin/zhww address --mnemonic "abandon abandon … about"
+./zig-out/bin/zhww address --mnemonic "…" --path "m/86'/0'/0'/0/0" --kind p2tr
+./zig-out/bin/zhww address --mnemonic "…" --network signet --kind p2wpkh
+
+# PSBT に署名（base64 を標準入力から読む）
+cat psbt.txt | ./zig-out/bin/zhww sign --mnemonic "…"
+#   → SIGNED_PSBT=<base64> と FINAL_TX=<hex> を標準出力へ
+#   → 署名数・手数料・お釣り・警告を標準エラーへ
+
+# ダイスの記録から mnemonic を再計算（記録の検証用）
+./zig-out/bin/zhww mnemonic --dice "123456123456…" --words 12
+./zig-out/bin/zhww mnemonic --dice "…" --words 24 --camera aabbccdd
+```
+
+**出力の方針**: 結果は標準出力、診断（手数料・警告）は標準エラー。
+そのため `zhww sign < psbt.txt > signed.txt` のようにそのまま繋げられる。
 
 ## 参考にする実装
 
