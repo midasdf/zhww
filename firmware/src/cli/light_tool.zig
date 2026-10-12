@@ -21,6 +21,20 @@
 //! `emit` is driven with and `Receiver.init` is seeded with), because seeding the receiver for one
 //! rate while the sender used another is the integration mistake that silently costs every frame.
 //!
+//! **What a pipe cannot carry.** `light-encode --sample-rate 300 --symbol-rate 10 | light-decode`
+//! passes samples, not settings: a `light-decode` that is given no rate is seeded with the default
+//! 100 samples per symbol, and a recording at 30 then reports "0 accepted, 0 rejected" - the
+//! decoder was never told the recording's rate. That is not a limit of the receiver: with the
+//! matching seed it locks from 4 samples per symbol up (see the `light_rx` tests, and note that a
+//! Qwiic light sensor at ~60 readings/s therefore supports at most 15 symbols/s, not the
+//! documented 30). Passing the same `--sample-rate`/`--symbol-rate` to both commands remains the
+//! first answer, and the only one a device built for a fixed pairing has. For the CLI, when the
+//! caller names no rate at all and the default pairing finds no frame in the stream, `decode` walks
+//! a 10% ladder of candidate ratios around the default seed - half a step is 5%, inside the ~±10%
+//! the receiver's preamble survives - and keeps the first candidate whose frame passes the CRC. The
+//! ladder is bounded (96 candidates, at most one pass over the stream each), and a caller who names
+//! *any* rate gets exactly that seed: wrong-seed failure included.
+//!
 //! **Impairments.** `--noise`, `--flicker`, `--gain` and `--drift` shape the simulated channel
 //! exactly as the receiver's own tests do, and `--noise 15 --flicker 20` is inside the limits
 //! those tests measure as survivable (sigma ~21.8 of a 55-count half-swing, flicker ~26.7 of a
@@ -45,6 +59,24 @@ pub const default_symbol_rate_hz: f32 = 30;
 
 /// Bytes per UR part, the same default as the `ur` command.
 pub const default_fragment_len: usize = 40;
+
+/// Smallest and largest samples per symbol the receiver accepts, i.e. `Receiver.init`'s own bounds.
+/// The CLI checks them before it seeds the receiver, and the rate fallback in `decode` walks the
+/// same closed interval.
+pub const min_samples_per_symbol: u16 = 4;
+/// See `min_samples_per_symbol`.
+pub const max_samples_per_symbol: u16 = 4096;
+
+/// Step of the rate fallback's ladder, in percent: neighbouring candidates are 10% apart, so a real
+/// ratio is never more than 5% away from one of them - half of the ~10% seed error the receiver's
+/// preamble survives, which leaves the loop's own -11%/+14% pull-in untouched.
+const rate_step_percent: u32 = 10;
+
+/// Most candidates the fallback tries, up and down together. The receiver's whole 4..4096 interval
+/// is 34 steps down from the default seed of 100 and 38 up, so the bound is slack in practice; it is
+/// what stops a stream that decodes at *no* rate (silence, a lamp, pure noise) from costing an
+/// unbounded number of passes.
+const max_rate_candidates: usize = 96;
 
 /// Frequencies of the simulated mains flicker: 100 Hz (50 Hz mains) and 120 Hz (60 Hz mains) at
 /// once, the in-band case the receiver's tests measure as the hard one.
@@ -106,14 +138,25 @@ pub const Settings = struct {
     }
 
     /// The same number rounded to the integer the receiver is seeded with, and bound-checked
-    /// against `Receiver.init`'s own limits (4..4096 samples per symbol). Refusing here means a
-    /// nonsense rate cannot reach a float-to-integer cast, and cannot quietly seed the receiver
-    /// with a period the sender never used.
+    /// against `Receiver.init`'s own limits (`min_samples_per_symbol`..`max_samples_per_symbol`).
+    /// Refusing here means a nonsense rate cannot reach a float-to-integer cast, and cannot quietly
+    /// seed the receiver with a period the sender never used.
     pub fn nominalSamplesPerSymbol(self: Settings) light_rx.DecodeError!u16 {
         if (self.sample_rate_hz == 0 or !(self.symbol_rate_hz > 0)) return error.InvalidEncoding;
         const ratio = self.samplesPerSymbol();
-        if (!(ratio >= 4) or !(ratio <= 4096)) return error.InvalidEncoding;
+        if (!(ratio >= @as(f32, @floatFromInt(min_samples_per_symbol))) or
+            !(ratio <= @as(f32, @floatFromInt(max_samples_per_symbol)))) return error.InvalidEncoding;
         return @intFromFloat(@round(ratio));
+    }
+
+    /// Whether the caller named no rate at all: both options are at the documented default pairing,
+    /// which is exactly what `main.zig` fills in when neither `--sample-rate` nor `--symbol-rate`
+    /// appears. An explicit `--sample-rate 3000 --symbol-rate 30` is indistinguishable from the
+    /// default, and it makes no difference: the rate fallback in `decode` only runs when that
+    /// pairing found no frame at all in the stream.
+    pub fn defaultRates(self: Settings) bool {
+        return self.sample_rate_hz == default_sample_rate_hz and
+            self.symbol_rate_hz == default_symbol_rate_hz;
     }
 
     /// The receiver configuration matching this channel: the same samples-per-symbol the sender is
@@ -250,43 +293,38 @@ pub const DecodeStats = struct {
     complete: bool = false,
 };
 
-/// Raw 8-bit samples -> frames -> UR parts -> the PSBT (base64), allocated.
+/// The buffers one pass over a stream needs, in one place: the rate fallback reuses them for every
+/// candidate, so a search allocates nothing beyond what a single decode already had.
+const DecodeBuffers = struct {
+    /// Destination for the assembled frame (`light.max_frame_len`).
+    frame: []u8,
+    /// Destination for the verified payload (`light.max_payload_len`).
+    payload: []u8,
+    /// Destination for the UR message the parts assemble into.
+    message: []u8,
+    /// Destination for the UR fountain decoder's bits.
+    bits: []u8,
+    /// Scratch for one UR part.
+    part: []u8,
+};
+
+/// One whole pass over `samples` with one receiver seed: frames -> UR parts -> a complete message.
 ///
-/// `stats` is filled in every case, including the failures, because frames accepted/rejected and
-/// samples consumed are exactly what a user needs to see when nothing came out.
+/// `stats` is filled in every case - the counters are what a user needs to see when nothing came
+/// out - and the return value is the verified payload, a slice of `buffers.message` that stays valid
+/// until the next pass.
 ///
-/// `error.Incomplete` when the stream ends before a whole UR transfer has arrived: the caller
-/// reports that, and nothing is written - a partial transfer never turns into a payload.
-pub fn decode(
-    allocator: std.mem.Allocator,
+/// A frame found and rejected, or a channel that goes quiet (`error.NoSignal`), ends the walk: the
+/// receiver has already walked the whole remaining chunk, so there is no later frame to find.
+fn attempt(
     samples: []const u8,
-    settings: Settings,
+    config: light_rx.Config,
+    buffers: DecodeBuffers,
     stats: *DecodeStats,
-) ![]u8 {
+) !?[]const u8 {
     stats.* = .{ .samples_total = samples.len };
-    if (samples.len == 0) return error.EmptyInput;
-
-    const config = try settings.receiverConfig();
-
-    // No allocation happens inside the receiving layers: these buffers are the bounds on what a
-    // sender can make the decoder hold. On a PC the protocol's own limits are affordable (the
-    // longest frame and payload `light.zig` can carry), so a hostile stream is an error and not a
-    // crash. On the device these are the card's 64 KB and a small frame buffer instead.
-    const frame_buf = try allocator.alloc(u8, light.max_frame_len);
-    defer allocator.free(frame_buf);
-    const payload_buf = try allocator.alloc(u8, light.max_payload_len);
-    defer allocator.free(payload_buf);
-    var receiver = try light_rx.Receiver.init(frame_buf, payload_buf, config);
-
-    // One `ur:crypto-psbt` transfer at a time, with the payload ceiling the rest of the firmware
-    // accepts plus the CBOR byte-string header the message carries.
-    const message = try allocator.alloc(u8, ur_receive.max_payload_len + cbor.max_header_len);
-    defer allocator.free(message);
-    const bits = try allocator.alloc(u8, ur_receive.bitsLength(@intCast(message.len)));
-    defer allocator.free(bits);
-    const part_buf = try allocator.alloc(u8, message.len);
-    defer allocator.free(part_buf);
-    var ur_receiver = try ur_receive.Receiver.init(ur.type_crypto_psbt, message, bits, part_buf);
+    var receiver = try light_rx.Receiver.init(buffers.frame, buffers.payload, config);
+    var ur_receiver = try ur_receive.Receiver.init(ur.type_crypto_psbt, buffers.message, buffers.bits, buffers.part);
 
     var at: usize = 0;
     while (at < samples.len) {
@@ -294,9 +332,6 @@ pub fn decode(
         // half-assembled frame across calls, and `samples_used` ends at the last sample of the
         // frame it returned, so a stream of back-to-back frames is walked by re-feeding the rest.
         const part = receiver.receive(samples[at..]) catch |err| {
-            // A frame was found and rejected, or the channel went quiet (`NoSignal`). Either way
-            // the receiver has already walked the whole remaining chunk - it only reports the
-            // first rejection when nothing was delivered - so there is no later frame to find.
             if (err != error.NoSignal) stats.last_error = @errorName(err);
             at = samples.len;
             break;
@@ -322,14 +357,105 @@ pub fn decode(
     stats.parts_received = ur_receiver.receivedPartCount();
     stats.parts_expected = ur_receiver.expectedPartCount();
     stats.complete = ur_receiver.isComplete();
-    if (!stats.complete) return error.Incomplete;
+    if (!stats.complete) return null;
 
     // Verified by `ur_receive`: every part present and the whole-message CRC-32 matches. Only now
     // does anything become a payload.
-    const payload = try ur_receiver.payload();
+    return try ur_receiver.payload();
+}
+
+/// Candidate `step_index` (1-based) of the rate fallback's ladder: one step up first, one step
+/// down, two up, two down, ... so the rates nearest the seed are tried first and the whole
+/// `min_samples_per_symbol`..`max_samples_per_symbol` interval is covered. Null once the candidate
+/// falls outside that interval.
+fn rateCandidate(seed: u16, step_index: usize) ?u16 {
+    const steps: f32 = @floatFromInt((step_index + 1) / 2);
+    const step: f32 = 1 + @as(f32, @floatFromInt(rate_step_percent)) / 100;
+    const factor = std.math.pow(f32, step, steps);
+    const seed_f: f32 = @floatFromInt(seed);
+    const ratio = if (step_index % 2 == 1) seed_f * factor else seed_f / factor;
+    const rounded = @round(ratio);
+    if (!(rounded >= @as(f32, @floatFromInt(min_samples_per_symbol))) or
+        !(rounded <= @as(f32, @floatFromInt(max_samples_per_symbol)))) return null;
+    return @intFromFloat(rounded);
+}
+
+/// Raw 8-bit samples -> frames -> UR parts -> the PSBT (base64), allocated.
+///
+/// `stats` is filled in every case, including the failures, because frames accepted/rejected and
+/// samples consumed are exactly what a user needs to see when nothing came out.
+///
+/// The rate the caller names is the rate they get - a wrong seed is a lost transfer, never an
+/// invented one. But `light-encode --sample-rate X --symbol-rate Y | light-decode` cannot carry X
+/// and Y across a pipe, and a caller who names neither is asking for the documented default pairing:
+/// when that pairing finds no frame at all, `decode` tries the ratios the receiver's seed tolerance
+/// can still bridge (a 10% ladder around the default seed) and keeps the first one whose frame
+/// passes the CRC. A stream that decodes at no rate still ends in `error.Incomplete`, with the
+/// counters of the rate that was asked for.
+///
+/// `error.Incomplete` when the stream ends before a whole UR transfer has arrived: the caller
+/// reports that, and nothing is written - a partial transfer never turns into a payload.
+pub fn decode(
+    allocator: std.mem.Allocator,
+    samples: []const u8,
+    settings: Settings,
+    stats: *DecodeStats,
+) ![]u8 {
+    stats.* = .{ .samples_total = samples.len };
+    if (samples.len == 0) return error.EmptyInput;
+
+    // No allocation happens inside the receiving layers: these buffers are the bounds on what a
+    // sender can make the decoder hold. On a PC the protocol's own limits are affordable (the
+    // longest frame and payload `light.zig` can carry), so a hostile stream is an error and not a
+    // crash. On the device these are the card's 64 KB and a small frame buffer instead.
+    //
+    // The message buffer also carries the payload ceiling the rest of the firmware accepts plus the
+    // CBOR byte-string header the message carries; one `ur:crypto-psbt` transfer at a time.
+    const frame = try allocator.alloc(u8, light.max_frame_len);
+    defer allocator.free(frame);
+    const payload_buf = try allocator.alloc(u8, light.max_payload_len);
+    defer allocator.free(payload_buf);
+    const message = try allocator.alloc(u8, ur_receive.max_payload_len + cbor.max_header_len);
+    defer allocator.free(message);
+    const bits = try allocator.alloc(u8, ur_receive.bitsLength(@intCast(message.len)));
+    defer allocator.free(bits);
+    const part = try allocator.alloc(u8, message.len);
+    defer allocator.free(part);
+    const buffers = DecodeBuffers{
+        .frame = frame,
+        .payload = payload_buf,
+        .message = message,
+        .bits = bits,
+        .part = part,
+    };
+
+    const config = try settings.receiverConfig();
+    var payload = try attempt(samples, config, buffers, stats);
+
+    if (payload == null and stats.frames_accepted == 0 and settings.defaultRates()) {
+        const seed = config.nominal_samples_per_symbol;
+        var step_index: usize = 1;
+        while (step_index <= max_rate_candidates) : (step_index += 1) {
+            const candidate = rateCandidate(seed, step_index) orelse continue;
+            var candidate_stats: DecodeStats = .{};
+            const candidate_config = light_rx.Config{
+                .nominal_samples_per_symbol = candidate,
+                .hysteresis = settings.hysteresis,
+            };
+            if (try attempt(samples, candidate_config, buffers, &candidate_stats)) |found| {
+                // The stream's own rate decided, and the CRC agreed: report that pass, not the
+                // pass that found nothing.
+                stats.* = candidate_stats;
+                payload = found;
+                break;
+            }
+        }
+    }
+
+    const found = payload orelse return error.Incomplete;
     const base64 = std.base64.standard.Encoder;
-    const encoded = try allocator.alloc(u8, base64.calcSize(payload.len));
-    _ = base64.encode(encoded, payload);
+    const encoded = try allocator.alloc(u8, base64.calcSize(found.len));
+    _ = base64.encode(encoded, found);
     return encoded;
 }
 
@@ -496,6 +622,52 @@ test "an excessive impairment loses the transfer instead of returning wrong data
     try testing.expectEqual(@as(usize, samples.written().len), stats.samples_consumed);
     try testing.expectEqual(@as(u32, 0), stats.frames_accepted);
     try testing.expectEqual(@as(usize, 0), stats.parts_received);
+}
+
+test "a recording at another rate decodes when no rate is named at all" {
+    // The finding's own command, and the reason it failed before: `light-encode --sample-rate 300
+    // --symbol-rate 10 | light-decode` cannot carry the rate across the pipe, so `light-decode` is
+    // seeded with the documented default pairing - 100 samples per symbol - while the recording is
+    // 30. Naming the rate on both sides is still the direct answer; this is the fallback for the
+    // caller who named none, and it is the *stream* that decides.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const allocator = arena_state.allocator();
+
+    const psbt = try testPsbtBase64(allocator);
+    const sender = Settings{ .sample_rate_hz = 300, .symbol_rate_hz = 10 }; // 30 samples per symbol
+    var samples: std.Io.Writer.Allocating = .init(allocator);
+    const encoded = try encode(allocator, psbt, sender, &samples.writer);
+    try testing.expect(encoded.parts > 1);
+
+    var stats: DecodeStats = .{};
+    const got = try decode(allocator, samples.written(), .{}, &stats);
+    try testing.expectEqualStrings(psbt, got);
+    // The rate that was found decoded every part, and it was found by the CRC, not by a guess that
+    // happened to fit: a rejected frame would say so.
+    try testing.expectEqual(@as(u32, @intCast(encoded.parts)), stats.frames_accepted);
+    try testing.expectEqual(@as(u32, 0), stats.frames_rejected);
+    try testing.expect(stats.complete);
+    try testing.expect(stats.last_error == null);
+
+    // The other direction: 4000 samples/s at 30 symbols/s is 133 samples per symbol, *above* the
+    // default seed, so the ladder has to walk up to find it.
+    const fast = Settings{ .sample_rate_hz = 4000, .symbol_rate_hz = 30 };
+    var fast_samples: std.Io.Writer.Allocating = .init(allocator);
+    _ = try encode(allocator, psbt, fast, &fast_samples.writer);
+    var fast_stats: DecodeStats = .{};
+    try testing.expectEqualStrings(psbt, try decode(allocator, fast_samples.written(), .{}, &fast_stats));
+    try testing.expect(fast_stats.complete);
+    try testing.expectEqual(@as(u32, 0), fast_stats.frames_rejected);
+
+    // A named rate is still a named rate: the fallback does not run, and a wrong one loses the
+    // transfer (the test below is the other half of that contract).
+    var named_stats: DecodeStats = .{};
+    try testing.expectError(
+        error.Incomplete,
+        decode(allocator, samples.written(), .{ .symbol_rate_hz = 20 }, &named_stats),
+    );
+    try testing.expectEqual(@as(u32, 0), named_stats.frames_accepted);
 }
 
 test "a receiver seeded for the wrong rate loses the transfer, it does not invent one" {

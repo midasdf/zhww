@@ -21,7 +21,11 @@
 //! - `dc`: a slow exponential moving average (the DC tracker) over a few symbol periods, seeded
 //!   from the first sample. Ambient level, slow drift and gain changes move the slicing reference
 //!   with them, so the decision is always taken against the middle of the *current* signal rather
-//!   than against a fixed threshold that a lamp or a shadow would shift away.
+//!   than against a fixed threshold that a lamp or a shadow would shift away. The average keeps its
+//!   fractional remainder (`trackDc`): a rounded shift would bias every sample pair toward the lower
+//!   level, and at the longest periods the receiver accepts - where the shift has reached its clamp
+//!   and `2^shift` is no longer far below the swing - that pins the reference to the dark level
+//!   itself, the hysteresis then swallows it, and the frame dies of `error.Truncated`.
 //! - the slicer is a Schmitt trigger around `dc` with a dead zone of `hysteresis` counts: only a
 //!   sample outside the dead zone moves the level, so noise near the reference cannot chatter the
 //!   transitions the clock is recovered from.
@@ -61,6 +65,13 @@
 //!   110) - in band, i.e. the hard case - and alone, and on top of drift, gain and rate error.
 //! - drift: anything slow against the tracker's time constant (a few symbol periods); the tracker
 //!   follows it, so the decision does not move.
+//! - samples per symbol: 4 is the floor, and it is the seed's own lower bound - `Receiver.init`
+//!   refuses less. Measured with that bound lowered to 2, a clean channel still decodes at 2 and 3
+//!   samples per symbol, but the rate tolerance collapses from -13%/+13% at 4 to 0%/-3% there: one
+//!   sample of phase error is half a symbol, and the middle-half window degenerates to the whole
+//!   period. A link whose sender and receiver clocks have to be identical is not a link, so 4 is
+//!   what the layer stands behind. At the ~60 samples/s of a Qwiic light sensor that is 15
+//!   symbols/s; the documented 30 symbols/s pairing needs 120 samples/s or more.
 //! - minimum frame: 9 bytes (an empty payload). Sync needs the two preamble bytes, so every
 //!   well-formed frame is long enough; there is no separate minimum payload.
 //!
@@ -371,12 +382,24 @@ pub const Receiver = struct {
     /// Transitions seen in a row that were too far from a boundary to trust.
     far_edges: u8 = 0,
     /// Transitions left in which the phase is hard-set from the transition itself: re-acquisition.
-    settle: u8 = 0,
+    ///
+    /// A fresh receiver starts in this state, exactly as `reset` leaves it, because nothing is known
+    /// about the sampling phase yet and in Manchester every transition *is* a symbol boundary: the
+    /// first few are the right thing to trust. Starting at zero instead waits for five consecutive
+    /// far edges before re-acquiring, which is about ten chips - a third of the 32-chip preamble -
+    /// and at a sampling phase that leaves the clock far from the boundary that is the whole
+    /// preamble: the sync pattern is never matched and the *first* frame is lost. Measured as a band
+    /// of phases around half a symbol, roughly a fifth of a symbol period wide (6 samples per
+    /// symbol: 3.1..3.9 samples; 20: 9.0..12.9), and gone with this seed.
+    settle: u8 = settle_edges,
     edges: u32 = 0,
 
     // ---- DC tracker and slicer
     /// Ambient tracker in Q8 ADC counts. The slicing reference.
     dc_q8: i32 = 0,
+    /// Remainder of the tracker's average, in Q8 ADC counts: without it the integer step rounds
+    /// every sample toward the dark level (see `trackDc`).
+    dc_accum: i32 = 0,
     dc_shift: u5,
     hysteresis: u8,
     primed: bool = false,
@@ -444,6 +467,7 @@ pub const Receiver = struct {
         self.far_edges = 0;
         self.edges = 0;
         self.dc_q8 = 0;
+        self.dc_accum = 0;
         self.primed = false;
         self.level = .dark;
         self.chip_sum = 0;
@@ -517,6 +541,32 @@ pub const Receiver = struct {
 
     // ------------------------------------------------------------ per-sample pipeline
 
+    /// One step of the DC tracker: an exponential moving average of the samples with time constant
+    /// `2^dc_shift`, with the fraction kept instead of rounded away.
+    ///
+    /// The remainder is not cosmetic. `(x - dc) >> dc_shift` floors, and for a signed value Zig's
+    /// `>>` floors toward negative infinity: a positive difference smaller than `2^dc_shift` steps
+    /// by 0, while *any* negative difference steps by -1. On a signal that spends equal time above
+    /// and below the reference, that is a standing drift of one Q8 count per sample pair toward the
+    /// lower level, and once `2^dc_shift` is comparable to the half-swing the tracker pins itself to
+    /// the *dark* level instead of the middle. The hysteresis dead zone then swallows that level, the
+    /// dark-to-light edges never come back, and a frame in progress dies of `error.Truncated` with no
+    /// frame found - at 2500 and 3000 samples per symbol with the tests' 110-count swing, where
+    /// `dc_shift` has reached its clamp of 14 and `2^14` is 16384 of the 14080-Q8 half-swing, but not
+    /// at the 100 samples per symbol the layer is documented at (there the ratio is ~55 and the bias
+    /// is a fraction of a count). Carrying the remainder makes the step the exact average, so the
+    /// reference is the mean of the samples at every period the receiver accepts.
+    ///
+    /// The accumulator cannot run away: it holds less than `2^dc_shift` after every step, and the
+    /// input is bounded by the 8-bit ADC range, so 32 bits are three orders of magnitude of room.
+    fn trackDc(self: *Receiver, x: i32) void {
+        const one: i32 = @as(i32, 1) << self.dc_shift;
+        self.dc_accum += x - self.dc_q8;
+        const step = @divTrunc(self.dc_accum, one);
+        self.dc_q8 += step;
+        self.dc_accum -= step * one;
+    }
+
     /// One ADC sample through tracker, slicer, symbol window and clock.
     fn pushSample(self: *Receiver, sample: u8) void {
         const x: i32 = @as(i32, sample) << 8;
@@ -526,7 +576,7 @@ pub const Receiver = struct {
             self.dc_q8 = x;
             self.primed = true;
         } else {
-            self.dc_q8 += (x - self.dc_q8) >> self.dc_shift;
+            self.trackDc(x);
         }
 
         // 2. Hysteresis slicer: only a sample outside the dead zone moves the level, so noise
@@ -1455,4 +1505,112 @@ test "reset forgets the transfer but not the buffers" {
     try testing.expectEqual(@as(usize, 0), receiver.frames_accepted);
     // The same samples now decode from the start, because nothing was remembered.
     try testing.expectEqualSlices(u8, test_ur, (try receiver.receive(emitted)) orelse return error.TestUnexpectedResult);
+}
+
+test "the receiver locks down to four samples per symbol, and refuses less" {
+    // The CLI's low-rate sweep: 10 symbols/s with 4 to 50 samples per symbol (40 to 500 samples/s),
+    // the receiver seeded with the ratio the samples were made at. With the seed matching, the link
+    // locks at the bottom of the range, where a Manchester symbol is four samples and the
+    // middle-half window is two of them.
+    const allocator = testing.allocator;
+    var frame_buf: [512]u8 = undefined;
+    const frame = try light.encodeFrame(test_ur, &frame_buf);
+
+    for ([_]u32{ 4, 6, 8, 12, 16, 25, 50 }) |sps| {
+        const channel = Channel{ .sample_rate_hz = sps * 10, .symbol_rate_hz = 10 };
+        const samples = try allocator.alloc(u8, sampleCount(channel, frame.len));
+        defer allocator.free(samples);
+        const emitted = try emit(channel, frame, samples);
+
+        var rx_frame: [512]u8 = undefined;
+        var rx_payload: [512]u8 = undefined;
+        var receiver = try Receiver.init(&rx_frame, &rx_payload, .{ .nominal_samples_per_symbol = @intCast(sps) });
+        const got = (try receiver.receive(emitted)) orelse return error.TestUnexpectedResult;
+        try testing.expectEqualSlices(u8, test_ur, got);
+        try testing.expectEqual(@as(u32, 1), receiver.frames_accepted);
+        // The clock measured the rate rather than assuming it.
+        try testing.expectApproxEqAbs(@as(f32, @floatFromInt(sps)), receiver.measuredSamplesPerSymbol(), 0.2);
+    }
+
+    // Four is the floor, not a preference: three samples per symbol is refused before a sample is
+    // seen. Measured with the bound lowered to 2, the loop does decode a clean channel at 2 and 3
+    // samples per symbol, but the rate tolerance collapses from -13%/+13% at 4 to 0%/-3% there: one
+    // sample of phase error is half a symbol, the middle-half window is the whole period, and a
+    // sender whose clock differs by a percent is already lost. A link that only works while both
+    // clocks are identical is not a link, so this is the floor the layer stands behind.
+    var rx_frame: [512]u8 = undefined;
+    var rx_payload: [512]u8 = undefined;
+    try testing.expectError(error.InvalidEncoding, Receiver.init(&rx_frame, &rx_payload, .{ .nominal_samples_per_symbol = 3 }));
+
+    // And why the CLI was never the receiver's limit: the same stream read at the documented default
+    // of 100 samples per symbol is not a slow lock, it is nothing at all. That is what a decoder
+    // reports as "0 accepted, 0 rejected" when it is seeded for a rate the recording does not use.
+    const channel = Channel{ .sample_rate_hz = 300, .symbol_rate_hz = 10 }; // the sweep's 30 sps
+    const samples = try allocator.alloc(u8, sampleCount(channel, frame.len));
+    defer allocator.free(samples);
+    const emitted = try emit(channel, frame, samples);
+    var misled = try Receiver.init(&rx_frame, &rx_payload, cleanConfig());
+    const nothing: ?[]const u8 = misled.receive(emitted) catch |err| blk: {
+        try testing.expectEqual(error.NoSignal, err);
+        break :blk null;
+    };
+    try testing.expect(nothing == null);
+    try testing.expectEqual(@as(u32, 0), misled.frames_accepted);
+    try testing.expectEqual(@as(u32, 0), misled.frames_rejected);
+}
+
+test "the DC tracker sits in the middle at the longest periods, not on the dark level" {
+    // 2500 samples per symbol is where `dc_shift` reaches its clamp of 14 and `2^14` Q8 (16384) is no
+    // longer far below the tests' 14080-Q8 half-swing. A floor-shifted average drifts down by one Q8
+    // count per sample pair at that ratio and pins the reference to the *dark* level; the hysteresis
+    // dead zone then swallows it and the falling edges stop arriving. Sixty-four symbols of the
+    // tests' own square wave (73 and 183 counts, swing 110, so the middle is 128) must leave the
+    // reference within 18 counts of the middle *throughout*, ripple included: the tracker's time
+    // constant is 16384 samples, 6.6 symbols, so its ripple around the mean is a few counts, while
+    // the bug's pin is 55 counts away.
+    var rx_frame: [64]u8 = undefined;
+    var rx_payload: [64]u8 = undefined;
+    var receiver = try Receiver.init(&rx_frame, &rx_payload, .{ .nominal_samples_per_symbol = 2500 });
+    var samples: [2500 * 64]u8 = undefined;
+    for (0..64) |symbol| {
+        @memset(samples[symbol * 2500 ..][0..2500], if (symbol % 2 == 0) 73 else 183);
+    }
+    var lowest: f32 = 255;
+    var highest: f32 = 0;
+    for (0..64) |symbol| {
+        _ = receiver.receive(samples[symbol * 2500 ..][0..2500]) catch {};
+        if (symbol < 20) continue; // let the tracker settle first: it is seeded from one dark sample
+        const dc = @as(f32, @floatFromInt(receiver.dc_q8)) / @as(f32, @floatFromInt(q8_one));
+        lowest = @min(lowest, dc);
+        highest = @max(highest, dc);
+    }
+    try testing.expect(lowest > 128 - 18);
+    try testing.expect(highest < 128 + 18);
+}
+
+test "a cold receiver acquires on its first transitions at the phases that used to defeat it" {
+    // A cold start with `settle` at zero waited for five consecutive far edges before hard-setting
+    // the phase - about ten chips, a third of the 32-chip preamble - and at a sampling phase that
+    // left the clock far from the boundary the sync pattern was gone before the clock arrived. The
+    // band was 15-20% of a symbol period around half a symbol (6 samples per symbol: 3.1..3.9;
+    // 20 samples per symbol: 9.0..12.9), and `init` now starts in the same re-acquisition state
+    // `reset` leaves. These two phases are inside it: with the old cold start they found no frame at
+    // all, and the whole 0.1-sample phase grid at 4, 5, 6, 8, 12, 20 and 50 samples per symbol does
+    // now lock.
+    for ([_]struct { u32, f32 }{ .{ 6, 3.5 }, .{ 20, 10.5 } }) |case| {
+        const channel = Channel{
+            .sample_rate_hz = 4000,
+            .symbol_rate_hz = 4000.0 / @as(f32, @floatFromInt(case[0])),
+            .phase_samples = case[1],
+        };
+        try expectRoundTrip(test_ur, channel, .{ .nominal_samples_per_symbol = @intCast(case[0]) });
+    }
+}
+
+test "a frame round-trips at the receiver's longest symbol periods" {
+    // The end-to-end half of the tracker test above: 2500 samples per symbol at 4000 samples/s (1.6
+    // symbols/s) used to die mid-frame with `error.Truncated` and no frame found. The payload is one
+    // byte because the *period* is what this pins, and it keeps the stream small.
+    const channel = Channel{ .sample_rate_hz = 4000, .symbol_rate_hz = 1.6 };
+    try expectRoundTrip("a", channel, .{ .nominal_samples_per_symbol = 2500 });
 }
