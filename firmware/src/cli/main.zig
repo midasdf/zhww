@@ -18,6 +18,7 @@ const usage =
     \\
     \\コマンド:
     \\  address    アドレスを表示する
+    \\  evm-sign   EVM のトランザクション（JSON）に署名する
     \\  show       PSBT の中身を人間可読で表示する（画面の代わり）
     \\  sign       PSBT（base64）に署名する。標準入力から読む
     \\  mnemonic   ダイスの出目から mnemonic を作る（記録の検証用）
@@ -31,6 +32,12 @@ const usage =
     \\  --path "m/84'/0'/0'/0/0"   派生パス（既定: m/84'/0'/0'/0/0）
     \\  --network mainnet|testnet|signet|regtest （既定: mainnet）
     \\  --kind p2wpkh|p2pkh|p2sh-p2wpkh|p2tr （既定: p2wpkh）
+    \\
+    \\evm-sign のオプション:
+    \\  --mnemonic "..."        署名に使う mnemonic（必須。EVM は 44h/60h/0h/0/0 を使う）
+    \\  --passphrase "..."      パスフレーズ（任意）
+    \\  入力（JSON）: chainId / nonce / to / value / gasLimit / gasPrice、
+    \\                 または maxFeePerGas と maxPriorityFeePerGas（EIP-1559）
     \\
     \\show のオプション:
     \\  --network mainnet|testnet|signet|regtest （アドレス表示用。既定: mainnet）
@@ -109,6 +116,10 @@ fn run(init: std.process.Init.Minimal, stdout: anytype) !void {
     }
     if (std.mem.eql(u8, command, "sign")) {
         try commandSign(allocator, args.items[1..], stdout);
+        return;
+    }
+    if (std.mem.eql(u8, command, "evm-sign")) {
+        try commandEvmSign(allocator, args.items[1..], stdout);
         return;
     }
     if (std.mem.eql(u8, command, "show")) {
@@ -326,6 +337,150 @@ fn commandMnemonic(
     }
 
     try stdout.interface.print("{s}\n", .{text});
+}
+
+// ---------------------------------------------------------------- EVM
+
+/// EVM のトランザクション（JSON）に署名して raw tx を出力する。
+///
+/// 対応: EIP-155（legacy）と EIP-1559（type 2）。`maxFeePerGas` があれば EIP-1559 とみなす。
+/// 鍵は `m/44'/60'/0'/0/0`（EVM の標準的な派生パス）。
+fn commandEvmSign(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdout: anytype,
+) !void {
+    const mnemonic = try requiredOption(args, "--mnemonic");
+    const passphrase = option(args, "--passphrase") orelse "";
+
+    const input = try readAllStdin(allocator);
+    const trimmed = std.mem.trim(u8, input, " \t\r\n");
+    if (trimmed.len == 0) {
+        stderrPrint("トランザクションの JSON を標準入力から渡してください\n", .{});
+        return error.Usage;
+    }
+
+    var parsed = std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        trimmed,
+        .{ .parse_numbers = false },
+    ) catch {
+        stderrPrint("JSON を解釈できません\n", .{});
+        return error.InvalidArgument;
+    };
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidArgument;
+    const root = parsed.value.object;
+
+    const chain_id = try jsonU256(root, "chainId");
+    const nonce = try jsonU256(root, "nonce");
+    const gas_limit = try jsonU256(root, "gasLimit");
+    const value = try jsonU256(root, "value");
+    const to = try jsonAddress(root, "to");
+    const data = try jsonHex(allocator, root, "data");
+
+    // 鍵（EVM は m/44'/60'/0'/0/0）
+    const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, passphrase);
+    const node = try keys.derive(&[_]u32{
+        44 | zhww.bip32.hardened,
+        60 | zhww.bip32.hardened,
+        0 | zhww.bip32.hardened,
+        0,
+        0,
+    });
+    const priv = node.key.priv;
+
+    var buffer: [8192]u8 = undefined;
+    var signed: []u8 = undefined;
+
+    if (root.get("maxFeePerGas") != null) {
+        const tx = zhww.evm_transaction.Eip1559Tx{
+            .chain_id = chain_id,
+            .nonce = nonce,
+            .max_priority_fee_per_gas = try jsonU256(root, "maxPriorityFeePerGas"),
+            .max_fee_per_gas = try jsonU256(root, "maxFeePerGas"),
+            .gas_limit = gas_limit,
+            .to = to,
+            .value = value,
+            .data = data,
+            .access_list = &.{},
+        };
+        signed = try zhww.evm_transaction.signEip1559(&buffer, tx, priv);
+        stderrPrint("種別: EIP-1559（type 2）\n", .{});
+    } else {
+        const tx = zhww.evm_transaction.LegacyTx{
+            .nonce = nonce,
+            .gas_price = try jsonU256(root, "gasPrice"),
+            .gas_limit = gas_limit,
+            .to = to,
+            .value = value,
+            .data = data,
+            .chain_id = chain_id,
+        };
+        signed = try zhww.evm_transaction.signLegacy(&buffer, tx, priv);
+        stderrPrint("種別: legacy（EIP-155）\n", .{});
+    }
+
+    // 送信元アドレスも表示する（確認用）
+    const address_buffer = try allocator.alloc(u8, 42);
+    const signer = try zhww.evm_address.fromPublicKey(
+        address_buffer,
+        try zhww.secp256k1.pubKeyUncompressed(priv),
+    );
+    stderrPrint("送信元: {s}\n", .{signer});
+
+    const hex = try allocator.alloc(u8, signed.len * 2);
+    try stdout.interface.print("{s}\n", .{toHex(signed, hex)});
+}
+
+fn jsonU256(root: std.json.ObjectMap, name: []const u8) !u256 {
+    const value = root.get(name) orelse {
+        stderrPrint("{s} がありません\n", .{name});
+        return error.InvalidArgument;
+    };
+    const text = switch (value) {
+        .number_string => |s| s,
+        .string => |s| s,
+        .integer => |n| return @intCast(n),
+        else => return error.InvalidArgument,
+    };
+    if (std.mem.startsWith(u8, text, "0x")) {
+        var bytes: [32]u8 = @splat(0);
+        const hex_text = text[2..];
+        if (hex_text.len == 0 or hex_text.len > 64 or hex_text.len % 2 != 0) {
+            return error.InvalidArgument;
+        }
+        _ = std.fmt.hexToBytes(bytes[32 - hex_text.len / 2 ..], hex_text) catch {
+            return error.InvalidArgument;
+        };
+        return std.mem.readInt(u256, &bytes, .big);
+    }
+    return std.fmt.parseInt(u256, text, 10) catch error.InvalidArgument;
+}
+
+fn jsonAddress(root: std.json.ObjectMap, name: []const u8) !?[20]u8 {
+    const value = root.get(name) orelse return null;
+    if (value != .string) return error.InvalidArgument;
+    const text = value.string;
+    if (text.len == 0) return null;
+    const hex_text = if (std.mem.startsWith(u8, text, "0x")) text[2..] else text;
+    if (hex_text.len != 40) return error.InvalidArgument;
+    var out: [20]u8 = undefined;
+    _ = std.fmt.hexToBytes(&out, hex_text) catch return error.InvalidArgument;
+    return out;
+}
+
+fn jsonHex(allocator: std.mem.Allocator, root: std.json.ObjectMap, name: []const u8) ![]const u8 {
+    const value = root.get(name) orelse return &.{};
+    if (value != .string) return error.InvalidArgument;
+    const text = value.string;
+    const hex_text = if (std.mem.startsWith(u8, text, "0x")) text[2..] else text;
+    if (hex_text.len == 0) return &.{};
+    if (hex_text.len % 2 != 0) return error.InvalidArgument;
+    const out = try allocator.alloc(u8, hex_text.len / 2);
+    _ = std.fmt.hexToBytes(out, hex_text) catch return error.InvalidArgument;
+    return out;
 }
 
 // ---------------------------------------------------------------- show（表示）

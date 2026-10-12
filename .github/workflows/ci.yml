@@ -63,6 +63,16 @@ jobs:
           test "$MINE" = "$EXPECTED"
           echo "署名 OK（Bitcoin Core の出力と一致）"
 
+      - name: EVM 署名（独立実装 eth-account の値と一致）
+        working-directory: firmware
+        run: |
+          MN="abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+          TX=$(printf '%s' '{"chainId":1,"nonce":7,"gasLimit":21000,"maxFeePerGas":30000000000,"maxPriorityFeePerGas":1000000000,"to":"0x3535353535353535353535353535353535353535","value":123456789,"data":"0x"}' \
+            | ./zig-out/bin/zhww evm-sign --mnemonic "$MN" 2>/dev/null)
+          EXPECTED="02f86f0107843b9aca008506fc23ac0082520894353535353535353535353535353535353535353584075bcd1580c080a08b29bfd611a0f695677f38218b2a6d02218f906adedbb1f171aa49b261794de2a02e5c9604faa6d3f48c89f8568aa04ea6cef7e058d0464ef4447989524c1bd4cf"
+          test "$TX" = "$EXPECTED"
+          echo "EVM OK（EIP-1559 の署名が独立実装と一致）"
+
       - name: 表示（show）の確認
         working-directory: firmware
         run: |

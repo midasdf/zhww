@@ -122,6 +122,12 @@ cat psbt.txt | ./zig-out/bin/zhww sign --mnemonic "…"
 ./zig-out/bin/zhww mnemonic --dice "123456123456…" --words 12
 ./zig-out/bin/zhww mnemonic --dice "…" --words 24 --camera aabbccdd
 
+# EVM のトランザクションに署名する（JSON を標準入力から）
+echo '{"chainId":1,"nonce":7,"gasLimit":21000,"maxFeePerGas":30000000000,
+       "maxPriorityFeePerGas":1000000000,"to":"0x…","value":123456789,"data":"0x"}' \
+  | ./zig-out/bin/zhww evm-sign --mnemonic "…"
+#   → 署名済み raw tx を標準出力へ（送信元アドレスと種別は標準エラーへ）
+
 # 署名の前に「何に署名しようとしているか」を確認する（画面の代わり）
 cat psbt.txt | ./zig-out/bin/zhww show --network regtest --mnemonic "…"
 #   → 入力（金額・アドレス）・出力（送金/お釣り）・手数料を表示する
