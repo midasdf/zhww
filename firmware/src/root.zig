@@ -17,6 +17,10 @@ pub const secp256k1 = @import("core/crypto/secp256k1.zig");
 pub const bip39 = @import("core/seed/bip39.zig");
 pub const bip32 = @import("core/derive/bip32.zig");
 pub const btc_address = @import("apps/btc/address.zig");
+pub const btc_cursor = @import("apps/btc/cursor.zig");
+pub const btc_transaction = @import("apps/btc/transaction.zig");
+pub const btc_sighash = @import("apps/btc/sighash.zig");
+pub const btc_psbt = @import("apps/btc/psbt.zig");
 
 test {
     _ = base58;
@@ -26,4 +30,8 @@ test {
     _ = bip39;
     _ = bip32;
     _ = btc_address;
+    _ = btc_cursor;
+    _ = btc_transaction;
+    _ = btc_sighash;
+    _ = btc_psbt;
 }

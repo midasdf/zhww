@@ -82,10 +82,10 @@ zhww/
 | 項目 | 状態 |
 |---|---|
 | 設計ドキュメント | 作成済み（要求仕様・アーキテクチャ・BOM・チェーン対応・脅威モデル・ロードマップ） |
-| ファームウェア（Zig + libsecp256k1） | BIP39 / BIP32 / Base58 / Bech32・Bech32m / RIPEMD-160 / BTC アドレス生成まで実装 |
-| テスト | **51 件すべて成功**（BIP39 公式ベクタ 24 件、BIP32 テストベクタ、BIP49/84/86 公式ベクタ） |
+| ファームウェア（Zig + libsecp256k1） | BIP39 / BIP32 / Base58 / Bech32・Bech32m / RIPEMD-160 / **ECDSA 署名（RFC6979）** / BTC アドレス生成 / **トランザクション解析と署名対象ハッシュ（Legacy・BIP143）** / **PSBT 解析と検証（BIP174）** |
+| テスト | **71 件すべて成功**（BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件） |
 | 実機 | Raspberry Pi Zero 2 W のセットアップ手順を [docs/07](docs/07-zero2w-setup.md) に記載 |
-| 次の作業 | PSBT 解析と署名（M1）、UI、QR 送受信 |
+| 次の作業 | PSBT からの署名と最終化、お釣り判定、画面 UI、QR 送受信 |
 
 ```bash
 cd firmware && zig build test

@@ -58,6 +58,47 @@ extern fn secp256k1_ec_pubkey_tweak_add(
     tweak: *const [32]u8,
 ) c_int;
 
+/// ECDSA 署名（64 バイトのコンパクト表現）。
+pub const EcdsaSignature = extern struct { data: [64]u8 };
+
+extern fn secp256k1_ecdsa_sign(
+    ctx: *const Context,
+    sig: *EcdsaSignature,
+    msg32: *const [32]u8,
+    seckey: *const [32]u8,
+    // noncefp に null を渡すと RFC6979（libsecp256k1 の既定実装）が使われる
+    noncefp: ?*const anyopaque,
+    ndata: ?*const anyopaque,
+) c_int;
+extern fn secp256k1_ecdsa_verify(
+    ctx: *const Context,
+    sig: *const EcdsaSignature,
+    msg32: *const [32]u8,
+    pubkey: *const Pubkey,
+) c_int;
+extern fn secp256k1_ecdsa_signature_serialize_der(
+    ctx: *const Context,
+    output: [*]u8,
+    outputlen: *usize,
+    sig: *const EcdsaSignature,
+) c_int;
+extern fn secp256k1_ecdsa_signature_parse_der(
+    ctx: *const Context,
+    sig: *EcdsaSignature,
+    input: [*]const u8,
+    inputlen: usize,
+) c_int;
+extern fn secp256k1_ecdsa_signature_parse_compact(
+    ctx: *const Context,
+    sig: *EcdsaSignature,
+    input64: [*]const u8,
+) c_int;
+extern fn secp256k1_ecdsa_signature_normalize(
+    ctx: *const Context,
+    out_sig: ?*EcdsaSignature,
+    in_sig: *const EcdsaSignature,
+) c_int;
+
 // --- パラメータ -----------------------------------------------------------
 
 /// secp256k1 の群位数 n。
@@ -176,6 +217,63 @@ pub fn taprootOutputKey(internal_xonly: [32]u8) Error![32]u8 {
     return xonly(tweaked);
 }
 
+// --- ECDSA ---------------------------------------------------------------
+
+/// メッセージハッシュに ECDSA 署名する。
+///
+/// nonce は libsecp256k1 の既定実装（RFC6979）を使う。**乱数を使わない**ため、
+/// 同じ鍵と同じメッセージからは常に同じ署名が得られる（nonce 再利用による鍵漏洩を
+/// 構造的に防ぐ）。libsecp256k1 は常に low-s 正規化された署名を返す。
+pub fn sign(msg: [32]u8, priv: [32]u8) Error!EcdsaSignature {
+    if (!isValidPrivateKey(priv)) return error.InvalidKey;
+    var sig: EcdsaSignature = undefined;
+    if (secp256k1_ecdsa_sign(try context(), &sig, &msg, &priv, null, null) == 0) {
+        return error.InvalidKey;
+    }
+    return sig;
+}
+
+/// 署名を DER 形式に直列化する（Bitcoin の scriptSig / witness で使う形式）。
+pub fn serializeDer(out: []u8, sig: *const EcdsaSignature) Error![]u8 {
+    var len: usize = out.len;
+    if (secp256k1_ecdsa_signature_serialize_der(try context(), out.ptr, &len, sig) == 0) {
+        return error.BufferTooSmall;
+    }
+    return out[0..len];
+}
+
+/// DER 形式の署名を解析する（検証・相互運用のテスト用）。
+pub fn parseDer(der: []const u8) Error!EcdsaSignature {
+    var sig: EcdsaSignature = undefined;
+    if (secp256k1_ecdsa_signature_parse_der(try context(), &sig, der.ptr, der.len) == 0) {
+        return error.InvalidEncoding;
+    }
+    return sig;
+}
+
+/// コンパクト形式（r || s）の署名を解析する。
+pub fn parseCompact(compact: [64]u8) Error!EcdsaSignature {
+    var sig: EcdsaSignature = undefined;
+    if (secp256k1_ecdsa_signature_parse_compact(try context(), &sig, &compact) == 0) {
+        return error.InvalidEncoding;
+    }
+    return sig;
+}
+
+/// 署名を検証する。**署名を作ったら必ずこれで検証する**（実装ミスの検出）。
+pub fn verify(sig: *const EcdsaSignature, msg: [32]u8, pub_key: [33]u8) Error!bool {
+    var pubkey: Pubkey = undefined;
+    if (secp256k1_ec_pubkey_parse(try context(), &pubkey, &pub_key, pub_key.len) == 0) {
+        return error.InvalidKey;
+    }
+    return secp256k1_ecdsa_verify(try context(), sig, &msg, &pubkey) == 1;
+}
+
+/// 署名が low-s 正規化されているかを確認する（BIP62 / EIP-2 の要件）。
+pub fn isNormalized(sig: *const EcdsaSignature) bool {
+    return secp256k1_ecdsa_signature_normalize(context() catch return false, null, sig) == 1;
+}
+
 // ---------------------------------------------------------------- テスト
 
 const testing = std.testing;
@@ -228,4 +326,54 @@ test "Taproot 出力鍵（BIP86 テストベクタ）" {
     const internal = hexBytes(32, "cc8a4bc64d897bddc5fbc2f670f7a8ba0b386779106cf1223c6fc5d7cd6fc115");
     const expected = hexBytes(32, "a60869f0dbcf1dc659c9cecbaf8050135ea9e8cdc487053f1dc6880949dc684c");
     try testing.expectEqualSlices(u8, &expected, &(try taprootOutputKey(internal)));
+}
+
+test "ECDSA 署名と検証" {
+    const priv = hexBytes(32, "619c335025c7f4012e556c2a58b2506e30b8511b53ade95ea316fd8c3286feb9");
+    const pub_key = try pubKeyCompressed(priv);
+    var msg: [32]u8 = undefined;
+    for (&msg, 0..) |*byte, i| byte.* = @intCast(i);
+
+    const sig = try sign(msg, priv);
+    try testing.expect(try verify(&sig, msg, pub_key));
+
+    // メッセージを変えると検証に失敗する
+    var tampered = msg;
+    tampered[0] ^= 0x01;
+    try testing.expect(!try verify(&sig, tampered, pub_key));
+
+    // 別の鍵では検証に失敗する
+    const other_pub = try pubKeyCompressed(scalar(2));
+    try testing.expect(!try verify(&sig, msg, other_pub));
+}
+
+test "署名は決定論的（RFC6979）で low-s である" {
+    const priv = hexBytes(32, "619c335025c7f4012e556c2a58b2506e30b8511b53ade95ea316fd8c3286feb9");
+    var msg: [32]u8 = undefined;
+    for (&msg, 0..) |*byte, i| byte.* = @intCast(i);
+
+    const first = try sign(msg, priv);
+    const second = try sign(msg, priv);
+    try testing.expectEqualSlices(u8, &first.data, &second.data);
+
+    // libsecp256k1 は常に low-s を返す（正規化が不要）
+    try testing.expect(!isNormalized(&first));
+}
+
+test "DER 直列化と解析のラウンドトリップ" {
+    const priv = hexBytes(32, "619c335025c7f4012e556c2a58b2506e30b8511b53ade95ea316fd8c3286feb9");
+    var msg: [32]u8 = undefined;
+    for (&msg, 0..) |*byte, i| byte.* = @intCast(i);
+
+    const sig = try sign(msg, priv);
+    var der_buf: [72]u8 = undefined;
+    const der = try serializeDer(&der_buf, &sig);
+    try testing.expect(der.len >= 68 and der.len <= 72);
+
+    const parsed = try parseDer(der);
+    const pub_key = try pubKeyCompressed(priv);
+    try testing.expect(try verify(&parsed, msg, pub_key));
+
+    // 壊れた DER は解析できない
+    try testing.expectError(error.InvalidEncoding, parseDer(&[_]u8{ 0x30, 0x00 }));
 }

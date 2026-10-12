@@ -20,6 +20,18 @@ pub const Error = error{
     BufferTooSmall,
     /// 正規化（NFKD）が必要な非 ASCII 入力。v0.1 では未対応
     UnsupportedNormalization,
+    /// 入力データが途中で終わっている
+    Truncated,
+    /// PSBT の構造・検証エラー（重複キー、マップ数の不一致など）
+    InvalidPsbt,
+    /// 未対応の sighash タイプ（NONE / SINGLE は安全性のため非対応）
+    UnsupportedSighash,
+    /// 署名に使える鍵が見つからない
+    NoMatchingKey,
+    /// 署名の検証に失敗した
+    SignatureInvalid,
+    /// メモリ確保に失敗した（解析層のみ。鍵を扱うコア処理では発生しない）
+    OutOfMemory,
 };
 
 test "error set is constructible" {
