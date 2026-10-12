@@ -186,9 +186,47 @@ module lid() {
     }
 }
 
+// ---------------------------------------------------------------- 配置確認（2D）
+
+// 基板の外形・コネクタ・HAT の要素を**重ねて**描く平面図。
+// 公式の寸法図と見比べて、位置のずれを見つけるためのもの。
+module layout_check() {
+    // 基板の外形（角丸）と取付穴
+    color("SteelBlue") difference() {
+        offset(r = corner_r) offset(delta = -corner_r) square([board_w, board_d]);
+        for (p = [[hole_inset, hole_inset],
+                  [board_w - hole_inset, hole_inset],
+                  [hole_inset, board_d - hole_inset],
+                  [board_w - hole_inset, board_d - hole_inset]])
+            translate([p[0], p[1]]) circle(d = hole_d);
+    }
+
+    // 手前の長辺のコネクタ（HDMI / USB-C ×2）
+    color("Gray")
+        translate([hdmi_x, -1]) square([hdmi_w, 4]);
+    color("Gray")
+        translate([usb_c1_x, -1]) square([usb_c_w, 4]);
+    color("Gray")
+        translate([usb_c2_x, -1]) square([usb_c_w, 4]);
+
+    // 左の短辺の microSD、右の短辺の BAT
+    color("DimGray") translate([-1, sd_y0]) square([4, sd_len]);
+    color("DimGray") translate([board_w - 3, bat_y0]) square([4, bat_w]);
+
+    // HAT の要素（上に載るもの）
+    color("Orange") translate([display_x, display_y]) square([display_size, display_size]);
+    color("Crimson") {
+        for (y = button_y) translate([button_x, y]) circle(d = button_d);
+        translate([joystick_x, joystick_y]) circle(d = joystick_d);
+    }
+
+    // 40pin ヘッダの位置（奥の長辺）
+    color("Green") translate([corner_r, board_d - 2.5]) square([board_w - corner_r * 2, 2.5]);
+}
+
 // ---------------------------------------------------------------- 出力
 
-part = "all";   // "tray" / "lid" / "all"（-D 'part="lid"' で切り替え）
+part = "all";   // "tray" / "lid" / "all" / "check"（-D 'part="check"' で切り替え）
 
 if (part == "all") {
     tray();
@@ -197,4 +235,6 @@ if (part == "all") {
     tray();
 } else if (part == "lid") {
     lid();
+} else if (part == "check") {
+    layout_check();
 }

@@ -68,6 +68,21 @@ Inventor（.ipt）の編集可能ソース付き）。
 
 **まだ実測していないのは穴の位置だけ**で、外形と構造は確定している。
 
+### 配置確認図（公式の寸法図と見比べる用）
+
+基板の外形・取付穴・コネクタと、HAT の LCD・ボタン・ジョイスティックを**重ねて**描いたもの。
+
+![配置確認図](../../docs/images/layout-check.png)
+
+```bash
+openscad -o layout-check.png --imgsize=1300,700 --projection=o --camera=0,0,0,0,0,0,300 \
+  --autocenter --viewall -D 'part="check"' hardware/enclosure/zhww-case.scad
+```
+
+読み方: 青 = 基板（65×30、角丸、四隅に Φ3.00 の穴）、緑 = 40pin ヘッダ（奥の長辺）、
+灰 = コネクタ（手前の長辺に HDMI と USB-C ×2、左の短辺に microSD、右の短辺に BAT）、
+橙 = HAT の LCD、赤 = HAT の 3 ボタン（左端に縦一列）とジョイスティック（右）。
+
 ## 使い方
 
 ```bash
