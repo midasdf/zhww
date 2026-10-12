@@ -123,6 +123,44 @@ jobs:
           echo "$OUT" | grep -q '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
           echo "evm-show OK (shows the selector and the EIP-55 address)"
 
+      - name: Light channel unit tests (light-encode / light-decode)
+        working-directory: firmware
+        run: |
+          # The CLI is not reachable from tests.zig (that root is src/root.zig), so the light
+          # tool's own tests need the module spelled out. They cover the round trip, the
+          # impairments the receiver measures as survivable, and an excessive noise level that
+          # must lose the transfer instead of returning wrong data.
+          zig test --dep zhww -Mroot=src/cli/light_tool.zig -Mzhww=src/root.zig \
+            -lc $(pkg-config --cflags --libs libsecp256k1)
+
+      - name: Light channel round trip (PSBT -> flickering screen -> PSBT)
+        working-directory: firmware
+        run: |
+          # The whole light link on a PC, on a real PSBT: base64 -> UR parts -> frames -> raw
+          # 8-bit ADC samples (3 kHz ADC, 30 symbols/s, the pairing in docs/09) and back through
+          # the streaming receiver and ur_receive. The output must be the same base64.
+          jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json > "$RUNNER_TEMP/light-psbt.txt"
+          ./zig-out/bin/zhww light-encode < "$RUNNER_TEMP/light-psbt.txt" > "$RUNNER_TEMP/light-samples.bin"
+          ./zig-out/bin/zhww light-decode < "$RUNNER_TEMP/light-samples.bin" > "$RUNNER_TEMP/light-out.txt"
+          diff -u "$RUNNER_TEMP/light-psbt.txt" "$RUNNER_TEMP/light-out.txt"
+          echo "light OK (PSBT -> samples -> PSBT round-trips)"
+
+          # At the levels the receiver's tests measure as survivable, one impairment at a time.
+          for OPT in "--noise 15" "--flicker 20"; do
+            ./zig-out/bin/zhww light-encode $OPT < "$RUNNER_TEMP/light-psbt.txt" > "$RUNNER_TEMP/light-samples.bin"
+            ./zig-out/bin/zhww light-decode $OPT < "$RUNNER_TEMP/light-samples.bin" > "$RUNNER_TEMP/light-out.txt"
+            diff -u "$RUNNER_TEMP/light-psbt.txt" "$RUNNER_TEMP/light-out.txt"
+          done
+          echo "light OK (noise sigma 15 and flicker amplitude 20 still round-trip)"
+
+          # A clearly excessive level must fail with nothing on stdout, not return wrong data.
+          ./zig-out/bin/zhww light-encode --noise 60 < "$RUNNER_TEMP/light-psbt.txt" > "$RUNNER_TEMP/light-samples.bin"
+          if ./zig-out/bin/zhww light-decode < "$RUNNER_TEMP/light-samples.bin" > "$RUNNER_TEMP/light-out.txt" 2>/dev/null; then
+            echo "noise 60 decoded, which it must not"; exit 1
+          fi
+          test ! -s "$RUNNER_TEMP/light-out.txt"
+          echo "light OK (noise 60 fails loudly, no wrong PSBT)"
+
       - name: Display check (show)
         working-directory: firmware
         run: |

@@ -289,5 +289,25 @@ next step up is asserted to fail, so these are measurements rather than claims:
 | Symbol rate offset | −11% to +14% | −33% / +43% |
 | Seed error | ±10% (tracked period then lands within a fraction of a percent) | — |
 
-Flicker near the symbol rate is not filtered out; it is only survived by swing margin. Pointing the
-sensor at the phone and keeping room light off it is worth more than any of these numbers.
+**These limits are one impairment at a time and they do not add up.** With both present the practical
+margin is much tighter: measured through the CLI at 3000 samples/s and 30 symbols/s, noise 8 plus
+flicker 20 still round-trips, while noise 10 plus flicker 20 does not. Treat the table as "one thing at
+a time" and rely on careful aiming instead of on headroom that is not there.
+
+Flicker near the symbol rate is not filtered out; it is only survived by swing margin, and the flicker
+phase matters slightly at the margin (the ambient tracker needs a moment to settle, so the first frame
+after starting can be lost at high amplitude — the sender repeats the sequence, which covers it).
+Pointing the sensor at the phone and keeping room light off it is worth more than any of these numbers.
+
+**How to try it on a PC.** The whole chain runs without hardware:
+
+```bash
+zhww light-encode < psbt.txt > samples.bin      # PSBT -> UR parts -> frames -> light samples
+zhww light-decode < samples.bin > out.txt       # samples -> frames -> UR -> PSBT
+cmp psbt.txt out.txt                            # identical (verified in CI)
+zhww light-encode --noise 8 --flicker 20 --gain 1.2 --drift 4 < psbt.txt | zhww light-decode > out.txt
+```
+
+`light-encode` also takes `--sample-rate`, `--symbol-rate` and `--fragment`; `light-decode` takes
+`--hysteresis`. A stream that does not carry a complete transfer exits non-zero and writes **nothing** to
+stdout, so a failure can never be mistaken for a result.

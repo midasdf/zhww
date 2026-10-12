@@ -25,6 +25,8 @@ const usage =
     \\  sign        Sign a PSBT (base64) read from stdin
     \\  ur          Convert a PSBT (base64) to UR (for QR transfer)
     \\  ur-decode   Read UR parts and turn them back into a PSBT (base64)
+    \\  light-encode Turn a PSBT (base64) into raw 8-bit samples of a flickering screen
+    \\  light-decode Read those samples back and turn them into a PSBT (base64)
     \\  mnemonic    Build a mnemonic from dice rolls (for verifying your records)
     \\  evm-sign    Sign an EVM transaction (JSON)
     \\  evm-show    Show a signed or unsigned EVM transaction (raw hex)
@@ -71,6 +73,23 @@ const usage =
     \\ur options:
     \\  --fragment <n>             Max bytes per QR code (default: 40)
     \\  --type <type name>         UR type (default: crypto-psbt)
+    \\
+    \\light-encode options:
+    \\  --fragment <n>             Max bytes per UR part (default: 40)
+    \\  --sample-rate <hz>         Simulated ADC sample rate (default: 3000)
+    \\  --symbol-rate <sps>        Simulated symbol rate (default: 30)
+    \\  --noise <sigma>            Gaussian noise, ADC counts (default: 0)
+    \\  --flicker <amplitude>      Mains flicker at 100 Hz and 120 Hz (default: 0)
+    \\  --gain <x>                 Channel gain on the swing (default: 1)
+    \\  --drift <amplitude>        Slow ambient drift, ADC counts (default: 0)
+    \\  < PSBT (base64)            Input; the samples go to stdout
+    \\  sample rate / symbol rate is the receiver seed: keep them the same on both sides
+    \\
+    \\light-decode options:
+    \\  --sample-rate <hz>         ADC sample rate of the recording (default: 3000)
+    \\  --symbol-rate <sps>        Symbol rate of the recording (default: 30)
+    \\  --hysteresis <counts>      Schmitt trigger dead zone (default: 12)
+    \\  < raw 8-bit samples        Input; the PSBT (base64) goes to stdout
     \\
     \\mnemonic options:
     \\  --dice "123456..."         Dice rolls (1-6)
@@ -182,6 +201,14 @@ fn run(init: std.process.Init.Minimal, stdout: anytype, io: std.Io) !void {
     }
     if (std.mem.eql(u8, command, "ur-decode")) {
         try commandUrDecode(allocator, args.items[1..], stdout);
+        return;
+    }
+    if (std.mem.eql(u8, command, "light-encode")) {
+        try commandLightEncode(allocator, args.items[1..], stdout);
+        return;
+    }
+    if (std.mem.eql(u8, command, "light-decode")) {
+        try commandLightDecode(allocator, args.items[1..], stdout);
         return;
     }
     if (std.mem.eql(u8, command, "help") or std.mem.eql(u8, command, "--help")) {
@@ -1682,4 +1709,151 @@ fn commandUrDecode(
     const encoded = try allocator.alloc(u8, encoder.calcSize(payload.len));
     _ = encoder.encode(encoded, payload);
     try stdout.interface.print("{s}\n", .{encoded});
+}
+
+// ---------------------------------------------------------------- light channel
+
+const light_tool = @import("light_tool.zig");
+
+/// `--name <n>`: a decimal number, or `default` when the option is not given.
+fn usizeOption(args: []const []const u8, name: []const u8, default: usize) !usize {
+    const text = option(args, name) orelse return default;
+    return std.fmt.parseInt(usize, text, 10) catch {
+        stderrPrint("invalid value for {s}: {s}\n", .{ name, text });
+        return error.InvalidArgument;
+    };
+}
+
+/// `--name <x>`: a float, or `default` when the option is not given.
+fn floatOption(args: []const []const u8, name: []const u8, default: f32) !f32 {
+    const text = option(args, name) orelse return default;
+    return std.fmt.parseFloat(f32, text) catch {
+        stderrPrint("invalid value for {s}: {s}\n", .{ name, text });
+        return error.InvalidArgument;
+    };
+}
+
+/// The rates both light commands take, checked as the one number they are.
+///
+/// The receiver is seeded with `sample_rate / symbol_rate` and the samples are generated at the
+/// same ratio (`light_tool.Settings`), so the two sides can only disagree if a combination outside
+/// the receiver's own bounds is accepted here. It is not.
+fn lightRates(args: []const []const u8, settings: *light_tool.Settings) !void {
+    const sample_rate = try usizeOption(args, "--sample-rate", light_tool.default_sample_rate_hz);
+    settings.sample_rate_hz = std.math.cast(u32, sample_rate) orelse {
+        stderrPrint("--sample-rate out of range: {d}\n", .{sample_rate});
+        return error.InvalidArgument;
+    };
+    settings.symbol_rate_hz = try floatOption(args, "--symbol-rate", light_tool.default_symbol_rate_hz);
+
+    _ = settings.nominalSamplesPerSymbol() catch {
+        stderrPrint(
+            "--sample-rate {d} and --symbol-rate {d:.3} do not leave a usable symbol period (the receiver needs 4 to 4096 samples per symbol)\n",
+            .{ settings.sample_rate_hz, settings.symbol_rate_hz },
+        );
+        return error.InvalidArgument;
+    };
+}
+
+/// Turn a PSBT (base64) into the raw 8-bit samples a screen flickering it would produce.
+///
+/// The samples go to stdout, so `light-encode < psbt.txt > recording.bin` is a recording that
+/// `light-decode` can replay later; everything else goes to stderr.
+fn commandLightEncode(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdout: anytype,
+) !void {
+    var settings: light_tool.Settings = .{};
+    try lightRates(args, &settings);
+    settings.fragment_len = try usizeOption(args, "--fragment", light_tool.default_fragment_len);
+    if (settings.fragment_len < zhww.ur.default_min_fragment_len) {
+        stderrPrint("--fragment must be at least {d} bytes\n", .{zhww.ur.default_min_fragment_len});
+        return error.InvalidArgument;
+    }
+    settings.noise_sigma = try floatOption(args, "--noise", 0);
+    settings.flicker_amplitude = try floatOption(args, "--flicker", 0);
+    settings.gain = try floatOption(args, "--gain", 1);
+    settings.drift_amplitude = try floatOption(args, "--drift", 0);
+
+    const input = try readAllStdin(allocator);
+    const stats = light_tool.encode(allocator, input, settings, &stdout.interface) catch |err| {
+        switch (err) {
+            error.EmptyInput => {
+                stderrPrint("pass a PSBT (base64) on stdin\n", .{});
+                return error.Usage;
+            },
+            error.InvalidBase64 => {
+                stderrPrint("cannot decode the base64 PSBT\n", .{});
+                return error.InvalidArgument;
+            },
+            else => return err,
+        }
+    };
+    try stdout.interface.flush();
+
+    stderrPrint(
+        "light-encode: {d} UR parts of {d} B, {d} samples ({d} B PSBT at {d} samples/s, {d:.3} symbols/s = {d} samples/symbol)\n",
+        .{
+            stats.parts,
+            stats.fragment_len,
+            stats.samples,
+            stats.payload_len,
+            settings.sample_rate_hz,
+            settings.symbol_rate_hz,
+            try settings.nominalSamplesPerSymbol(),
+        },
+    );
+}
+
+/// Read raw 8-bit samples, run the receiver over them and write the PSBT (base64) to stdout.
+///
+/// Frames accepted/rejected and samples consumed go to stderr. A stream that ends before a whole
+/// UR transfer has arrived is an error, not a shorter answer: nothing is written to stdout at all.
+fn commandLightDecode(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdout: anytype,
+) !void {
+    var settings: light_tool.Settings = .{};
+    try lightRates(args, &settings);
+    const hysteresis = try usizeOption(args, "--hysteresis", zhww.light_rx.default_hysteresis);
+    settings.hysteresis = std.math.cast(u8, hysteresis) orelse {
+        stderrPrint("--hysteresis out of range: {d} (0 to 255 ADC counts)\n", .{hysteresis});
+        return error.InvalidArgument;
+    };
+
+    const input = try readAllStdin(allocator);
+    var stats: light_tool.DecodeStats = .{};
+    const psbt = light_tool.decode(allocator, input, settings, &stats) catch |err| {
+        switch (err) {
+            error.EmptyInput => {
+                stderrPrint("pass raw 8-bit samples on stdin (see light-encode)\n", .{});
+                return error.Usage;
+            },
+            error.Incomplete => {
+                printLightDecodeStats(stats);
+                stderrPrint("the stream ended before a whole UR transfer arrived\n", .{});
+                return error.InvalidArgument;
+            },
+            else => return err,
+        }
+    };
+    printLightDecodeStats(stats);
+
+    try stdout.interface.print("{s}\n", .{psbt});
+    try stdout.interface.flush();
+}
+
+/// The receiver's counters, as diagnostics on stderr.
+fn printLightDecodeStats(stats: light_tool.DecodeStats) void {
+    stderrPrint(
+        "light-decode: frames: {d} accepted, {d} rejected; samples consumed: {d} of {d}\n",
+        .{ stats.frames_accepted, stats.frames_rejected, stats.samples_consumed, stats.samples_total },
+    );
+    stderrPrint(
+        "light-decode: UR parts: {d}/{d} received ({d} rejected)\n",
+        .{ stats.parts_received, stats.parts_expected, stats.parts_rejected },
+    );
+    if (stats.last_error) |name| stderrPrint("light-decode: last rejection: {s}\n", .{name});
 }
