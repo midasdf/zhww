@@ -14,6 +14,7 @@
 //!
 //! **RFC6979 は決定論的**なので、同じ鍵と同じメッセージからは同じ署名が得られる。
 //! したがって「署名が公式ベクタと完全一致する」ことが、実装全体の正しさの強い証拠になる。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

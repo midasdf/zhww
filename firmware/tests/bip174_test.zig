@@ -5,6 +5,7 @@
 //!
 //! - **不正な PSBT はすべて拒否されること**（受理してはならない）
 //! - **妥当な PSBT はすべて受理されること**（過剰に厳しくてもならない）
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

@@ -1,5 +1,6 @@
 //! バイト列を順に読むカーソル。Bitcoin のネットワーク直列化（リトルエンディアン +
 //! CompactSize）を扱う。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

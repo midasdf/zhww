@@ -10,6 +10,7 @@
 //!   3. 署名して最終化する
 //!   4. **各入力の署名を、テスト側で独立に再計算した sighash で検証する**
 //!      （実装の内部値を使わずに検証する）
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

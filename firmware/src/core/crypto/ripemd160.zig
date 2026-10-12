@@ -8,6 +8,7 @@
 //! ストリーミング API（init/update/final）を備えるため、任意長の入力に対応する。
 //!
 //! 参考: ISO/IEC 10118-3, https://homes.esat.kuleuven.be/~bosselae/ripemd160.html
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 

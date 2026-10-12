@@ -6,6 +6,7 @@
 //!
 //! 参考: https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
 //!       https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

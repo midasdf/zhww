@@ -64,6 +64,8 @@ zhww/
 ├── SECURITY.md                ← 脆弱性の報告方法
 ├── LICENSE                    ← GPL-3.0（ファームウェア）
 ├── LICENSE-HARDWARE           ← CERN-OHL-S-2.0（ハードウェア設計）
+├── LICENSE-DOCS               ← CC-BY-4.0（ドキュメント）
+├── LICENSE-ENCLOSURE          ← CC-BY-SA-4.0（筐体）
 ├── LICENSE-POLICY.md          ← ライセンス方針
 ├── THIRD-PARTY-NOTICES.md     ← 第三者ソフトウェア・テストベクタの出典
 ├── docs/
@@ -114,11 +116,13 @@ cd firmware && zig build test
 ## ライセンス
 
 - ファームウェア: **GPL-3.0-or-later**（[LICENSE](LICENSE)）
-- ハードウェア設計: **CERN-OHL-S-2.0**
-- 筐体: **CC-BY-SA-4.0**
-- ドキュメント: **CC-BY-4.0**
+- ハードウェア設計: **CERN-OHL-S-2.0**（[LICENSE-HARDWARE](LICENSE-HARDWARE)）
+- 筐体: **CC-BY-SA-4.0**（[LICENSE-ENCLOSURE](LICENSE-ENCLOSURE)）
+- ドキュメント: **CC-BY-4.0**（[LICENSE-DOCS](LICENSE-DOCS)）
 
-詳細は [LICENSE-POLICY.md](LICENSE-POLICY.md)。
+Zig のソースには SPDX ヘッダ（`GPL-3.0-or-later`）を付けている。
+第三者ソフトウェアとテストデータの出典は [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)、
+方針の詳細は [LICENSE-POLICY.md](LICENSE-POLICY.md) を参照。
 
 ---
 

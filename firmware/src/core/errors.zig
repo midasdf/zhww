@@ -2,6 +2,7 @@
 //!
 //! 方針: 解析・検証の失敗はすべてエラーで通知し、署名フローはエラーを捕捉したら
 //! **署名せずに理由を画面表示する**。エラーを握りつぶして処理を続行してはならない。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 pub const Error = error{
     /// Base58 / Bech32 などの書式が不正

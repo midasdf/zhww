@@ -3,6 +3,7 @@
 //! ベクタ: tests/vectors/bip39.json（https://github.com/trezor/python-mnemonic の公式ベクタ）
 //! 各要素は [entropy, mnemonic, seed, xprv] の 4 つ組。
 //! 最後の xprv まで一致させることで BIP39 → BIP32 の連結も同時に検証する。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

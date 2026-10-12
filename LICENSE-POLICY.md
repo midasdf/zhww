@@ -47,8 +47,9 @@ CERN-OHL の各バリアント（S: 強コピーレフト / W: 弱 / P: 許諾�
 
 - [x] GPL-3.0 の正典テキストを取得し `LICENSE` として配置（ファームウェア用）
 - [x] CERN-OHL-S-2.0 の正典テキストを取得し `LICENSE-HARDWARE` として配置（ハードウェア設計用）
-- [ ] CC-BY-SA-4.0 / CC-BY-4.0（[creativecommons.org](https://creativecommons.org/licenses/)）を
-      筐体・ドキュメント用に配置（筐体を設計した時点で追加する）
-- [ ] ファイルごとの SPDX ヘッダ（`SPDX-License-Identifier:`）を全ソースに付与
-- [x] 第三者コードの `THIRD-PARTY-NOTICES.md` を作成（libsecp256k1、テストベクタの出典など）
+- [x] CC-BY-4.0 を `LICENSE-DOCS`（ドキュメント用）、CC-BY-SA-4.0 を `LICENSE-ENCLOSURE`
+      （筐体用）として配置
+- [x] ファイルごとの SPDX ヘッダ（`SPDX-License-Identifier: GPL-3.0-or-later`）を
+      全 Zig ソースに付与（ドキュメントコメントの直後に置いている）
+- [x] 第三者コードの `THIRD-PARTY-NOTICES.md` を作成（libsecp256k1、テストベクタ、オラクル）
 - [x] 脆弱性開示ポリシー `SECURITY.md` を作成

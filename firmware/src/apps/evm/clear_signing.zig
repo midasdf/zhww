@@ -26,6 +26,7 @@
 //!
 //! テストではレジストリの実記述子（stETH / Ekubo Ve33 / ERC-20 汎用テンプレート）を
 //! そのまま埋め込んで検証する。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

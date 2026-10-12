@@ -16,6 +16,7 @@
 //! スクリプトの一致確認（redeemScript が scriptPubKey と一致するか等）は
 //! **署名者の責務**であり、解析時には検証しない（BIP174 のテストベクタでも
 //! 「一致しないが妥当な PSBT」が valid として扱われている）。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

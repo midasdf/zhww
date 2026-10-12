@@ -6,6 +6,7 @@
 //! **設計方針**: トランザクションは可変長（入力数・出力数・スクリプト長）なので、
 //! 解析には呼び出し側が用意したアロケータ（セッション単位のアリーナを想定）を使う。
 //! **秘密情報はこの領域に置かない**（seed・鍵は固定長バッファのみで扱う）。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

@@ -8,6 +8,7 @@
 //!
 //! Zig 0.17 では標準出力が `std.Io` 経由になり、プロセスの引数は
 //! `pub fn main(init: std.process.Init.Minimal)` で受け取る。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const zhww = @import("zhww");

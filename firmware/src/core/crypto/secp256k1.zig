@@ -7,6 +7,7 @@
 //! 監査時に「どの C 関数に依存しているか」が一目で分かることを優先した。
 //!
 //! 参考: https://github.com/bitcoin-core/secp256k1
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

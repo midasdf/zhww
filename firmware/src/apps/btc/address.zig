@@ -5,6 +5,7 @@
 //!   core.encoding.bech32.encodeSegwit に一元化する
 //! - ネットワークは mainnet / testnet / signet / regtest に対応する
 //! - P2TR は BIP341 の鍵パス（内部鍵 + TapTweak）のみを扱う
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

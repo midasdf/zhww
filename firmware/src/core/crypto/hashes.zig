@@ -1,4 +1,5 @@
 //! ハッシュ関数の集約。Bitcoin と Ethereum で必要になるものをここに集める。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Ripemd160 = @import("ripemd160.zig").Ripemd160;

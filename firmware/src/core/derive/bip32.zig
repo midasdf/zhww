@@ -6,6 +6,7 @@
 //! - CKDpriv / CKDpub で無効な tweak が出た場合は、BIP32 の仕様どおり次の index へ進む
 //! - 拡張鍵のバージョンバイトは SLIP-132 に従い、BIP44/49/84 で異なる接頭辞を出力できる
 //! - 秘密鍵を持たない経路では `neuter()` を使い、拡張秘密鍵を保持しない
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

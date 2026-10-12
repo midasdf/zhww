@@ -9,6 +9,7 @@
 //! - パスフレーズと mnemonic は NFKD 正規化が必要だが、v0.1 では ASCII のみ対応し、
 //!   非 ASCII は **明示的にエラー** にする（黙って異なる seed を作らないため）
 //! - mnemonic は空白を正規化してから PBKDF2 に渡す（末尾の空白で seed が変わる事故を防ぐ）
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

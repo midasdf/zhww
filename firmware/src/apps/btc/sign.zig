@@ -10,6 +10,7 @@
 //! - 入力額が分からない場合は手数料を計算しない（`amounts_complete = false`）。
 //!   表示層はこの場合に承認を求めてはならない
 //! - 非 witness 入力に対して `witness_utxo` しか無い場合は署名しない（BIP174 の規定）
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

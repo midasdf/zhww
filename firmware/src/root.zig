@@ -8,6 +8,7 @@
 //!   I-1 core はチェーンを知らない
 //!   I-2 apps は鍵素材を保持しない
 //!   I-3 署名対象ハッシュは apps と core が独立に計算する（二重計算の原則）
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 pub const errors = @import("core/errors.zig");
 pub const base58 = @import("core/encoding/base58.zig");

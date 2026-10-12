@@ -3,6 +3,7 @@
 //! 動的メモリを使わない。出力は呼び出し側が用意したバッファに書き込む。
 //!
 //! 参考: https://en.bitcoin.it/wiki/Base58Check_encoding
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

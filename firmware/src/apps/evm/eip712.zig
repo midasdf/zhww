@@ -11,6 +11,7 @@
 //!   （name / version / chainId / verifyingContract / salt）で推論する
 //!
 //! テストは独立実装（eth-account 0.13.7）で計算した値との一致を確認している。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

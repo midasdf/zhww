@@ -2,6 +2,7 @@
 //!
 //! ベクタ: tests/vectors/bip32.json
 //! 出典: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

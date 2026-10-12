@@ -7,6 +7,7 @@
 //!
 //! 参考: https://github.com/ethereum/ercs/blob/master/ERCS/erc-55.md
 //!       https://ethereum.org/en/developers/docs/accounts/
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

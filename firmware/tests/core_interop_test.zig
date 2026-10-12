@@ -12,6 +12,7 @@
 //! **他のテストとの違い**: BIP143 のベクタは「仕様どうりに実装できているか」を見るが、
 //! このテストは「**実際の Bitcoin Core が我々の署名を有効と判断するか**」を見る。
 //! 実装・エンコード・鍵探索・最終化のすべてが噛み合っていなければ通らない。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

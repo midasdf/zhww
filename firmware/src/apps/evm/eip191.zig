@@ -10,6 +10,7 @@
 //!
 //! 参考: https://eips.ethereum.org/EIPS/eip-191
 //!       https://eips.ethereum.org/EIPS/eip-712 （型付きデータ。v0.1 では未対応）
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const hashes = @import("../../core/crypto/hashes.zig");

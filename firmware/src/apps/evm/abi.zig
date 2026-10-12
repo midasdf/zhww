@@ -19,6 +19,7 @@
 //!
 //! テストの一部は Solidity 仕様書の公式例をそのまま埋め込んでいる（自前の期待値は
 //! 使わない）。セレクタは Keccak-256 の計算結果と既知の定数を突き合わせる。
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

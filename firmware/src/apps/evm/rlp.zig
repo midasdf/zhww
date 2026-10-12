@@ -12,6 +12,7 @@
 //! 参考: https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp/
 //!       https://github.com/ethereum/tests/blob/develop/RLPTests/rlptest.json
 //!       https://ethereum.github.io/yellowpaper/paper.pdf （付録 B）
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

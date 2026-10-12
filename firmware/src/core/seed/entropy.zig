@@ -9,6 +9,7 @@
 //!   ダイスの記録から自分で検証できるようにするため、乱数を使うのは入力だけに限る
 //!
 //! 参考: RFC 5869（HKDF）, https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

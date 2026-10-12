@@ -8,6 +8,7 @@
 //! 明示的に非対応（error.UnsupportedSighash）としている。
 //!
 //! 参考: https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;
