@@ -73,6 +73,16 @@ jobs:
           test "$TX" = "$EXPECTED"
           echo "EVM OK（EIP-1559 の署名が独立実装と一致）"
 
+      - name: EVM の表示（evm-show）
+        working-directory: firmware
+        run: |
+          RAW="02f8b001018459682f008509502f900082ea6094a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4880b844a9059cbb000000000000000000000000353535353535353535353535353535353535353a0000000000000000000000000000000000000000000000000000000005f5e100c080a0f81c6287143005ecacc19b19ed1f8929c0d1ac1304d1e4c365c97c9f0410b003a019c85ccdf57b11bb85a28151b1847ce6777524240ef8ec55441b3cda63643de9"
+          OUT=$(printf '%s' "$RAW" | ./zig-out/bin/zhww evm-show 2>/dev/null)
+          echo "$OUT"
+          echo "$OUT" | grep -q 'transfer(address,uint256)'
+          echo "$OUT" | grep -q '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+          echo "evm-show OK（セレクタと EIP-55 のアドレスを表示）"
+
       - name: 表示（show）の確認
         working-directory: firmware
         run: |

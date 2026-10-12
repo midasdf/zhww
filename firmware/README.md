@@ -13,9 +13,10 @@
 | 楕円曲線 | **libsecp256k1**（C ライブラリをリンク） |
 | 実装済み（暗号・エンコード） | Base58 / Bech32・Bech32m / RIPEMD-160 / SHA-256 / HMAC-SHA512 / PBKDF2 / HKDF-SHA256 / Keccak-256 / ECDSA 署名と検証（RFC6979・low-s・DER・recoverable） |
 | 実装済み（Bitcoin） | BIP39（ダイス・カメラ等の entropy 結合を含む） / BIP32 / アドレス生成（P2PKH・P2SH-P2WPKH・P2WPKH・P2TR） / トランザクション解析・直列化 / Legacy・BIP143 sighash / **BIP341（Taproot）の鍵パス署名** / PSBT の解析・検証・書き出し（BIP174） / PSBT からの署名と最終化（P2WPKH・P2PKH・P2SH-P2WPKH・P2PK） / **2-of-3 マルチシグ（P2WSH）** / 手数料計算とお釣り判定 / バイト列入出力のワークフロー（`signPsbtBytes`） |
+| 実装済み（CLI） | `address` / `sign` / `show`（署名前の確認表示） / `mnemonic`（ダイス検証） / `ur` / `ur-decode` / `evm-sign` / `evm-show` |
 | 実装済み（転送層） | **BC-UR**（Bytewords の standard/uri/minimal、CRC-32、単一パート・マルチパートのエンコード/デコード、順不同・重複ありの再構成） |
 | 実装済み（EVM） | RLP のエンコード・デコード / EIP-55 チェックサム付きアドレス / **EIP-155（legacy）と EIP-1559（type 2）の署名**（両方とも署名して検証まで行う） / EIP-191 `personal_sign` / **EIP-712 型付きデータ**（encodeType の依存型ソート・配列・入れ子・ドメイン推論） / **ABI デコード**（正準形のみ受理） / **ERC-7730 clear signing**（記述子の解析・関数の照合・人間可読な表示項目の生成・危険パターンの警告） |
-| テスト | **199 件すべて成功**（BTC: BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件・統合テスト・**Bitcoin Core が単一署名・2-of-3 マルチシグ・Taproot の署名を受理することの確認** / EVM: RLP 公式ベクタ・**EIP-155 の公式例とバイト一致**・EIP-55・EIP-191・EIP-712（仕様の既知値と一致し、署名も独立実装と一致）・ABI（ethers.js が生成した calldata と一致）・ERC-7730（実際のレジストリの記述子） / 転送層: BC-UR の仕様・参照実装の文字列と一致） |
+| テスト | **203 件すべて成功**（BTC: BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件・統合テスト・**Bitcoin Core が単一署名・2-of-3 マルチシグ・Taproot の署名を受理することの確認** / EVM: RLP 公式ベクタ・**EIP-155 の公式例とバイト一致**・EIP-55・EIP-191・EIP-712（仕様の既知値と一致し、署名も独立実装と一致）・ABI（ethers.js が生成した calldata と一致）・ERC-7730（実際のレジストリの記述子） / 転送層: BC-UR の仕様・参照実装の文字列と一致） |
 | 未実装 | 画面 UI、実機（signet）での送金、MUR（ファウンテン符号の冗長パート） |
 
 ```bash
@@ -127,6 +128,11 @@ echo '{"chainId":1,"nonce":7,"gasLimit":21000,"maxFeePerGas":30000000000,
        "maxPriorityFeePerGas":1000000000,"to":"0x…","value":123456789,"data":"0x"}' \
   | ./zig-out/bin/zhww evm-sign --mnemonic "…"
 #   → 署名済み raw tx を標準出力へ（送信元アドレスと種別は標準エラーへ）
+
+# EVM のトランザクションを表示する（raw hex。署名は行わない）
+./zig-out/bin/zhww evm-show < raw_tx.hex
+#   → 種別・チェーン ID・送金先（EIP-55）・金額・手数料・calldata の関数名を表示し、
+#     知らない関数や危険な操作（approve 等）は警告する
 
 # 署名の前に「何に署名しようとしているか」を確認する（画面の代わり）
 cat psbt.txt | ./zig-out/bin/zhww show --network regtest --mnemonic "…"

@@ -390,6 +390,133 @@ pub fn encodeEip1559Signed(out: []u8, tx: Eip1559Tx, y_parity: u1, r: u256, s: u
     );
 }
 
+// ---------------------------------------------------------------- 表示用の解析
+
+/// トランザクションの種別。
+pub const Kind = enum { legacy, eip2930, eip1559 };
+
+/// 表示用に解析したトランザクション。
+///
+/// 署名済み・未署名のどちらでも解析できる（未署名なら `signed = false`）。
+/// 値が入っていないフィールドは null（壊れた入力を推測で埋めない）。
+pub const Decoded = struct {
+    kind: Kind,
+    chain_id: ?u256 = null,
+    nonce: ?u256 = null,
+    to: ?[20]u8 = null,
+    value: ?u256 = null,
+    data: []const u8 = &.{},
+    gas_limit: ?u256 = null,
+    gas_price: ?u256 = null,
+    max_fee_per_gas: ?u256 = null,
+    max_priority_fee_per_gas: ?u256 = null,
+    signed: bool = false,
+};
+
+/// 生のトランザクション（署名済み・未署名）を解析する。
+pub fn decode(allocator: std.mem.Allocator, raw: []const u8) Error!Decoded {
+    if (raw.len == 0) return error.Truncated;
+    return switch (raw[0]) {
+        transaction_type_eip1559 => try decodeTyped(allocator, .eip1559, raw[1..]),
+        0x01 => try decodeTyped(allocator, .eip2930, raw[1..]),
+        else => try decodeLegacy(allocator, raw),
+    };
+}
+
+/// リスト直下の項目（入れ子のリストは 1 項目として飛ばす）を順に集める。
+fn topLevelItems(allocator: std.mem.Allocator, payload: []const u8) Error![]const []const u8 {
+    var items = std.ArrayList([]const u8).empty;
+    errdefer items.deinit(allocator);
+
+    var iterator = rlp.Iterator.open(payload);
+    var depth: usize = 0;
+    while (try iterator.next()) |item| {
+        switch (item) {
+            .bytes => |bytes| {
+                if (depth == 0) try items.append(allocator, bytes);
+            },
+            .list => depth += 1,
+            .list_end => {
+                if (depth == 0) return error.InvalidEncoding;
+                depth -= 1;
+            },
+        }
+    }
+    if (depth != 0) return error.InvalidEncoding;
+    try iterator.finish();
+    return items.toOwnedSlice(allocator);
+}
+
+/// 20 バイトのアドレス。空ならコントラクト作成（null）。
+fn payloadToAddress(payload: []const u8) Error!?[20]u8 {
+    if (payload.len == 0) return null;
+    if (payload.len != 20) return error.InvalidEncoding;
+    return payload[0..20].*;
+}
+
+fn decodeLegacy(allocator: std.mem.Allocator, raw: []const u8) Error!Decoded {
+    const payload = try rlp.decodeList(raw);
+    const items = try topLevelItems(allocator, payload);
+    if (items.len < 6) return error.InvalidEncoding;
+
+    var decoded = Decoded{ .kind = .legacy };
+    decoded.nonce = try rlp.decodeUintPayload(items[0]);
+    decoded.gas_price = try rlp.decodeUintPayload(items[1]);
+    decoded.gas_limit = try rlp.decodeUintPayload(items[2]);
+    decoded.to = try payloadToAddress(items[3]);
+    decoded.value = try rlp.decodeUintPayload(items[4]);
+    decoded.data = items[5];
+
+    // 署名済みなら v, r, s が続く
+    if (items.len >= 9) {
+        decoded.signed = true;
+        const v = try rlp.decodeUintPayload(items[6]);
+        if (v >= 35) decoded.chain_id = (v - 35) / 2; // EIP-155
+    }
+    return decoded;
+}
+
+fn decodeTyped(
+    allocator: std.mem.Allocator,
+    kind: Kind,
+    payload_with_list: []const u8,
+) Error!Decoded {
+    const payload = try rlp.decodeList(payload_with_list);
+    const items = try topLevelItems(allocator, payload);
+
+    var decoded = Decoded{ .kind = kind };
+    switch (kind) {
+        .eip1559 => {
+            if (items.len < 9) return error.InvalidEncoding;
+            decoded.chain_id = try rlp.decodeUintPayload(items[0]);
+            decoded.nonce = try rlp.decodeUintPayload(items[1]);
+            decoded.max_priority_fee_per_gas = try rlp.decodeUintPayload(items[2]);
+            decoded.max_fee_per_gas = try rlp.decodeUintPayload(items[3]);
+            decoded.gas_limit = try rlp.decodeUintPayload(items[4]);
+            decoded.to = try payloadToAddress(items[5]);
+            decoded.value = try rlp.decodeUintPayload(items[6]);
+            decoded.data = items[7];
+            // アクセスリストは入れ子のリストなので items には数えない。
+            // 8 項目 + 署名（yParity, r, s）で 11 になる。
+            decoded.signed = items.len >= 11;
+        },
+        .eip2930 => {
+            if (items.len < 8) return error.InvalidEncoding;
+            decoded.chain_id = try rlp.decodeUintPayload(items[0]);
+            decoded.nonce = try rlp.decodeUintPayload(items[1]);
+            decoded.gas_price = try rlp.decodeUintPayload(items[2]);
+            decoded.gas_limit = try rlp.decodeUintPayload(items[3]);
+            decoded.to = try payloadToAddress(items[4]);
+            decoded.value = try rlp.decodeUintPayload(items[5]);
+            decoded.data = items[6];
+            // 7 項目 + 署名（yParity, r, s）で 10 になる。
+            decoded.signed = items.len >= 10;
+        },
+        .legacy => unreachable,
+    }
+    return decoded;
+}
+
 // ---------------------------------------------------------------- テスト
 
 const testing = std.testing;
@@ -659,4 +786,70 @@ test "不正な鍵と小さすぎる出力バッファを拒否する" {
 
     var small_payload: [1]u8 = undefined;
     try testing.expectError(error.BufferTooSmall, legacySigningPayload(&small_payload, tx));
+}
+
+test "署名済み legacy トランザクション（EIP-155 の公式例）を解析する" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // EIP-155 の例（9, 20 gwei, 21000, 0x3535…, 1 ether, chainId 1）
+    const raw_hex =
+        "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a0" ++
+        "28ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83";
+    const raw = try allocator.alloc(u8, raw_hex.len / 2);
+    _ = try std.fmt.hexToBytes(raw, raw_hex);
+
+    const decoded = try decode(allocator, raw);
+    try testing.expectEqual(Kind.legacy, decoded.kind);
+    try testing.expect(decoded.signed);
+    try testing.expectEqual(@as(u256, 1), decoded.chain_id.?);
+    try testing.expectEqual(@as(u256, 9), decoded.nonce.?);
+    try testing.expectEqual(@as(u256, 20_000_000_000), decoded.gas_price.?);
+    try testing.expectEqual(@as(u256, 21_000), decoded.gas_limit.?);
+    try testing.expectEqual(@as(u256, 1_000_000_000_000_000_000), decoded.value.?);
+    try testing.expectEqual(@as(usize, 0), decoded.data.len);
+    const to = decoded.to.?;
+    try testing.expectEqual(@as(u8, 0x35), to[0]);
+    try testing.expectEqual(@as(u8, 0x35), to[19]);
+}
+
+test "EIP-1559 の署名済みトランザクションを解析する（eth-account の出力）" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const raw_hex = "02f86f0107843b9aca008506fc23ac0082520894353535353535353535353535353535353535353584075bcd1580c080a08b29bfd611a0f695677f38218b2a6d02218f906adedbb1f171aa49b261794de2a02e5c9604faa6d3f48c89f8568aa04ea6cef7e058d0464ef4447989524c1bd4cf";
+    const raw = try allocator.alloc(u8, raw_hex.len / 2);
+    _ = try std.fmt.hexToBytes(raw, raw_hex);
+
+    const decoded = try decode(allocator, raw);
+    try testing.expectEqual(Kind.eip1559, decoded.kind);
+    try testing.expect(decoded.signed);
+    try testing.expectEqual(@as(u256, 1), decoded.chain_id.?);
+    try testing.expectEqual(@as(u256, 7), decoded.nonce.?);
+    try testing.expectEqual(@as(u256, 1_000_000_000), decoded.max_priority_fee_per_gas.?);
+    try testing.expectEqual(@as(u256, 30_000_000_000), decoded.max_fee_per_gas.?);
+    try testing.expectEqual(@as(u256, 21_000), decoded.gas_limit.?);
+    try testing.expectEqual(@as(u256, 123_456_789), decoded.value.?);
+    try testing.expectEqual(@as(?u256, null), decoded.gas_price);
+}
+
+test "未署名のトランザクションと calldata 付きも解析できる" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // ERC-20 transfer の calldata（selector は a9059cbb）
+    const raw_hex = "02f8b001018459682f008509502f900082ea6094a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4880b844a9059cbb000000000000000000000000353535353535353535353535353535353535353a0000000000000000000000000000000000000000000000000000000005f5e100c080a0f81c6287143005ecacc19b19ed1f8929c0d1ac1304d1e4c365c97c9f0410b003a019c85ccdf57b11bb85a28151b1847ce6777524240ef8ec55441b3cda63643de9";
+    const raw = try allocator.alloc(u8, raw_hex.len / 2);
+    _ = try std.fmt.hexToBytes(raw, raw_hex);
+
+    const decoded = try decode(allocator, raw);
+    try testing.expectEqual(@as(usize, 68), decoded.data.len);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0xa9, 0x05, 0x9c, 0xbb }, decoded.data[0..4]);
+
+    // 壊れた入力は拒否する
+    try testing.expectError(error.Truncated, decode(allocator, &.{}));
+    try testing.expectError(error.InvalidEncoding, decode(allocator, &[_]u8{0xc0}));
 }

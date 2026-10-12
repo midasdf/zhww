@@ -18,6 +18,7 @@ const usage =
     \\
     \\コマンド:
     \\  address    アドレスを表示する
+    \\  evm-show   署名済み/未署名の EVM トランザクションを表示する（raw hex）
     \\  evm-sign   EVM のトランザクション（JSON）に署名する
     \\  show       PSBT の中身を人間可読で表示する（画面の代わり）
     \\  sign       PSBT（base64）に署名する。標準入力から読む
@@ -32,6 +33,9 @@ const usage =
     \\  --path "m/84'/0'/0'/0/0"   派生パス（既定: m/84'/0'/0'/0/0）
     \\  --network mainnet|testnet|signet|regtest （既定: mainnet）
     \\  --kind p2wpkh|p2pkh|p2sh-p2wpkh|p2tr （既定: p2wpkh）
+    \\
+    \\evm-show のオプション:
+    \\  入力は raw トランザクションの 16 進数（0x の有無は問わない）
     \\
     \\evm-sign のオプション:
     \\  --mnemonic "..."        署名に使う mnemonic（必須。EVM は 44h/60h/0h/0/0 を使う）
@@ -116,6 +120,10 @@ fn run(init: std.process.Init.Minimal, stdout: anytype) !void {
     }
     if (std.mem.eql(u8, command, "sign")) {
         try commandSign(allocator, args.items[1..], stdout);
+        return;
+    }
+    if (std.mem.eql(u8, command, "evm-show")) {
+        try commandEvmShow(allocator, args.items[1..], stdout);
         return;
     }
     if (std.mem.eql(u8, command, "evm-sign")) {
@@ -481,6 +489,124 @@ fn jsonHex(allocator: std.mem.Allocator, root: std.json.ObjectMap, name: []const
     const out = try allocator.alloc(u8, hex_text.len / 2);
     _ = std.fmt.hexToBytes(out, hex_text) catch return error.InvalidArgument;
     return out;
+}
+
+// ---------------------------------------------------------------- EVM 表示
+
+/// EVM のトランザクション（raw hex）を人間可読で表示する。署名は行わない。
+fn commandEvmShow(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdout: anytype,
+) !void {
+    _ = args;
+    const input = try readAllStdin(allocator);
+    const trimmed = std.mem.trim(u8, input, " \t\r\n");
+    if (trimmed.len == 0) {
+        stderrPrint("raw トランザクション（16 進数）を標準入力から渡してください\n", .{});
+        return error.Usage;
+    }
+    const hex_text = if (std.mem.startsWith(u8, trimmed, "0x")) trimmed[2..] else trimmed;
+    if (hex_text.len % 2 != 0) {
+        stderrPrint("16 進数として解釈できません\n", .{});
+        return error.InvalidArgument;
+    }
+    const raw = try allocator.alloc(u8, hex_text.len / 2);
+    _ = std.fmt.hexToBytes(raw, hex_text) catch {
+        stderrPrint("16 進数として解釈できません\n", .{});
+        return error.InvalidArgument;
+    };
+
+    const decoded = try zhww.evm_transaction.decode(allocator, raw);
+
+    const kind_name = switch (decoded.kind) {
+        .legacy => "legacy（EIP-155）",
+        .eip2930 => "EIP-2930（type 1）",
+        .eip1559 => "EIP-1559（type 2）",
+    };
+    try stdout.interface.print("種別: {s}\n", .{kind_name});
+    if (decoded.chain_id) |chain_id| {
+        try stdout.interface.print("チェーン ID: {d}\n", .{chain_id});
+    }
+    if (decoded.nonce) |nonce| try stdout.interface.print("nonce: {d}\n", .{nonce});
+
+    if (decoded.to) |to| {
+        var buffer: [42]u8 = undefined;
+        const address = try zhww.evm_address.checksum(&buffer, to);
+        try stdout.interface.print("送金先: {s}\n", .{address});
+    } else {
+        try stdout.interface.print("送金先: なし（コントラクト作成）\n", .{});
+        stderrPrint("警告: コントラクト作成のトランザクションです\n", .{});
+    }
+
+    if (decoded.value) |value| {
+        try stdout.interface.print("金額: {d} wei", .{value});
+        if (value > 0) {
+            try stdout.interface.print(" ({d}.{d:0>18} ETH)", .{
+                value / 1_000_000_000_000_000_000,
+                value % 1_000_000_000_000_000_000,
+            });
+        }
+        try stdout.interface.print("\n", .{});
+    }
+    if (decoded.gas_limit) |gas_limit| {
+        try stdout.interface.print("gas 上限: {d}\n", .{gas_limit});
+    }
+    if (decoded.gas_price) |gas_price| {
+        try stdout.interface.print("gas 価格: {d} wei/gas\n", .{gas_price});
+        if (decoded.gas_limit) |gas_limit| {
+            try stdout.interface.print("最大手数料: {d} wei\n", .{gas_price * gas_limit});
+        }
+    }
+    if (decoded.max_fee_per_gas) |max_fee| {
+        try stdout.interface.print("手数料上限: {d} wei/gas\n", .{max_fee});
+        if (decoded.max_priority_fee_per_gas) |tip| {
+            try stdout.interface.print("優先手数料: {d} wei/gas\n", .{tip});
+        }
+        if (decoded.gas_limit) |gas_limit| {
+            try stdout.interface.print("最大手数料: {d} wei\n", .{max_fee * gas_limit});
+        }
+    }
+
+    // data（calldata）
+    if (decoded.data.len == 0) {
+        try stdout.interface.print("data: なし（送金）\n", .{});
+    } else if (zhww.evm_abi.selector(decoded.data)) |selector| {
+        var selector_hex: [8]u8 = undefined;
+        try stdout.interface.print("data: {d} バイト  セレクタ: 0x{s}\n", .{
+            decoded.data.len,
+            toHex(&selector, &selector_hex),
+        });
+        if (zhww.evm_abi.knownFunction(selector)) |known| {
+            try stdout.interface.print("  関数: {s}\n", .{known.signature});
+        } else {
+            try stdout.interface.print("  関数: 不明\n", .{});
+            stderrPrint("警告: 知らない関数です。内容を確認できないまま署名しないでください\n", .{});
+        }
+        try warnDangerousCalldata(selector);
+    } else {
+        try stdout.interface.print("data: {d} バイト（セレクタなし）\n", .{decoded.data.len});
+    }
+
+    try stdout.interface.print("署名: {s}\n", .{if (decoded.signed) "あり" else "なし"});
+    stderrPrint("これは表示のみで、署名は行っていません\n", .{});
+}
+
+/// 危険な操作（無制限 approve・全権委譲・permit）を警告する。
+fn warnDangerousCalldata(selector: [4]u8) !void {
+    // approve(address,uint256) / increaseAllowance / setApprovalForAll / permit
+    const approve = [_]u8{ 0x09, 0x5e, 0xa7, 0xb3 };
+    const set_approval_for_all = [_]u8{ 0xa2, 0x2c, 0xb4, 0x65 };
+    const permit = [_]u8{ 0xd5, 0x05, 0xac, 0xcf };
+    if (std.mem.eql(u8, &selector, &approve)) {
+        stderrPrint("注意: approve です。金額を確認してください（無制限の許可は危険）\n", .{});
+    }
+    if (std.mem.eql(u8, &selector, &set_approval_for_all)) {
+        stderrPrint("警告: setApprovalForAll です。全トークンの操作権を委ねます\n", .{});
+    }
+    if (std.mem.eql(u8, &selector, &permit)) {
+        stderrPrint("注意: permit（オフチェーン署名の代行）です\n", .{});
+    }
 }
 
 // ---------------------------------------------------------------- show（表示）
