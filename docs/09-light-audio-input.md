@@ -232,6 +232,24 @@ whereas the camera's cost is money the user has to spend.
 
 The camera research stays in [03-hardware-bom.md](03-hardware-bom.md) §2.6 so it can be picked up later.
 
+
+### Sending from a phone or PC
+
+The sender is a **single static HTML page** (`tools/light-sender.html`): open it in a browser, paste
+one or more UR strings (one per line), press Start, and hold the screen against the device's light
+sensor. It flashes pure black and white at a symbol rate that divides the display refresh, repeats the
+sequence until stopped, and shows which part is being sent.
+
+The UR strings come from the host side of this project or from any UR-capable wallet. With the CLI:
+
+```bash
+# one PSBT -> the sequence of UR parts, one per line, ready to paste
+zhww ur --fragment 14 < psbt.txt > parts.txt
+```
+
+Keep the number of parts small: a shorter fragment means more parts, and more parts mean a longer
+flash sequence. The device's own output direction is unaffected — it answers with a QR code.
+
 ### What happens next
 
 1. **Sender** (host, no hardware): a static web page that flashes the screen to send a UR string.
