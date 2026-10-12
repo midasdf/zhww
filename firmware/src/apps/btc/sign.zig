@@ -584,6 +584,14 @@ pub fn signPsbtBytes(
     };
 }
 
+/// seed から鍵集合を作る（BIP32 マスター鍵）。
+pub fn keysFromMnemonic(mnemonic: []const u8, passphrase: []const u8) Error!KeySource {
+    var seed: [64]u8 = undefined;
+    defer @memset(&seed, 0); // 使い終わった seed は即座に消す
+    try bip39.mnemonicToSeed(&seed, mnemonic, passphrase);
+    return KeySource.fromSeed(&seed);
+}
+
 // ---------------------------------------------------------------- テスト
 
 const testing = std.testing;
@@ -632,6 +640,26 @@ test "pushData の表現" {
     try testing.expectEqual(@as(u8, 0x4C), long[0]);
     try testing.expectEqual(@as(u8, 80), long[1]);
     try testing.expectEqual(@as(usize, 82), long.len);
+}
+
+test "mnemonic から鍵集合を作れる（BIP84 テストベクタのアドレスと一致）" {
+    const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const keys = try keysFromMnemonic(mnemonic, "");
+
+    var program: [40]u8 = undefined;
+    const decoded = try bech32.decodeSegwit(
+        "bc",
+        &program,
+        "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu",
+    );
+
+    const node = try keys.derive(&[_]u32{
+        84 | bip32.hardened, 0 | bip32.hardened, 0 | bip32.hardened, 0, 0,
+    });
+    const pub_key = try node.publicKey();
+    var h160: [20]u8 = undefined;
+    hashes.hash160(&h160, &pub_key);
+    try testing.expectEqualSlices(u8, decoded.program, &h160);
 }
 
 test "seed から BIP84 の鍵を導出し、既知の witness program と一致する" {

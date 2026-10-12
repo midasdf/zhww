@@ -60,7 +60,12 @@
 ```
 zhww/
 ├── README.md                  ← 本ファイル
+├── DISCLAIMER.md              ← 免責・開発体制・LLM 利用の開示（必読）
+├── SECURITY.md                ← 脆弱性の報告方法
+├── LICENSE                    ← GPL-3.0（ファームウェア）
+├── LICENSE-HARDWARE           ← CERN-OHL-S-2.0（ハードウェア設計）
 ├── LICENSE-POLICY.md          ← ライセンス方針
+├── THIRD-PARTY-NOTICES.md     ← 第三者ソフトウェア・テストベクタの出典
 ├── docs/
 │   ├── 01-requirements.md     ← 要求仕様・スコープ・受け入れ基準
 │   ├── 02-architecture.md     ← アーキテクチャ・鍵導出・署名フロー
@@ -69,11 +74,11 @@ zhww/
 │   ├── 05-threat-model.md     ← 脅威モデル・残存リスク
 │   ├── 06-roadmap.md          ← マイルストーンと Done 定義
 │   └── 07-zero2w-setup.md     ← 手元の Raspberry Pi Zero 2 W を使う手順（無線の無効化）
-├── firmware/                  ← Zig 実装（BIP39/BIP32/アドレス生成 + 公式テストベクタ）
+├── firmware/                  ← Zig 実装（BTC 署名一式 + 公式テストベクタ）
 │   ├── build.zig
 │   ├── tests.zig
-│   ├── src/                   ← core（チェーン非依存）と apps（BTC）
-│   └── tests/                 ← 公式テストベクタ
+│   ├── src/                   ← core（チェーン非依存）と apps（BTC / EVM）
+│   └── tests/                 ← 公式テストベクタと統合テスト
 └── hardware/                  ← KiCad 等（v0.1 は既成部品のため現状は方針のみ）
 ```
 
@@ -81,11 +86,11 @@ zhww/
 
 | 項目 | 状態 |
 |---|---|
-| 設計ドキュメント | 作成済み（要求仕様・アーキテクチャ・BOM・チェーン対応・脅威モデル・ロードマップ） |
-| ファームウェア（Zig + libsecp256k1） | BIP39 / BIP32 / Base58 / Bech32・Bech32m / RIPEMD-160 / **ECDSA 署名（RFC6979）** / BTC アドレス生成 / **トランザクション解析と署名対象ハッシュ（Legacy・BIP143）** / **PSBT 解析と検証（BIP174）** |
-| テスト | **71 件すべて成功**（BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件） |
+| 設計ドキュメント | 作成済み（要求仕様・アーキテクチャ・BOM・チェーン対応・脅威モデル・ロードマップ・実機手順） |
+| ファームウェア（Zig + libsecp256k1） | BIP39（ダイス entropy 含む）/ BIP32 / Base58 / Bech32・Bech32m / RIPEMD-160 / ECDSA（RFC6979）/ BTC アドレス生成 / トランザクション解析 / Legacy・BIP143 sighash / PSBT の解析・検証・書き出し / **PSBT からの署名と最終化（P2WPKH・P2PKH・P2SH-P2WPKH・P2PK）** / 手数料とお釣り判定 |
+| テスト | **88 件すべて成功**（BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件・3 種類の入力を持つ PSBT の署名と最終化） |
 | 実機 | Raspberry Pi Zero 2 W のセットアップ手順を [docs/07](docs/07-zero2w-setup.md) に記載 |
-| 次の作業 | PSBT からの署名と最終化、お釣り判定、画面 UI、QR 送受信 |
+| 次の作業 | EVM 署名、画面 UI、QR 送受信、開発用 CLI |
 
 ```bash
 cd firmware && zig build test

@@ -46,10 +46,9 @@ CERN-OHL の各バリアント（S: 強コピーレフト / W: 弱 / P: 許諾�
 ## 4. TODO（v0.1 公開まで）
 
 - [x] GPL-3.0 の正典テキストを取得し `LICENSE` として配置（ファームウェア用）
-- [ ] CERN-OHL-S-2.0（[ohwr.org](https://ohwr.org/project/cernohl/wikis/Documents/CERN-OHL-version-2)）を
-      `LICENSE-HARDWARE` として配置（ハードウェア設計の公開時）
+- [x] CERN-OHL-S-2.0 の正典テキストを取得し `LICENSE-HARDWARE` として配置（ハードウェア設計用）
 - [ ] CC-BY-SA-4.0 / CC-BY-4.0（[creativecommons.org](https://creativecommons.org/licenses/)）を
-      筐体・ドキュメント用に配置
+      筐体・ドキュメント用に配置（筐体を設計した時点で追加する）
 - [ ] ファイルごとの SPDX ヘッダ（`SPDX-License-Identifier:`）を全ソースに付与
-- [ ] 第三者コードの `THIRD-PARTY-NOTICES.md` を作成（libsecp256k1、テストベクタの出典など）
-- [ ] 脆弱性開示ポリシー `SECURITY.md` を作成
+- [x] 第三者コードの `THIRD-PARTY-NOTICES.md` を作成（libsecp256k1、テストベクタの出典など）
+- [x] 脆弱性開示ポリシー `SECURITY.md` を作成
