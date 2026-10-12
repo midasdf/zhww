@@ -62,3 +62,12 @@ jobs:
             2>/dev/null | grep '^FINAL_TX=' | cut -d= -f2-)
           test "$MINE" = "$EXPECTED"
           echo "署名 OK（Bitcoin Core の出力と一致）"
+
+      - name: UR（QR 転送）の往復
+        working-directory: firmware
+        run: |
+          PSBT=$(jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json)
+          MINE=$(printf '%s' "$PSBT" | ./zig-out/bin/zhww ur --fragment 40 2>/dev/null \
+            | ./zig-out/bin/zhww ur-decode 2>/dev/null)
+          test "$MINE" = "$PSBT"
+          echo "UR OK（PSBT → UR → PSBT が一致）"
