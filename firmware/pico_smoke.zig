@@ -43,6 +43,26 @@ export fn zhww_smoke(
     return address.len + result.partial_sigs.len;
 }
 
+/// UI 層（画面・LCD ドライバ）も参照させる。
+export fn zhww_smoke_ui(pixels_ptr: [*]u16, count: usize, out: [*]u8, out_len: usize) usize {
+    var fb = @import("src/ui/framebuffer.zig").Framebuffer.init(pixels_ptr[0..count], 240, 240) catch return 0;
+    const modules: [9]u8 = .{ 1, 0, 1, 0, 1, 0, 1, 0, 1 };
+    const screen = @import("src/ui/screen.zig").Screen{
+        .title = "CONFIRM",
+        .lines = &.{.{ .label = "To", .value = "bc1qexample" }},
+        .qr = .{ .width = 3, .height = 3, .modules = &modules },
+        .footer_left = "OK",
+        .footer_right = "CANCEL",
+    };
+    screen.render(&fb);
+    const lcd = @import("src/ui/st7789.zig");
+    var driver = lcd.Driver(@import("src/ui/st7789.zig").MockTransport){ .transport = .{} };
+    driver.setWindow(0, 0, 239, 239) catch return 0;
+    _ = out;
+    _ = out_len;
+    return fb.getPixel(0, 0);
+}
+
 /// EVM と UR も参照させる（コンパイル対象に含める）。
 export fn zhww_smoke_evm(
     data_ptr: [*]const u8,
