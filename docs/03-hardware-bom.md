@@ -276,6 +276,49 @@ The consequence is honesty about cost: receiving a PSBT over light takes **tens 
 an instant, and the light link is not a standard anyone else has reviewed. In exchange, the device has
 **no shared storage, no removable media and no cable data path** - only a light sensor and a screen.
 
+
+### 2.10 Exactly what to buy for the light receiver (and the cable)
+
+Search terms: **"LM393 光センサモジュール"** (Akizuki Denshi, aitendo, Amazon.co.jp, Yahoo
+Shopping), or **"LM393 photosensitive diode module digital analog output"**. Category pages worth
+starting from: [aitendo sensors](https://www.aitendo.com/product-list/211?num=50&img=200&sort=rank&page=2),
+[Akizuki photodiodes](https://akizukidenshi.com/catalog/c/cphotodio_dL_spd_p2/). A 3-pack of "photosensitive
+diode, digital/analog output" boards is typically **¥300-600 for three**, i.e. one spare set.
+
+**What it must be** (all four matter):
+
+| Must have | Why |
+|---|---|
+| A **photodiode or phototransistor** as the sensing element | Fast enough for a screen flickering at 30-120 Hz |
+| **Both `AO` (analog) and `DO` (digital)** outputs, on a 4-pin board | `AO` goes to an ADC pin so the firmware thresholds in software; `DO` is the fallback |
+| `3.3-5 V` supply (most of these boards take either) | The board runs at 3.3 V |
+| A **soldered pin header** (or a screw terminal) | The no-soldering rule |
+
+**What to avoid**: boards whose description says **"フォトレジスタ" / "光敏電阻" / "CdS" / "LDR"**. Those
+respond in 10-100 ms - too slow at this data rate - and CdS cells are being phased out anyway. On the
+board itself the difference is visible: a photodiode is a small **clear or black lens** can, a
+photoresistor is a **bare serpentine squiggle** on a ceramic or plastic base.
+
+**The cable**: the sensor's header is male and the board's 40-pin header is male, so the connection is
+**female-to-female (F-F) jumper wires, 4 of them** (or a 4-way F-F ribbon of the same length).
+Choose **10-20 cm**: the display sits on the header, so the wires have to come around it. Nothing else
+is needed - no Grove or Qwiic adapter, because these boards have plain 0.1" pins. The **light guide is
+printed as part of the case** (a sleeve for a 6.4 mm tube over the sensor in the 16 mm bay), so there is
+nothing extra to buy for it.
+
+**Wiring** (3 wires are enough to start; `DO` is optional):
+
+| Sensor pin | Board pin | Note |
+|---|---|---|
+| `VCC` | `3V3` | not 5 V |
+| `GND` | `GND` | — |
+| `AO` | **an ADC pin** (`GPIO26` or `GPIO27`) | the firmware samples this; the pin has to be confirmed against Adafruit's pin list for the display |
+| `DO` | any free GPIO | optional hardware-threshold path |
+
+Check the silkscreen for the pin order before connecting: the 4-pin boards come in both
+`VCC GND DO AO` and mirror-image orders. Nothing here has been bought or measured in this session, and
+no specific product page could be verified - the specification above is what matters.
+
 ## 3. Assembly procedure (solder-free; target 45 minutes; for the Pi Zero 2 WH)
 
 1. **Fit the LCD HAT** — plug it into the 40-pin header (1 minute)
