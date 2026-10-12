@@ -28,6 +28,7 @@ pub const btc_multisig = @import("apps/btc/multisig.zig");
 pub const btc_taproot = @import("apps/btc/taproot.zig");
 pub const bytewords = @import("transport/bytewords.zig");
 pub const cbor = @import("transport/cbor.zig");
+pub const light = @import("transport/light.zig");
 pub const ur = @import("transport/ur.zig");
 pub const ur_receive = @import("transport/ur_receive.zig");
 pub const ui_font = @import("ui/font.zig");
@@ -66,6 +67,7 @@ test {
     _ = btc_taproot;
     _ = bytewords;
     _ = cbor;
+    _ = light;
     _ = ur;
     _ = ur_receive;
     _ = ui_font;
