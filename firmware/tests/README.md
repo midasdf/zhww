@@ -9,7 +9,7 @@ cd firmware && zig build test
 実装のユニットテスト（`src/` 内の `test` ブロック）と、公式テストベクタによる統合テスト
 （本ディレクトリ）を `firmware/tests.zig` がまとめて実行する。
 
-**現在: 203 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
+**現在: 215 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
 4 モードすべてで成功することを確認済み。GitHub Actions でも Linux 上で毎回検証している）
 
 ## 最も強い検証: Bitcoin Core が署名を受理する
@@ -63,6 +63,8 @@ firmware/tests/
 ├── bip143_test.zig
 ├── bip174_test.zig
 ├── sign_test.zig             署名と最終化の統合テスト（外部ベクタが無い経路）
+│                             ※ 画面 UI（font / framebuffer / screen）と PNG 出力の
+│                               テストは各モジュール内にあり、root.zig 経由で実行される
 ├── core_interop_test.zig     Bitcoin Core との相互運用（Core が署名を受理する）
 ├── multisig_test.zig         2-of-3 マルチシグ（Core が署名を受理する）
 └── taproot_test.zig          Taproot 鍵パス署名（Core が署名を受理する）
