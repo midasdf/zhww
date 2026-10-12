@@ -29,6 +29,7 @@ pub const btc_taproot = @import("apps/btc/taproot.zig");
 pub const bytewords = @import("transport/bytewords.zig");
 pub const cbor = @import("transport/cbor.zig");
 pub const ur = @import("transport/ur.zig");
+pub const ur_receive = @import("transport/ur_receive.zig");
 pub const ui_font = @import("ui/font.zig");
 pub const ui_framebuffer = @import("ui/framebuffer.zig");
 pub const ui_screen = @import("ui/screen.zig");
@@ -66,6 +67,7 @@ test {
     _ = bytewords;
     _ = cbor;
     _ = ur;
+    _ = ur_receive;
     _ = ui_font;
     _ = ui_framebuffer;
     _ = ui_screen;

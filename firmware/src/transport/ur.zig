@@ -690,7 +690,9 @@ fn asHex(buf: []u8, hex: []const u8) []u8 {
 }
 
 /// The message from the BCR-2024-001 §5 test vector (256 bytes, seed "Wolf").
-const message_256 = [256]u8{
+///
+/// Shared with `ur_receive.zig`'s tests, so the reference vector has a single definition.
+pub const message_256 = [256]u8{
     0x91, 0x6e, 0xc6, 0x5c, 0xf7, 0x7c, 0xad, 0xf5, 0x5c, 0xd7, 0xf9, 0xcd, 0xa1, 0xa1, 0x03, 0x00,
     0x26, 0xdd, 0xd4, 0x2e, 0x90, 0x5b, 0x77, 0xad, 0xc3, 0x6e, 0x4f, 0x2d, 0x3c, 0xcb, 0xa4, 0x4f,
     0x7f, 0x04, 0xf2, 0xde, 0x44, 0xf4, 0x2d, 0x84, 0xc3, 0x74, 0xa0, 0xe1, 0x49, 0x13, 0x6f, 0x25,
@@ -710,7 +712,9 @@ const message_256 = [256]u8{
 };
 
 /// The nine sequential parts bc-ur's test_ur_encoder expects (`ur:bytes`, max_fragment_len = 30).
-const expected_parts = [9][]const u8{
+///
+/// Shared with `ur_receive.zig`'s tests, so the reference vector has a single definition.
+pub const expected_parts = [9][]const u8{
     "ur:bytes/1-9/lpadascfadaxcywenbpljkhdcahkadaemejtswhhylkepmykhhtsytsnoyoyaxaedsuttydmmhhpktpmsrjtdkgslpgh",
     "ur:bytes/2-9/lpaoascfadaxcywenbpljkhdcagwdpfnsboxgwlbaawzuefywkdplrsrjynbvygabwjldapfcsgmghhkhstlrdcxaefz",
     "ur:bytes/3-9/lpaxascfadaxcywenbpljkhdcahelbknlkuejnbadmssfhfrdpsbiegecpasvssovlgeykssjykklronvsjksopdzmol",
@@ -723,7 +727,9 @@ const expected_parts = [9][]const u8{
 };
 
 /// The UR message = CBOR byte string `59 0100` + 256 bytes (259 bytes in total).
-fn makeUrMessage(buf: *[259]u8) []u8 {
+///
+/// Shared with `ur_receive.zig`'s tests, so the reference vector has a single definition.
+pub fn makeUrMessage(buf: *[259]u8) []u8 {
     buf[0] = 0x59;
     buf[1] = 0x01;
     buf[2] = 0x00;
