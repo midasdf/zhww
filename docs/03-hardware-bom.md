@@ -11,7 +11,7 @@
 | # | Part | Spec / model number | Approx. cost | Example source |
 |---|---|---|---|---|
 | 1 | SBC | **Raspberry Pi Zero 2 WH (header pre-installed)** | ¥3,500–4,400 | スイッチサイエンス (Switch Science), 千石電商 (Sengoku Denshi), Amazon |
-| 2 | Display | **Adafruit Mini PiTFT 135×240** (product 4393, 1.14", ST7789, **two tactile buttons on the board**, **Qwiic/STEMMA QT port**, 38.6×24.5 mm, pre-assembled) | $9.95 | Adafruit (US) |
+| 2 | Display | **Adafruit Mini PiTFT 135×240** (product 4393, 1.14", ST7789, **two tactile buttons on the board**, **Qwiic/STEMMA QT port**, 38.6×24.5 mm, pre-assembled) | ~¥2,500 | **Switch Science (domestic)**: https://www.switch-science.com/products/7422 |
 | 3 | Light receiver (**the input path**) | **LM393 light-sensor module with a photodiode/phototransistor and both an analog and a digital output** (the common 4-pin "LM393 light sensor" boards) | ¥300–600 | Akizuki Denshi, aitendo, Amazon.co.jp, Yahoo Shopping |
 | — | Camera (**not bought** — the light receiver was chosen, see §2.6) | OV5647 5MP (**the version with the 22-pin FPC for Pi Zero**; Aokin / AuviPal, etc.) | ¥1,000–1,800 | Amazon |
 | 4 | microSD | 8–32GB (A1 or better; compatibility varies) | ¥800 | Consumer electronics retailer |
@@ -159,47 +159,36 @@ Exact pinouts and stock have to be confirmed against the vendor's wiki when orde
 been bought or measured yet.
 
 
-### 2.5 Build recipes (pick one; "easy to assemble" comes first)
+### 2.5 Build recipes
 
-The project's first promise is that a person can put this together in minutes without soldering.
-Three recipes keep that promise, in order of how little they add. They differ only in the display and
-in how extensions are attached; the firmware supports all of them (the screen layout handles both
-240x240 and 240x135).
+The standard build is **optical in both directions**: the host shows a flickering pattern that the
+device's light receiver reads, and the device answers with a BC-UR QR code on its own screen. **No SD
+card is involved at all** (§2.9), so nothing shared with a general-purpose computer ever touches the
+device.
 
-| | R1: minimal (default) | R2: extensible | R3: all plug-in (Grove) |
-|---|---|---|---|
-| Display | **Waveshare 1.3" LCD HAT** (plugs straight on) | Adafruit Mini PiTFT #4393 | **M5Stack Unit LCD** (135x240, Grove cable) |
-| Header | fully covered, **no extensions possible** | mostly free, **extensions possible** | all pins broken out as **female headers** |
-| Extension route | — | **Grove module + a Grove-to-jumper cable** onto the free pins | **Grove sockets on the shield** (plug in, nothing else) |
-| Assembly | plug the HAT on, insert the card: **~2 minutes** | plug the display on, one cable per sensor: **~3 minutes** | plug the shield on, two Grove cables: **~2 minutes** |
-| Soldering / loose jumpers | none / none | none / one cable per module | **none / none** |
-| Parts cost | $9.99 + $13.99 (~Y3,500) | ~Y3,500 + ~Y2,000 + modules | ~Y1,500 + ~Y3,500 + ~Y800 (~Y5,800) |
-| Where to buy | Waveshare, Amazon | Adafruit (import) + Grove from domestic shops | **all from domestic shops** |
-| Screen | 240x240 (native) | 240x135 | 240x135 (I2C) |
-| Known catch | extensions are impossible later | the display has to be imported | I2C is slower for full-screen updates (fine for partial ones; unmeasured), and the shield's female headers mean **it cannot be stacked with a HAT** |
+| | Standard build (this is the one) | SD-card variant (optional, not standard) |
+|---|---|---|
+| Display | **Adafruit Mini PiTFT #4393**, plugged onto the 40-pin header — **available domestically at [Switch Science](https://www.switch-science.com/products/7422)** | same |
+| Input | **LM393 light-sensor module** (¥300-600): three wires to the free header pins (VCC, GND, AO) | microSD card |
+| Output | QR code on the device screen (BC-UR, standard, readable by any UR-capable wallet) | file on the card |
+| Assembly | plug the display on, connect three wires: **~3 minutes** | plug the display on, insert a card |
+| Soldering | none | none |
+| Parts | board $9.99 + display ~¥2,500 + sensor ¥300-600 | + a card and a card reader |
+| Security shape | **air-gapped, optical both ways**; the host never touches the device | the card passes through the host, which is the untrusted party |
 
-**R1 is the default.** It is the one that needs no decisions, no imports beyond the board itself, and
-it is the only recipe whose exchange path (microSD) is already implemented and verified in CI.
+The SD-card variant remains implemented and verified in CI (`mtools` + `fsck.fat` in the handoff test),
+because it is the cheapest path for a PC-only user and it exercises the filesystem layer. It is simply
+not what the standard build uses.
 
-**R2 is the middle ground** and is the one to choose if a sensor (a light receiver, extra buttons, a
-rotary encoder) is wanted later: the Grove ecosystem supplies the module with keyed connectors, and
-one Grove-to-jumper cable is all the wiring needed. Adafruit's STEMMA QT is the equivalent ecosystem
-and Grove-to-STEMMA adapter cables exist.
+**Grove** is the extension ecosystem: the display leaves most of the header free, so a Grove module
+plugs in through one Grove-to-jumper cable. Seeed's Grove Shield for Pi Pico (domestic at
+[Switch Science](https://www.switch-science.com/collections/seeed/products/7109)) breaks out
+2x I2C, 2x UART, 3x digital, 3x analog and 1x SPI as Grove sockets, but its female headers mean it
+**cannot be stacked with the display**, so it is an alternative to the small display rather than an
+addition.
 
-**R3 is the "never touch a jumper wire" build.** Seeed's
-[Grove Shield for Pi Pico](https://www.seeedstudio.com/Grove-Shield-for-Pi-Pico-v1-0-p-4846.html)
-(available domestically at [Switch Science](https://www.switch-science.com/collections/seeed/products/7109))
-breaks out 2x I2C, 2x UART, 3x digital, 3x analog and 1x SPI as Grove sockets, so a Grove display and
-Grove buttons connect with cables only. It costs more and the display is I2C, which is the trade.
-
-**For a phone as the host**, the simplest answer in every recipe is a **USB-C SD card reader** (Y800-
-1,500): it reuses the microSD path that already works, and needs no sensor, no web page and no new
-firmware. A light receiver or camera is an optional extra, documented in
-[09-light-audio-input.md](09-light-audio-input.md), not part of the default build.
-
-**Unconfirmed**: prices are approximate, the M5Stack Unit LCD's real I2C update rate has not been
-measured, and whether the Grove shield's female headers can coexist with the chosen display has to be
-checked on the real boards.
+**Unconfirmed**: prices are approximate, and the light receiver's pin assignment is to be confirmed
+against Adafruit's pin list for the display.
 
 ### 2.6 Camera (deferred — the light receiver was chosen instead)
 
@@ -266,6 +255,26 @@ Carrying a battery in the device for that reason means it degrades, swells and l
    battery pack / dry-cell box (which have no data lines). This preserves the air gap (section 4-8 of [05](05-threat-model.md))
 3. It cannot be used where there is no power source (during a disaster, for example) → **carrying a dry-cell box solves this** (do not build it into the device)
 4. The board's LiPo connector is **not used** (it is left available as an optional modification for people who want a smaller device)
+
+## 2.9 Why the standard build has no SD-card exchange
+
+An SD card is shared physical media: it is written by the **host**, which this project treats as
+untrusted, and then inserted into the signing device. That makes it the one component that carries
+data — and potentially an exploit for the filesystem layer — from the untrusted side into the trusted
+one. The firmware does defend itself (the FAT32 parser is fuzzed, the PSBT is validated and displayed
+before anything is signed, and nothing is signed unless the screen shows it), but the cheapest defence
+is to not have the interface at all.
+
+So the standard build exchanges **optically in both directions**:
+
+| Direction | Channel | Standard? |
+|---|---|---|
+| Host to device | **Light** (the host's screen flickers; the device's light receiver reads it) | Link layer is this project's own; the payload is a standard BC-UR string |
+| Device to host | **QR code on the device screen** (BC-UR, animated parts) | Yes - BCR-2020-005, readable by any UR-capable wallet |
+
+The consequence is honesty about cost: receiving a PSBT over light takes **tens of seconds** instead of
+an instant, and the light link is not a standard anyone else has reviewed. In exchange, the device has
+**no shared storage, no removable media and no cable data path** - only a light sensor and a screen.
 
 ## 3. Assembly procedure (solder-free; target 45 minutes; for the Pi Zero 2 WH)
 
