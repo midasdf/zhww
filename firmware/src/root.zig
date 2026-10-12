@@ -27,6 +27,7 @@ pub const evm_rlp = @import("apps/evm/rlp.zig");
 pub const evm_address = @import("apps/evm/address.zig");
 pub const evm_transaction = @import("apps/evm/transaction.zig");
 pub const evm_eip191 = @import("apps/evm/eip191.zig");
+pub const evm_eip712 = @import("apps/evm/eip712.zig");
 
 test {
     _ = base58;
@@ -46,4 +47,5 @@ test {
     _ = evm_address;
     _ = evm_transaction;
     _ = evm_eip191;
+    _ = evm_eip712;
 }

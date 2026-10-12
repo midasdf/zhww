@@ -9,7 +9,7 @@ cd firmware && zig build test
 実装のユニットテスト（`src/` 内の `test` ブロック）と、公式テストベクタによる統合テスト
 （本ディレクトリ）を `firmware/tests.zig` がまとめて実行する。
 
-**現在: 115 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
+**現在: 122 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
 4 モードすべてで成功することを確認済み）
 
 ## 最適化モードを変えても結果が変わらないこと
@@ -91,6 +91,8 @@ LLM が生成したコードに対して、テストが実際に誤りを検出�
 | 4 | **P2PK の scriptSig に push opcode が無い** | テスト側の組み立てミス。P2PK の scriptSig は「署名を push する」必要があり、`<push 72> || DER || 0x01` が正しい。署名済みトランザクションの 1 バイト不一致として検出 |
 | 5 | **P2SH-P2WPKH を witness 入力として扱っていない** | `witness_utxo` を持つ P2SH 入力を「非 witness 入力」と判定し、`non_witness_utxo` を要求して署名できなくなっていた。redeemScript が P2WPKH なら witness 入力として扱うよう修正 |
 | 6 | **ダングリングポインタ** | 最終化で `witness[1] = &key.public_key`（ループ内のローカル変数のアドレス）を保持していた。署名は正しいのに公開鍵だけ別の値になるという形で検出。**メモリ安全性のバグ**であり、統合テストが無ければ本番で初めて気づく類 |
+| 7 | **`EcdsaSignature.data` は `r‖s` ではない** | libsecp256k1 の内部表現（この環境ではリトルエンディアン）で、`r‖s` のビッグエンディアンではない。EVM 側の実装時に気づき、`core` に `signRecoverable` を追加して extern 宣言を集約した |
+| 8 | **固定長配列をハッシュしていなかった** | EIP-712 では**固定長配列も動的配列と同じく** `keccak256(要素の連結)` にする（`SomeType[5]` は 5 要素の構造体と同じ）。仕様書の該当文を確認して修正。サブケースに分割してオラクルと比較することで特定した |
 
 **教訓**:
 - 「公式ベクタが通った」だけでは不十分。同じ値が並ぶベクタは順序のバグを隠す。
