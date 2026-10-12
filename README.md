@@ -78,7 +78,8 @@ zhww/
 │   ├── 05-threat-model.md     ← threat model and residual risks
 │   ├── 06-roadmap.md          ← milestones and definitions of done
 │   ├── 07-zero2w-setup.md     ← Raspberry Pi Zero 2 W/WH setup (disabling wireless)
-│   └── 08-rp2350-pizero.md    ← plan for the RP2350-PiZero port
+│   ├── 08-rp2350-pizero.md    ← plan for the RP2350-PiZero port
+│   └── 09-light-audio-input.md ← using light or sound as an input channel (proposal)
 ├── firmware/                  ← Zig implementation
 │   ├── build.zig
 │   ├── src/core/              ← chain-agnostic primitives
@@ -144,6 +145,7 @@ The recommended reading order:
 5. [Chain support](docs/04-chain-support.md) — the specs implemented for BTC/EVM
 6. [Threat model](docs/05-threat-model.md) — what is protected, and what is not
 7. [Roadmap](docs/06-roadmap.md) — the order of work
+8. [Light and sound input](docs/09-light-audio-input.md) — replacing the missing camera (proposal)
 
 ---
 
