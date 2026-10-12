@@ -250,6 +250,50 @@ and its two buttons use roughly nine, so the 28 GPIOs are not a constraint.
 **Unconfirmed**: exact pin assignments, whether each module ships with a header soldered (the no-soldering
 rule), and Japanese stock. Nothing here has been bought or measured.
 
+
+### 2.6.2 Decision: decode the image ourselves (owner decision, 2026-10-13)
+
+The M5Stack U173 (§2.6.1) would hand over decoded text and delete the image work entirely, but it puts a
+**third-party decoder on the input path** - and the input decides *what gets signed*, which is the most
+security-critical step in the whole device. The confirmation screen does catch a substituted UR, but it
+relies on a human comparing addresses. Everywhere else in this project we verify instead of trusting, and
+the same decoder that would be replaced here is already written and verified against two independent
+encoders (124/124) and against its own rendered screens.
+
+So: **the camera path decodes raw images with `src/ui/qr_decode.zig`.**
+
+| | U173 (decoded text over I2C) | **Chosen: SPI camera + our decoder** |
+|---|---|---|
+| Who decodes | M5Stack's firmware | **this project** (verified, auditable, in the repository) |
+| Trust needed | yes, for the input path | **none beyond the device's own code** |
+| Firmware work | an I2C read | a camera driver, frame capture and a grayscale buffer |
+| What has to be right | the module's QR engine | our decoder, which already survives rotation, blur, noise, JPEG and perspective, and reads 1 px per module |
+
+Candidates for the raw-image route, all domestic and in stock (2026-10-13):
+
+| Module | Price | Interface | Cable in the box |
+|---|---|---|---|
+| **Arducam Mega 5 MP SPI AF (SS 8943)** | **Y6,490** | SPI, 4-wire | **yes, a 300 mm 6-pin cable** |
+| Arducam 5 MP Mini SPI (SS 11225) | Y7,920 | SPI (+I2C control) | jumper wires; header-soldered state unconfirmed |
+| Adafruit OPT4048 + Qwiic (the light path) | Y2,090 | I2C | keep as an optional second input |
+
+This also fits the case already built: v0.5 has an **aperture looking down through the floor**, which was
+designed so the device could be laid on the phone's screen. A downward-looking camera uses exactly that
+geometry, and the "lay it on the phone" gesture keeps the sensor square to the screen and out of room
+light.
+
+Two things the camera driver has to get right, noted here so they are not discovered late:
+
+- **Close focus versus resolution.** These modules are fixed-focus and focus around a metre, so at 10-20 cm
+  the image is soft. Resolution is what saves it: a 5 MP sensor reading a 3 cm QR at 15 cm across a 60 degree
+  lens puts the code on roughly 470 of 2592 pixels wide, about 7 px per module - but the whole 5 MP frame is
+  5 MB and cannot go in 520 KB of SRAM. The sensor must be **windowed** to read only the central region.
+- **Use the luma channel.** Reading Y only halves the bytes and skips a colour conversion, and the decoder
+  wants grayscale anyway.
+
+The third-party module stays documented as an option for anyone who prefers a cable to a driver; the
+trade-off is stated rather than hidden.
+
 ### 2.7 GPIO header
 
 **The Pi Zero 2 WH comes with the header pre-installed, so this step itself is unnecessary** (just plug it in).
