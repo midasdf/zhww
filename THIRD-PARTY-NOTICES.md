@@ -23,6 +23,7 @@
 |---|---|---|
 | Zig コンパイラ | ビルド（0.17 以降） | MIT |
 | **eth-account 0.13.7**（外部オラクル） | EVM 署名・EIP-712 の**期待値のクロスチェック**。リポジトリ外（`/tmp`）で実行し、依存には含めない | MIT |
+| **Bitcoin Core v31.1.0**（外部オラクル・相互運用） | regtest で実際の PSBT を作り、`finalizepsbt` と `testmempoolaccept` で本実装の署名を検証する。**相互運用テストのベクタは Core の出力をそのまま固定**（`tests/vectors/core_psbt.json`） | MIT |
 | **ethers.js / viem**（今後） | EVM 署名のクロスチェック（予定） | MIT |
 
 > オラクルは「実装とは独立した第三者の実装で期待値を計算し、バイト単位で一致するか確認する」

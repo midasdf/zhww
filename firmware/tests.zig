@@ -14,4 +14,5 @@ test {
     _ = @import("tests/bip143_test.zig");
     _ = @import("tests/bip174_test.zig");
     _ = @import("tests/sign_test.zig");
+    _ = @import("tests/core_interop_test.zig");
 }

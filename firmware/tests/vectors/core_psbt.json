@@ -1,0 +1,13 @@
+{
+  "source": "Bitcoin Core (regtest)",
+  "core_version": "Bitcoin Core RPC client version v31.1.0",
+  "description": "Bitcoin Core の createpsbt + utxoupdatepsbt で作った PSBT を zhww が署名し、Core が受理することを確認する。署名済みトランザクションは Core の finalizepsbt の出力とバイト単位で一致する。",
+  "unsigned_psbt_base64": "cHNidP8BAFICAAAAAcaToUmSTBl2LHrDleV31T08i+4AzSg/bz6xQqPsNDyIAAAAAAD9////AfC59QUAAAAAFgAUTQse96/xNAMZWwaTAhNNLrncJugAAAAAAAEBHwDh9QUAAAAAFgAUwM681sPTyox13F7GLr5VMw75EOIAAA==",
+  "expected_final_tx": "02000000000101c693a149924c19762c7ac395e577d53d3c8bee00cd283f6f3eb142a3ec343c880000000000fdffffff01f0b9f505000000001600144d0b1ef7aff13403195b069302134d2eb9dc26e80247304402206f6fe53721207b0acbe04e4ffc33e34460574c34d042c6833f7e9c309e8fd0b00220608592ae25fc7e50805bbad83b75b43a51060f0320243d1e21797edde8d0f5d901210330d54fd0dd420a6e5f8d3624f5f3482cae350f79d5f0753bf5beef9c2d91af3c00000000",
+  "input_outpoint": "883c34eca342b13e6f3f28cd00ee8b3c3dd577e595c37a2c76194c9249a193c6:0",
+  "destination": "bcrt1qf593aaa07y6qxx2mq6fsyy6d96uacfhgg5qkaa",
+  "input_amount_sats": 100000000,
+  "fee_sats": 10000,
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+  "derivation": "m/84'/0'/0'/0/0 (regtest のアドレス bcrt1qcr8te4kr609gcawutmrza0j4xv80jy8zeqchgx)"
+}

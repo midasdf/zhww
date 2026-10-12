@@ -38,11 +38,12 @@
 | **PSBT からの署名と最終化** | ✅ 完了（P2WPKH・P2PKH・P2SH-P2WPKH・P2PK / 署名済み PSBT の書き出し） |
 | 手数料計算・お釣り判定 | ✅ 完了（入力額が不明なら手数料を計算しない） |
 | ダイス・カメラの entropy 結合 | ✅ 完了（HKDF-SHA256 / RFC 5869 ベクタで検証） |
-| 画面 UI・QR 送受信 | ⬜ 未着手（実機が必要） |
-| 開発用 CLI | ⬜ 未着手（Zig 0.17 の `std.Io` API の確定待ち） |
-| EVM（RLP / EIP-155 / EIP-1559 / EIP-191 / EIP-55） | ✅ 完了（EIP-155 の公式例とバイト単位で一致） |
+| **Bitcoin Core との相互運用** | ✅ 完了（Core が作った PSBT に署名し、Core の `finalizepsbt` が `complete: true`、`testmempoolaccept` が `allowed: true`。最終化結果はバイト単位で一致） |
 | EIP-712（型付きデータ） | ✅ 完了（仕様の既知値と一致。署名も独立実装と一致） |
 | ERC-7730（clear signing）・ABI デコード | 🔄 実装中 |
+| 実機（signet）での送金 | ⬜ 未着手（実機が必要） |
+| 画面 UI・QR 送受信 | ⬜ 未着手（実機が必要） |
+| 開発用 CLI | ⬜ 未着手（Zig 0.17 の `std.Io` API の確定待ち） |
 
 ---
 

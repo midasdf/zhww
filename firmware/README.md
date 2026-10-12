@@ -14,7 +14,7 @@
 | 実装済み（暗号・エンコード） | Base58 / Bech32・Bech32m / RIPEMD-160 / SHA-256 / HMAC-SHA512 / PBKDF2 / HKDF-SHA256 / Keccak-256 / ECDSA 署名と検証（RFC6979・low-s・DER・recoverable） |
 | 実装済み（Bitcoin） | BIP39（ダイス・カメラ等の entropy 結合を含む） / BIP32 / アドレス生成（P2PKH・P2SH-P2WPKH・P2WPKH・P2TR） / トランザクション解析・直列化 / Legacy・BIP143 sighash / PSBT の解析・検証・書き出し（BIP174） / **PSBT からの署名と最終化（P2WPKH・P2PKH・P2SH-P2WPKH・P2PK）** / **手数料計算とお釣り判定** / バイト列入出力のワークフロー（`signPsbtBytes`） |
 | 実装済み（EVM） | RLP のエンコード・デコード / EIP-55 チェックサム付きアドレス / **EIP-155（legacy）と EIP-1559（type 2）の署名**（両方とも署名して検証まで行う） / EIP-191 `personal_sign` / **EIP-712 型付きデータ**（encodeType の依存型ソート・配列・入れ子・ドメイン推論） |
-| テスト | **122 件すべて成功**（BTC: BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件・統合テスト / EVM: RLP 公式ベクタ・**EIP-155 の公式例とバイト一致**・EIP-55・EIP-191・EIP-712（仕様の既知値と一致し、署名も独立実装と一致）） |
+| テスト | **123 件すべて成功**（BTC: BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件・統合テスト・**Bitcoin Core が署名を受理することの確認** / EVM: RLP 公式ベクタ・**EIP-155 の公式例とバイト一致**・EIP-55・EIP-191・EIP-712（仕様の既知値と一致し、署名も独立実装と一致）） |
 | 未実装 | 画面 UI、QR 送受信、ERC-7730（clear signing）、開発用 CLI |
 
 ```bash
