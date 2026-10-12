@@ -75,7 +75,7 @@ zhww/
 │   ├── 04-chain-support.md    ← BTC/EVM 実装マトリクス・仕様
 │   ├── 05-threat-model.md     ← 脅威モデル・残存リスク
 │   ├── 06-roadmap.md          ← マイルストーンと Done 定義
-│   └── 07-zero2w-setup.md     ← 手元の Raspberry Pi Zero 2 W を使う手順（無線の無効化）
+│   └── 07-zero2w-setup.md     ← Raspberry Pi Zero 2 W/WH の初期設定（無線の無効化）
 ├── firmware/                  ← Zig 実装（BTC 署名一式 + 公式テストベクタ）
 │   ├── build.zig
 │   ├── tests.zig
@@ -92,7 +92,7 @@ zhww/
 | ファームウェア（Zig + libsecp256k1） | **Bitcoin**: BIP39（ダイス entropy 含む）/ BIP32 / Base58 / Bech32-Bech32m / RIPEMD-160 / ECDSA（RFC6979）/ アドレス生成 / トランザクション解析 / Legacy・BIP143 sighash / PSBT の解析・検証・書き出し / **PSBT からの署名と最終化** / **2-of-3 マルチシグ（P2WSH）** / **Taproot 鍵パス署名（BIP341）** / 手数料とお釣り判定 / **BC-UR 転送層** **EVM**: RLP / EIP-55 アドレス / **EIP-155・EIP-1559 の署名** / EIP-191 / **EIP-712 型付きデータ** / ABI デコード / **ERC-7730 clear signing** / **トランザクションの表示（evm-show）** |
 | テスト | **203 件すべて成功**（BTC: BIP143 の署名がバイト単位で一致・BIP174 の PSBT 不正 20 件/妥当 27 件・統合テスト・**Bitcoin Core が単一署名・マルチシグ・Taproot の署名を受理** / EVM: RLP 公式ベクタ・**EIP-155 の公式例とバイト一致**・EIP-55・EIP-191・EIP-712（仕様の既知値と一致）・ABI（ethers.js と一致）・ERC-7730 / 転送層: BC-UR の参照実装と文字列一致） |
 | CI | GitHub Actions で Linux（実機と同じ環境）のビルド・テスト・CLI 動作を毎回検証 |
-| 実機 | Raspberry Pi Zero 2 W のセットアップ手順を [docs/07](docs/07-zero2w-setup.md) に記載。**開発用 CLI（`address` / `sign` / `mnemonic`）実装済み** |
+| 実機 | 標準構成は **Raspberry Pi Zero 2 WH（ヘッダ実装済み・無半田）**。組立は [docs/03](docs/03-hardware-bom.md)、初期設定は [docs/07](docs/07-zero2w-setup.md)。**開発用 CLI 実装済み**（下記） |
 | 次の作業 | 実機での署名（signet）、画面 UI、QR 送受信 |
 
 ```bash
