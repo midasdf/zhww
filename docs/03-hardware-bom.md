@@ -67,7 +67,7 @@ Pi Zero 2 WH は**工場でヘッダが実装済み**のモデルで、この 2 
 | 一体型（M5Stack 等の Krux 系ハード） | 不要 | 機種による | 内蔵の機種あり | 良い | **動かない**（Linux ではないため、ファームを別物にする必要） |
 
 **筐体について**: SeedSigner のケースは**画面と基板の寸法は同じ**だが、**ポートの穴が合わない**
-（RP2350-PiZero は USB-C ×2・microSD の位置が違う・BOOT/RUN ボタンがある・カメラは積まない）。
+（RP2350-PiZero は手前の長辺に mini HDMI ＋ USB-C ×2、microSD は左の短辺、右の短辺に BAT、四隅に Φ3.00 の取付穴、BOOT/RUN ボタンあり、カメラは積まない）。
 そのため自前のパラメトリックな OpenSCAD を用意し、**レンダリングで外形と構造を確認済み**
 （穴の位置だけ実機で実測して確定する。[hardware/enclosure](../hardware/enclosure/README.md)）。
 
