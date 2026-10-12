@@ -203,7 +203,8 @@ for why the camera was preferred over a light sensor).
 
 | Candidate | Interface | Resolution | Notes |
 |---|---|---|---|
-| **ArduCAM Mini 2MP Plus (OV2640)** — first choice | SPI (plus a few control pins) | 2 MP sensor, used at QVGA (320×240) | A finished module with a pin header, documented for use with the Pico/RP2040, ~$25. QVGA RGB565 is 153 KB, which fits the 520 KB SRAM; the frame is converted to grayscale before decoding. Listed by a Japan-facing shop ([RobotShop JP](https://jp.robotshop.com/products/arducam-mini-camera-module-w-2mp-plus-ov2640-arduino)) |
+| **Arducam 5MP Mini SPI camera module** — verified to exist at a domestic shop: [Switch Science product 11225](https://www.switch-science.com/products/11225). The manufacturer lists it for "Arduino UNO, Raspberry Pi Pico and other MCU", so it is SPI and Pico-documented, which is what this board needs. **Price, stock and whether the header comes soldered are unconfirmed** | SPI | 5 MP sensor, used at QVGA | See the note above about verification status |
+| ArduCAM Mini 2MP Plus (OV2640) — earlier candidate, **no domestic listing confirmed** | SPI (plus a few control pins) | 2 MP sensor, used at QVGA (320×240) | A finished module with a pin header, documented for use with the Pico/RP2040, ~$25. QVGA RGB565 is 153 KB, which fits the 520 KB SRAM; the frame is converted to grayscale before decoding. Listed by a Japan-facing shop ([RobotShop JP](https://jp.robotshop.com/products/arducam-mini-camera-module-w-2mp-plus-ov2640-arduino)) |
 | **Himax HM01B0 (monochrome)** — alternative | SPI | 320×320, **native grayscale** | Electrically the nicest fit: no colour conversion, low power, small frames. The bare sensor is a flex-connector part; a breakout is sold by [SparkFun](https://www.sparkfun.com/himax-cmos-imaging-camera-hm01b0-monochrome.html). Availability and whether the breakout has a solder-free header are unconfirmed |
 | Raspberry Pi camera module (CSI) | CSI | — | **Not possible on the RP2350**: the board has no CSI connector. This applies to the v0.1 Pi Zero build only |
 
@@ -256,7 +257,15 @@ Carrying a battery in the device for that reason means it degrades, swells and l
 3. It cannot be used where there is no power source (during a disaster, for example) → **carrying a dry-cell box solves this** (do not build it into the device)
 4. The board's LiPo connector is **not used** (it is left available as an optional modification for people who want a smaller device)
 
-## 2.9 Why the standard build has no SD-card exchange
+## 2.9 SD-card exchange: not proposed any more (owner decision, 2026-10-13)
+
+**Do not propose an SD-card exchange for this project again.** The owner ruled it out: a card is shared
+physical media that passes through the untrusted host and then into the signing device. The code stays
+in the tree because it is implemented and CI-verified, but it must not be suggested as the standard
+build nor as an option. The exchange is **optical**: light in, QR out.
+
+The rest of this section records the original reasoning, kept for context.
+
 
 An SD card is shared physical media: it is written by the **host**, which this project treats as
 untrusted, and then inserted into the signing device. That makes it the one component that carries
