@@ -28,6 +28,8 @@ pub const evm_address = @import("apps/evm/address.zig");
 pub const evm_transaction = @import("apps/evm/transaction.zig");
 pub const evm_eip191 = @import("apps/evm/eip191.zig");
 pub const evm_eip712 = @import("apps/evm/eip712.zig");
+pub const evm_abi = @import("apps/evm/abi.zig");
+pub const evm_clear_signing = @import("apps/evm/clear_signing.zig");
 
 test {
     _ = base58;
@@ -48,4 +50,6 @@ test {
     _ = evm_transaction;
     _ = evm_eip191;
     _ = evm_eip712;
+    _ = evm_abi;
+    _ = evm_clear_signing;
 }

@@ -24,7 +24,8 @@
 | Zig コンパイラ | ビルド（0.17 以降） | MIT |
 | **eth-account 0.13.7**（外部オラクル） | EVM 署名・EIP-712 の**期待値のクロスチェック**。リポジトリ外（`/tmp`）で実行し、依存には含めない | MIT |
 | **Bitcoin Core v31.1.0**（外部オラクル・相互運用） | regtest で実際の PSBT を作り、`finalizepsbt` と `testmempoolaccept` で本実装の署名を検証する。**相互運用テストのベクタは Core の出力をそのまま固定**（`tests/vectors/core_psbt.json`） | MIT |
-| **ethers.js / viem**（今後） | EVM 署名のクロスチェック（予定） | MIT |
+| **ethers.js 6.17.0**（外部オラクル） | EVM の calldata 生成（ABI エンコード）とセレクタのクロスチェック。リポジトリ外で実行し、依存には含めない | MIT |
+| **ERC-7730 記述子レジストリ** | clear signing のテストデータ（Lido stETH / Ekubo / ERC-20 の記述子をそのまま埋め込み） | レジストリのライセンスに従う（出典: https://github.com/ethereum/clear-signing-erc7730-registry ） |
 
 > オラクルは「実装とは独立した第三者の実装で期待値を計算し、バイト単位で一致するか確認する」
 > ために使っています。**リポジトリの依存には含めません**（テストは埋め込んだ固定値で実行されます）。
