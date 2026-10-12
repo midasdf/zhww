@@ -1,167 +1,167 @@
-# 05. 脅威モデル
+# 05. Threat model
 
-- **対象バージョン**: v0.1
-- **最終更新**: 2026-10-12
+- **Target version**: v0.1
+- **Last updated**: 2026-10-12
 
-本ドキュメントは「何を守れて、何を守れないか」を明示することを目的とする。**守れないものを守れると書かないこと**を最優先の規範とする。
+This document aims to state explicitly what can be protected and what cannot. **Never write that something unprotected is protected** is the highest-priority rule.
 
 ---
 
-## 1. 保護対象（資産）
+## 1. Assets to protect
 
-| 資産 | 説明 |
+| Asset | Description |
 |---|---|
-| A-1 | BIP39 mnemonic / seed（全チェーンの鍵の根源） |
-| A-2 | 派生した秘密鍵・拡張秘密鍵（xprv） |
-| A-3 | パスフレーズ |
-| A-4 | 署名内容の完全性（表示した内容と実際に署名する内容の一致） |
-| A-5 | ファームウェアの完全性 |
+| A-1 | BIP39 mnemonic / seed (the root of the keys for every chain) |
+| A-2 | Derived private keys and extended private keys (xprv) |
+| A-3 | Passphrase |
+| A-4 | Integrity of what is signed (agreement between what is displayed and what is actually signed) |
+| A-5 | Firmware integrity |
 
-## 2. 信頼境界と前提
+## 2. Trust boundaries and assumptions
 
-| 対象 | 信頼するか | 説明 |
+| Subject | Trusted? | Description |
 |---|---|---|
-| ホスト PC / dApp | **信頼しない** | PSBT・トランザクションは改ざんされ得る前提で扱う |
-| QR 表示・カメラ | 信頼しない | 画面とカメラの間でデータをすり替えられる可能性を考慮 |
-| 部品（Pi / LCD / カメラ） | 原則信頼する | ただし供給網リスクは残存（§5） |
-| ファームウェア | 設計上は信頼する | 真正性は再現可能ビルドと署名で担保 |
-| 物理アクセスを与えた攻撃者 | **信頼しない（守れない）** | §4-1 |
+| Host PC / dApp | **Not trusted** | PSBTs and transactions are handled on the assumption that they may have been tampered with |
+| QR display / camera | Not trusted | The possibility that data is swapped between the screen and the camera is taken into account |
+| Parts (Pi / LCD / camera) | Trusted in principle | However, supply-chain risk remains (§5) |
+| Firmware | Trusted by design | Authenticity is assured by reproducible builds and signatures |
+| An attacker with physical access | **Not trusted (cannot be protected)** | §4-1 |
 
-## 3. 攻撃者クラス
+## 3. Attacker classes
 
-| ID | 攻撃者 | 能力 |
+| ID | Attacker | Capability |
 |---|---|---|
-| T-1 | リモート攻撃者 | ネットワーク経由。ただし本デバイスは無線を持たない |
-| T-2 | 悪意あるホスト / dApp | 任意の PSBT・トランザクション・メッセージを提示できる |
-| T-3 | 供給網攻撃者 | 部品・SD カード・リリースイメージに介入できる |
-| T-4 | 物理アクセスを持つ攻撃者 | デバイスを奪取・分解・計測できる |
-| T-5 | 不注意なユーザー | 警告を無視する、確認を怠る |
+| T-1 | Remote attacker | Over the network. However, this device has no wireless interface in normal operation |
+| T-2 | Malicious host / dApp | Can present arbitrary PSBTs, transactions and messages |
+| T-3 | Supply-chain attacker | Can interfere with parts, SD cards and release images |
+| T-4 | Attacker with physical access | Can seize, disassemble and probe the device |
+| T-5 | Careless user | Ignores warnings, skips confirmation |
 
 ---
 
-## 4. 脅威と対策
+## 4. Threats and countermeasures
 
-### 4-1. 物理アクセス（T-4）— **守れない**
+### 4-1. Physical access (T-4) — **cannot be protected**
 
-| 脅威 | 内容 |
+| Threat | Detail |
 |---|---|
-| チップ読み出し | Raspberry Pi のフラッシュ／RAM は物理アクセス下で読み出され得る |
-| 電圧・クロックグリッチ | 署名中のフォールト注入で鍵を露出させ得る |
-| 中間者による差し替え | デバイスごと取り替えられる |
+| Chip readout | The Raspberry Pi's flash and RAM can be read out under physical access |
+| Voltage / clock glitching | Fault injection during signing can expose keys |
+| Substitution by a man in the middle | The entire device can be swapped |
 
-**対策**
-- seed は RAM 上のみ。**使用後は電源断**を運用として徹底する
-- マルチシグ（2-of-3 以上）を推奨構成とし、1 台の奪取で資産が失われないようにする
-- パスフレーズ分離を推奨
-- 本デバイスは**少額〜中額のホットな保管には向かない**ことを明記
+**Countermeasures**
+- The seed exists only in RAM. Make **powering off after use** a strict operational rule
+- Make multisig (2-of-3 or better) the recommended configuration so that seizing one device does not lose the assets
+- Passphrase separation is recommended
+- State clearly that this device is **not suitable for hot storage of small-to-medium amounts**
 
-**残存リスク**: 使用中（seed が RAM にある間）の物理攻撃は防げない。**SE を積まない設計選択の直接的な帰結**であり、隠さず公開する。
+**Residual risk**: physical attacks while the device is in use (while the seed is in RAM) cannot be prevented. This is a **direct consequence of the design choice not to include an SE**, and it is disclosed openly rather than hidden.
 
-### 4-2. 表示と署名内容の食い違い（T-2）— **最重要**
+### 4-2. Mismatch between the display and what is signed (T-2) — **most important**
 
-| 脅威 | 内容 |
+| Threat | Detail |
 |---|---|
-| 表示偽装 | ホストが「10 USDC 送金」と見せかけて、実際は全額 approve を署名させる |
-| アドレスすり替え | クリップボード／QR の改ざんで送金先だけ差し替える |
-| chainId 偽装 | 別チェーンのトランザクションに署名させる |
-| 長文による目視回避 | 大量の出力や長大な calldata でユーザーを疲労させ、確認を放棄させる |
+| Display spoofing | The host shows "sending 10 USDC" while actually having the user sign an approval for the full amount |
+| Address swapping | Only the destination is swapped by tampering with the clipboard or the QR code |
+| chainId spoofing | Make the user sign a transaction for a different chain |
+| Visual review defeated by sheer length | Exhaust the user with a large number of outputs or enormous calldata so that they give up on checking |
 
-**対策**
-- **二重計算の原則**（[02-architecture.md](02-architecture.md) §2 I-3）: 署名対象ハッシュを `apps` と `core` が独立計算し、不一致なら署名拒否
-- アドレスは**全文表示**。中略・省略記号を禁止
-- EVM は chainId を常時表示
-- 危険パターン（無制限 approve、`setApprovalForAll`、`permit`、未知コントラクト、コントラクト作成）は赤警告＋追加承認
-- 出力数・calldata 長に上限を設け、超過は拒否（DoS と目視回避の防止）
+**Countermeasures**
+- **The double-computation principle** ([02-architecture.md](02-architecture.md) §2 I-3): `apps` and `core` compute the hash to be signed independently, and signing is refused if they disagree
+- Addresses are shown **in full**. Truncation and ellipses are forbidden
+- EVM always displays the chainId
+- Dangerous patterns (unlimited approve, `setApprovalForAll`, `permit`, unknown contract, contract creation) get a red warning + additional approval
+- Limits are placed on the number of outputs and the calldata length; anything beyond them is refused (prevents DoS and defeat of visual review)
 
-**残存リスク**: ユーザーが警告を無視して承認した場合は防げない（T-5）。
+**Residual risk**: nothing can prevent a user who ignores the warning and approves anyway (T-5).
 
-### 4-3. 供給網（T-3）
+### 4-3. Supply chain (T-3)
 
-| 脅威 | 内容 |
+| Threat | Detail |
 |---|---|
-| 偽造・中古の Pi | 事前に改変されたファームや追加チップ |
-| 悪意あるカメラ / LCD モジュール | 追加フラッシュや I2C チップを実装し、データを外部送信 |
-| 改ざんされた SD イメージ | リリースの差し替え |
+| Counterfeit or used Pi | Pre-modified firmware or additional chips |
+| Malicious camera / LCD module | Additional flash or an I2C chip that sends data outside |
+| Tampered SD image | Replacement of the release |
 
-**対策**
-- 正規ディストリビュータから購入する（中古・個人輸入の並行品を避ける）
-- 到着後に分解・目視し、データシートに無いチップが無いことを確認する
-- **リリースイメージは必ず自分でビルドし、ハッシュを配布値と比較する**（NFR-07）。他人が作ったイメージをそのまま書かない
-- PGP 署名を検証する
+**Countermeasures**
+- Buy from authorized distributors (avoid used units and grey-market personal imports)
+- Disassemble and inspect on arrival, and confirm that there are no chips that are not in the datasheet
+- **Always build the release image yourself and compare the hash against the distributed value** (NFR-07). Do not flash an image someone else built
+- Verify the PGP signature
 
-**残存リスク**: 目視では判別できないレベルの改変（ダイ内部の改変等）は検出できない。この領域は SE とセキュアブートを持つ市販品に劣る。
+**Residual risk**: modifications that cannot be detected visually (such as alterations inside the die) cannot be detected. In this area the device is inferior to commercial products that have an SE and secure boot.
 
-### 4-4. ファームウェア完全性（T-3, T-4）
+### 4-4. Firmware integrity (T-3, T-4)
 
-| 脅威 | 内容 |
+| Threat | Detail |
 |---|---|
-| ファーム差し替え | 署名を外部に送る版に置き換えられる |
-| 起動時改ざん | SD カード上のファイルを書き換えられる |
+| Firmware replacement | Replaced with a version that sends signatures outside |
+| Tampering at boot | Files on the SD card are rewritten |
 
-**対策**
-- 再現可能ビルド＋PGP 署名付きリリース（NFR-07）
-- rootfs を読み取り専用にし、実行時書き込みを tmpfs に限定
-- 起動後に SD カードをアンマウント（書き込み経路を絶つ）
-- 起動時に自己診断（署名検証・整合性チェック）を行い、結果を画面表示
+**Countermeasures**
+- Reproducible builds + releases signed with PGP (NFR-07)
+- Make the rootfs read-only and confine runtime writes to tmpfs
+- Unmount the SD card after boot (cutting off the write path)
+- Run a self-check at boot (signature verification, integrity check) and display the result on the screen
 
-**残存リスク**: **Raspberry Pi Zero はセキュアブートを持たない**。ハードウェアルートオブトラストが無いため、SD を差し替えられれば不正なコードが動き得る。対策は「気づける」ことであり「防げる」ことではない。利用時は SD を自分で管理し、物理的に封印するなど運用で補う。
+**Residual risk**: **the Raspberry Pi Zero has no secure boot**. Because there is no hardware root of trust, malicious code can run if the SD card is swapped. The countermeasure is "being able to notice", not "being able to prevent". During use, compensate through operations such as managing the SD card yourself and physically sealing it.
 
-### 4-5. 乱数品質
+### 4-5. Randomness quality
 
-| 脅威 | 内容 |
+| Threat | Detail |
 |---|---|
-| 乱数欠陥 | 予測可能な seed が生成される |
-| 単一エントロピー源への依存 | 特定の源が壊れていても気づかない |
+| RNG defect | A predictable seed is generated |
+| Dependence on a single entropy source | A particular source can fail without being noticed |
 
-**対策**
-- ダイス（必須）＋カメラ画像エントロピー＋SoC TRNG を HKDF で結合
-- 生成時にビット分布・重複パターンの健全性テストを行い、異常時は中止
-- ダイス入力の検証方法をドキュメント化（SeedSigner の dice verification に倣う）
+**Countermeasures**
+- Combine dice (mandatory) + camera-image entropy + the SoC TRNG with HKDF
+- Run health tests on the bit distribution and on repeated patterns at generation time, and abort on an anomaly
+- Document how dice input is verified (following SeedSigner's dice verification)
 
-### 4-6. 実装バグ（T-2, T-5）
+### 4-6. Implementation bugs (T-2, T-5)
 
-**対策**
-- 楕円曲線演算は監査済み libsecp256k1 のみ（純 Python ECDSA 禁止）
-- nonce は RFC6979 の決定論的生成
-- RLP・Bech32/Bech32m・PSBT は公式テストベクタで完全一致検証
-- 外部実装（Bitcoin Core / viem / ethers.js）との**バイト単位の突合**を CI で実施
-- 記述子と実装の乖離を防ぐため、ERC-7730 の表示はスナップショットテストで固定
+**Countermeasures**
+- Elliptic-curve arithmetic uses only the audited libsecp256k1 (pure-Python ECDSA is forbidden)
+- Nonces use RFC6979 deterministic generation
+- RLP, Bech32/Bech32m and PSBT are verified for exact agreement with the official test vectors
+- **Byte-for-byte cross-checks** against external implementations (Bitcoin Core / viem / ethers.js) run in CI
+- To prevent descriptors and implementation from drifting apart, ERC-7730 display is pinned by snapshot tests
 
-### 4-7. クロスチェーン固有のリスク
+### 4-7. Cross-chain-specific risks
 
-| 脅威 | 内容 |
+| Threat | Detail |
 |---|---|
-| 影響範囲の拡大 | 1 つの seed を全チェーンで使うため、1 回の漏洩で全資産が危険に晒される |
-| アドレス類似 | 同一アドレスが複数チェーンに存在し、送金先チェーンを誤認する |
-| リプレイ | チェーン間で署名が流用される |
+| Larger blast radius | One seed is used on every chain, so a single leak puts every asset at risk |
+| Similar addresses | The same address exists on multiple chains, so the destination chain can be misidentified |
+| Replay | Signatures are reused across chains |
 
-**対策**
-- パスフレーズによるチェーン別分離を UI で推奨し、未設定時に警告する
-- chainId の常時表示
-- EIP-155 以降の chainId バインドを省略しない
+**Countermeasures**
+- The UI recommends per-chain separation via passphrase and warns when none is set
+- Always display the chainId
+- Do not omit the chainId binding from EIP-155 onward
 
 ---
 
-### 4-8. 給電経路（T-3, T-4）
+### 4-8. Power path (T-3, T-4)
 
-| 脅威 | 対策 |
+| Threat | Countermeasure |
 |---|---|
-| USB 給電のデータ線経由でホストから何かを仕込まれる | **給電専用ケーブル**、またはモバイルバッテリー / 乾電池ボックス（データ線が無い）を使う。ファームウェアは通常動作で USB データを使わない（書き込みは BOOTSEL を押した時だけ） |
-| USB 給電中にホストが電源を切って署名を中断させる | 署名の原子性で担保する（書き出し完了前に電源が落ちても、有効な署名は残らない） |
-| 充電回路・電池に起因する発火・膨張 | **本体に電池を搭載しない**ことで、この経路自体を無くす |
+| Something is planted by the host over the USB power cable's data lines | Use a **power-only cable**, or a mobile battery pack / dry-cell box (which have no data lines). In normal operation the firmware does not use USB data (writing happens only when BOOTSEL is pressed) |
+| The host cuts power during USB operation to interrupt signing | Guaranteed by the atomicity of signing (if power is lost before the write completes, no valid signature remains) |
+| Fire or swelling caused by the charging circuit or the battery | **Not putting a battery in the device** eliminates this path entirely |
 
-## 5. 明示的に「守れない」もの
+## 5. Things explicitly *not* protected
 
-1. 物理アクセス下での seed 保護（SE なしのため）
-2. ユーザーが警告を無視した場合の資産損失
-3. 正規ディストリビュータ由来の部品に対する、目視では検出できないレベルの改変
-4. セキュアブートが無いことに起因するファームウェア差し替えの**防止**（検出のみ）
+1. Protection of the seed under physical access (because there is no SE)
+2. Loss of assets when the user ignores warnings
+3. Modifications to parts from an authorized distributor that cannot be detected visually
+4. **Prevention** of firmware replacement, which follows from the absence of secure boot (detection only)
 
-## 6. 運用ガイドライン（README に転記する要約）
+## 6. Operational guidelines (summary to be copied into the README)
 
-- 最初は**テストネット**（Signet / Sepolia）で全フローを検証する
-- 実運用は**マルチシグ**を基本とし、1 台に依存しない
-- 使用後は**必ず電源を切る**（RAM ワイプ）
-- seed は**金属板などに手書き**でバックアップする。デジタルコピーを残さない
-- リリースイメージは**自分でビルドして**ハッシュを比較する
-- 警告が出た承認は、内容を理解できるまで実行しない
+- First verify the whole flow on **test networks** (Signet / Sepolia)
+- Base real use on **multisig**; do not depend on a single device
+- **Always power off after use** (RAM wipe)
+- Back up the seed **by hand on a metal plate or similar**. Leave no digital copy
+- **Build the release image yourself** and compare the hash
+- Do not carry out an approval that raised a warning until you understand what it is

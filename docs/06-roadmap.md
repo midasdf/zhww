@@ -1,144 +1,148 @@
-# 06. ロードマップ
+# 06. Roadmap
 
-- **対象バージョン**: v0.1
-- **最終更新**: 2026-10-12
+- **Target version**: v0.1
+- **Last updated**: 2026-10-12
 
-各マイルストーンは「動くもの」と「検証方法」をセットで定義する。**テストネットで再現できないものは完了とみなさない。**
-
----
-
-## M0 — 準備と足場固め（目安 1 週）
-
-| 項目 | 内容 |
-|---|---|
-| 成果物 | 組立済みデバイス 1 台、開発環境、CI の骨組み |
-| 作業 | ① [BOM](03-hardware-bom.md) の部品を発注・組立 ② 参考実装（SeedSigner / Krux）を 1 台動かして UX を実測 ③ Raspberry Pi OS Lite のビルド手順と**無線の無効化**（[07-zero2w-setup.md](07-zero2w-setup.md)）を確立 ④ Zig + libsecp256k1 のビルド環境（Mac と Pi の両方）を確立 ⑤ LCD/カメラの device tree overlay を整備 ⑥ テストネット用ノード/ウォレット（Core signet、Sepolia）を準備 |
-| Done | ① デバイスが起動しカメラで QR を読める ② `zig build test` が Pi 上で通る ③ 無線インタフェースが存在しないことを確認できる ④ Core（signet）と MetaMask（Sepolia）からテスト用データを出力できる ⑤ ビルドが再現する（同一ハッシュ）ことを 1 回確認 |
+Each milestone is defined as a pair of "something that works" and "how to verify it". **Anything that cannot be reproduced on a test network is not considered done.**
 
 ---
 
-## M1 — Bitcoin 単一署名（目安 2〜3 週）
+## M0 — Preparation and groundwork (about 1 week)
 
-| 項目 | 内容 |
+| Item | Content |
 |---|---|
-| 成果物 | BTC P2WPKH のアドレス生成・PSBT 署名・QR 応答 |
-| 実装 | BIP39（ダイス＋カメラ entropy）／BIP32／BIP84／Bech32／PSBT 解析／BC-UR 送受信／承認 UI |
-| テスト | BIP39・BIP32・BIP84 公式ベクタ一致。Core（signet）で PSBT 往復 |
-| Done | ① 参考実装と**同一 seed から同一アドレス**が導出される ② signet で送金が完結する ③ 電源断後に SD から seed が復元できない（[02](02-architecture.md) §8 のテスト） |
+| Deliverables | One assembled device, a development environment, the skeleton of CI |
+| Work | (1) Order and assemble the parts in the [BOM](03-hardware-bom.md) (2) Run one reference implementation (SeedSigner / Krux) and measure the UX (3) Establish the Raspberry Pi OS Lite build procedure and **wireless disablement** ([07-zero2w-setup.md](07-zero2w-setup.md)) (4) Establish a Zig + libsecp256k1 build environment (both on the Mac and on the Pi) (5) Prepare the LCD/camera device tree overlays (6) Prepare testnet nodes/wallets (Core signet, Sepolia) |
+| Done | (1) The device boots and can read a QR code with the camera (2) `zig build test` passes on the Pi (3) It can be confirmed that no wireless interface exists (4) Test data can be produced from Core (signet) and MetaMask (Sepolia) (5) The build is confirmed reproducible (same hash) once |
 
-### 進捗（2026-10-12 時点）
+---
 
-| 項目 | 状態 |
+## M1 — Bitcoin single-signature (about 2–3 weeks)
+
+| Item | Content |
 |---|---|
-| BIP39 / BIP32 / アドレス生成 | ✅ 完了（公式ベクタ一致） |
-| トランザクション解析・直列化 | ✅ 完了 |
-| Legacy sighash / BIP143 sighash | ✅ 完了（BIP143 ベクタで署名がバイト単位一致） |
-| ECDSA 署名（RFC6979・low-s・DER） | ✅ 完了 |
-| PSBT（BIP174）の解析と検証 | ✅ 完了（不正 20 件を拒否・妥当 27 件を受理） |
-| **PSBT からの署名と最終化** | ✅ 完了（P2WPKH・P2PKH・P2SH-P2WPKH・P2PK / 署名済み PSBT の書き出し） |
-| 手数料計算・お釣り判定 | ✅ 完了（入力額が不明なら手数料を計算しない） |
-| ダイス・カメラの entropy 結合 | ✅ 完了（HKDF-SHA256 / RFC 5869 ベクタで検証） |
-| **Bitcoin Core との相互運用** | ✅ 完了（Core が作った PSBT に署名し、Core の `finalizepsbt` が `complete: true`、`testmempoolaccept` が `allowed: true`。最終化結果はバイト単位で一致） |
-| **2-of-3 マルチシグ（P2WSH）** | ✅ 完了（Core の 2-of-3 アドレスに送金し、本実装で署名して Core が受理。witnessScript の公開鍵順も Core と一致） |
-| **Taproot 鍵パス署名（BIP341/BIP86）** | ✅ 完了（Core の P2TR アドレスに送金し、本実装で署名して Core が受理。Schnorr 署名も BIP340 の検証を通る。スクリプトパスはスコープ外） |
-| **QR 転送（BC-UR）** | ✅ 完了（Bytewords / CBOR / 単一・マルチパート。仕様と参照実装の文字列に一致。冗長パート（MUR）は未実装） |
-| EIP-712（型付きデータ） | ✅ 完了（仕様の既知値と一致。署名も独立実装と一致） |
-| ERC-7730（clear signing）・ABI デコード | ✅ 完了（実際のレジストリの記述子で表示項目を検証。危険パターンは警告付き） |
-| 実機（signet）での送金 | ⬜ 未着手（実機が必要） |
-| 画面 UI・QR 送受信 | ⬜ 未着手（実機が必要） |
-| 開発用 CLI | ✅ 完了（`address` / `sign` / `show` / `mnemonic` / `ur` / `ur-decode` / `evm-sign` / `evm-show`。Zig 0.17 の `std.Io` に対応） |
-| CI（Linux でのビルド・テスト） | ✅ 完了（GitHub Actions。実機と同じ Linux 環境で、テスト・CLI・Core ベクタの署名・UR 往復を毎回検証） |
+| Deliverables | BTC P2WPKH address generation, PSBT signing, QR response |
+| Implementation | BIP39 (dice + camera entropy) / BIP32 / BIP84 / Bech32 / PSBT parsing / BC-UR send and receive / approval UI |
+| Tests | Match the official BIP39, BIP32 and BIP84 vectors. PSBT round trip with Core (signet) |
+| Done | (1) The **same addresses are derived from the same seed** as the reference implementation (2) A send completes on signet (3) The seed cannot be recovered from the SD card after power loss (the test in [02](02-architecture.md) §8) |
 
-### 実機が無くてもできる作業は、ここで一区切り
+### Progress (as of 2026-10-12)
 
-2026-10-12 時点で、**ハードウェアを必要としない作業はすべて完了**している。
-残っているのは次の 3 つだけ。
+| Item | State |
+|---|---|
+| BIP39 / BIP32 / address generation | ✅ Done (matches the official vectors) |
+| Transaction parsing and serialization | ✅ Done |
+| Legacy sighash / BIP143 sighash | ✅ Done (BIP143 signatures match byte-for-byte) |
+| ECDSA signing (RFC6979, low-s, DER) | ✅ Done |
+| PSBT (BIP174) parsing and validation | ✅ Done (20 invalid PSBTs rejected, 27 valid ones accepted) |
+| **Signing and finalization from a PSBT** | ✅ Done (P2WPKH, P2PKH, P2SH-P2WPKH, P2PK / writing out a signed PSBT) |
+| Fee calculation and change detection | ✅ Done (no fee is computed when an input amount is unknown) |
+| Combining dice and camera entropy | ✅ Done (verified with HKDF-SHA256 / RFC 5869 vectors) |
+| **Interoperability with Bitcoin Core** | ✅ Done (signs a PSBT created by Core; Core's `finalizepsbt` returns `complete: true` and `testmempoolaccept` returns `allowed: true`. The finalized result matches byte-for-byte) |
+| **2-of-3 multisig (P2WSH)** | ✅ Done (sends to a 2-of-3 address from Core, signs with this implementation, and Core accepts it. The public-key order in the witnessScript also matches Core) |
+| **Taproot key-path signing (BIP341/BIP86)** | ✅ Done (sends to a P2TR address from Core, signs with this implementation, and Core accepts it. The Schnorr signature also passes BIP340 verification. The script path is out of scope) |
+| **QR transfer (BC-UR)** | ✅ Done (Bytewords / CBOR / single- and multi-part. Matches the strings of the specification and reference implementations. Redundant parts (MUR) are not implemented) |
+| **FAT32 (microSD exchange)** | ✅ Done (reading and writing, `IN.PSBT` → `OUT.PSBT` handoff with the `OUT.TMP` → rename scheme. Verified in CI with `mtools` and `fsck.fat`) |
+| EIP-712 (typed data) | ✅ Done (matches known values from the specification; signatures also match an independent implementation) |
+| ERC-7730 (clear signing) and ABI decoding | ✅ Done (display fields verified against real registry descriptors; dangerous patterns raise a warning) |
+| **EVM transaction signing (Legacy / EIP-1559)** | ✅ Done (the examples given in the EIPs, plus byte-for-byte agreement with viem / ethers.js signatures) |
+| Screen UI layer (layouts, QR encoder, PNG preview) | ✅ Done (hardware-independent; the whole 7-screen device flow can be reproduced on a PC) |
+| Mutation and fuzz tests on broken input | ✅ Done (added; 11 bugs found so far) |
+| Sending on the real device (signet) | ⬜ Not started (hardware required) |
+| On-device screen UI and QR send/receive | ⬜ Not started (hardware required; the screen UI layer above is the hardware-independent part) |
+| Development CLI | ✅ Done (`address` / `sign` / `show` / `screen` / `walkthrough` / `card` / `mnemonic` / `ur` / `ur-decode` / `evm-sign` / `evm-show`. Supports Zig 0.17's `std.Io`) |
+| CI (build and tests on Linux) | ✅ Done (GitHub Actions. On the same Linux as the device it verifies the tests, the CLI, Core-vector signing, the UR round trip and the FAT32 microSD handoff on every run) |
 
-| 残っているもの | 種別 | 理由 |
+### Work that can be done without hardware ends here
+
+As of 2026-10-12, **all work that does not require hardware is complete**.
+Only the following three items remain.
+
+| What remains | Type | Reason |
 |---|---|---|
-| 画面 UI・カメラ・ボタン | **実機が必要** | LCD（ST7789）とカメラ（OV5647）を接続して確認する必要がある |
-| 実機（signet）での送金 | **実機が必要** | 実際のノードと QR でやり取りして初めて確認できる |
-| MUR（ファウンテン符号の冗長パート） | 任意の強化 | 逐次パートの繰り返しでも実用上は足りる。取りこぼしが多い環境での改善 |
+| On-device display, camera and buttons | **Hardware required** | The LCD (ST7789) and camera (OV5647) must be connected and verified (the screen layouts themselves are already implemented and can be previewed on a PC) |
+| Sending on the real device (signet) | **Hardware required** | It can only be confirmed by exchanging data with a real node (over QR or microSD) |
+| MUR (the redundant parts of the fountain code) | Optional hardening | Repeating the sequential parts is enough in practice. An improvement for environments with heavy packet loss |
 
 ---
 
-## M1.5 — Bitcoin 表示の完成度（目安 1 週）
+## M1.5 — Bitcoin display completeness (about 1 week)
 
-| 項目 | 内容 |
+| Item | Content |
 |---|---|
-| 成果物 | 手数料・お釣り判定・警告表示 |
-| 実装 | 入出力の集計、sat/vB 算出、お釣り鍵の実導出による判定、高手数料警告、未知入力の拒否 |
-| Done | ① お釣りを誤判定する PSBT で正しく「送金」と分類できる ② `witness_utxo` 欠落 PSBT を拒否する ③ 高手数料ケースで警告が出る |
+| Deliverables | Fee and change detection, warning display |
+| Implementation | Aggregating inputs and outputs, computing sat/vB, judging change by actually deriving the change key, high-fee warnings, rejecting unknown inputs |
+| Done | (1) A PSBT designed to fool change detection is still classified correctly as a "send" (2) A PSBT missing `witness_utxo` is rejected (3) A high-fee case raises a warning |
 
 ---
 
-## M2 — EVM 署名（目安 2〜3 週）
+## M2 — EVM signing (about 2–3 weeks)
 
-| 項目 | 内容 |
+| Item | Content |
 |---|---|
-| 成果物 | Legacy / EIP-1559 の署名、chainId 表示、EIP-55 アドレス表示 |
-| 実装 | RLP、Keccak-256、EIP-155 / 1559 の署名ハッシュ、low-s 正規化、`m/44'/60'/0'/0/i` 派生 |
-| テスト | 公式テストベクタ、viem / ethers.js とのバイト一致（CI で自動化） |
-| Done | ① Sepolia で署名→ブロードキャスト成功 ② viem の署名とバイト単位一致 ③ chainId が常時画面表示される |
+| Deliverables | Legacy / EIP-1559 signing, chainId display, EIP-55 address display |
+| Implementation | RLP, Keccak-256, EIP-155 / 1559 signing hashes, low-s normalization, `m/44'/60'/0'/0/i` derivation |
+| Tests | Official test vectors, byte-for-byte agreement with viem / ethers.js (automated in CI) |
+| Done | (1) Signing and broadcasting succeed on Sepolia (2) Signatures match viem byte-for-byte (3) The chainId is always shown on screen |
 
 ---
 
-## M2.5 — ERC-20 と危険パターン警告（目安 1〜2 週）
+## M2.5 — ERC-20 and dangerous-pattern warnings (about 1–2 weeks)
 
-| 項目 | 内容 |
+| Item | Content |
 |---|---|
-| 成果物 | transfer / approve / setApprovalForAll / permit のデコードと警告 |
-| Done | ① 無制限 approve で赤警告＋追加承認が出る ② decimals 不明時に推測表示しない ③ 未知セレクタはハッシュ表示にフォールバックする |
+| Deliverables | Decoding and warnings for transfer / approve / setApprovalForAll / permit |
+| Done | (1) An unlimited approve raises a red warning plus an extra approval (2) When decimals are unknown, no guessed value is displayed (3) Unknown selectors fall back to displaying the hash |
 
 ---
 
-## M2.6 — EIP-191 / EIP-712（目安 1〜2 週）
+## M2.6 — EIP-191 / EIP-712 (about 1–2 weeks)
 
-| 項目 | 内容 |
+| Item | Content |
 |---|---|
-| 成果物 | personal_sign、typed data v4 の署名と表示 |
-| Done | ① `domainSeparator` / `hashStruct` が既知サンプルと一致 ② `verifyingContract` が未知の場合に警告が出る ③ 過大なネスト・配列を拒否する |
+| Deliverables | Signing and display of personal_sign and typed data v4 |
+| Done | (1) `domainSeparator` / `hashStruct` match known samples (2) A warning is raised when `verifyingContract` is unknown (3) Excessively deep nesting or arrays are rejected |
 
 ---
 
-## M3 — clear signing と BTC 上級機能（目安 3〜4 週）
+## M3 — Clear signing and advanced BTC features (about 3–4 weeks)
 
-| 項目 | 内容 |
+| Item | Content |
 |---|---|
-| 成果物 | ERC-7730 記述子による clear signing、BTC マルチシグ、Taproot key-path |
-| 実装 | 記述子の署名付き同梱と chainId 検証、P2WSH sortedmulti、BIP86 |
-| Done | ① ERC-7730 記述子で既知 DeFi 呼び出しが人間可読表示される ② chainId 不一致の記述子を拒否する ③ 2-of-3 マルチシグで Sparrow と署名が一致する ④ Taproot アドレスが BIP86 ベクタと一致する |
+| Deliverables | Clear signing with ERC-7730 descriptors, BTC multisig, Taproot key-path |
+| Implementation | Bundling descriptors together with their signatures, plus chainId validation, P2WSH sortedmulti, BIP86 |
+| Done | (1) Known DeFi calls are displayed in human-readable form from ERC-7730 descriptors (2) Descriptors with a mismatched chainId are rejected (3) Signatures for 2-of-3 multisig match Sparrow (4) Taproot addresses match the BIP86 vectors |
 
 ---
 
-## M4 — 公開（目安 2〜3 週）
+## M4 — Public release (about 2–3 weeks)
 
-| 項目 | 内容 |
+| Item | Content |
 |---|---|
-| 成果物 | 公開リポジトリ、設計ファイル一式、再現可能ビルド、認証 |
-| 公開物 | ① 本ドキュメント一式 ② ファームウェア（GPL-3.0-or-later）③ 再現可能ビルド手順 ④ PGP 署名付きリリース ⑤ 筐体 STL / STEP ⑥ 組立手順書（写真付き）⑦ 脅威モデル ⑧ 脆弱性開示ポリシー |
-| ハード設計 | 既成部品構成のため基板設計は必須ではない。独自基板を作る場合のみ KiCad 一式を公開し、**OSHWA 認証**を取得する |
-| Done | ① 第三者（1 名以上）が BOM のみから自力で組立・動作確認できる ② 2 環境でビルドが同一ハッシュになる ③ [WalletScrutiny](https://walletscrutiny.com/) に登録申請する ④ 脆弱性開示ポリシーを公開する |
+| Deliverables | Public repository, the full set of design documents, reproducible builds, certification |
+| Published material | (1) This complete document set (2) The firmware (GPL-3.0-or-later) (3) Reproducible build instructions (4) PGP-signed releases (5) Enclosure STL / STEP (6) Assembly instructions (with photos) (7) Threat model (8) Vulnerability disclosure policy |
+| Hardware design | A board design is not required because the device is built from off-the-shelf parts. Only if a custom board is made should the full KiCad set be published and **OSHWA certification** obtained |
+| Done | (1) A third party (one or more people) can assemble and verify operation on their own from the BOM alone (2) Builds in two environments produce the same hash (3) An application is filed to register with [WalletScrutiny](https://walletscrutiny.com/) (4) The vulnerability disclosure policy is published |
 
 ---
 
-## 継続項目（v0.2 以降の候補）
+## Ongoing items (candidates for v0.2 and later)
 
-| 候補 | 備考 |
+| Candidate | Notes |
 |---|---|
-| ed25519 系（Solana / TON / Cardano） | `core` に SLIP-0010 を追加し、アプリを足すだけで拡張できる構造を維持する |
-| SLIP-39 シャミア分割 | バックアップ方式の選択肢 |
-| **RP2350-PiZero への移植** | **v0.2 の本命**。Pi Zero と同寸・40pin 互換で、無線なし・半田付け不要・microSD・LiPo 充電・UF2 書き込み。コアのコンパイルと libsecp256k1 のビルドは実測で確認済み。計画は [08-rp2350-pizero.md](08-rp2350-pizero.md)。残る課題は HAL の実装、QR の方式決定（microSD か SPI カメラか）、署名速度の実測 |
-| **一体型ハードへの対応（M5Stack 等）** | 画面・ボタン・カメラが最初から入った機器は「半田付け不要で普及しやすい」。ただし Linux が動かず、ESP32-S3 などは現行の Zig が公式対応していないため、**ファームウェアを別系統として設計し直す**必要がある |
-| 独自基板（ESP32-S3 等） | 小型化・コスト削減。KiCad 一式を公開 |
-| 監査可能 SE（TROPIC01）の採用検討 | 入手性が改善した場合の本命 |
-| 大画面パネルへの対応 | EVM の calldata 表示 UX 改善 |
+| ed25519 chains (Solana / TON / Cardano) | Add SLIP-0010 to `core` and keep the structure extensible by adding an app |
+| SLIP-39 Shamir splitting | An option for the backup scheme |
+| **Porting to the RP2350-PiZero** | **The main v0.2 candidate**. Same size and 40-pin compatible with the Pi Zero, no wireless, no soldering, microSD, LiPo charging, UF2 flashing. Compiling the core and building libsecp256k1 have been confirmed by measurement. The plan is [08-rp2350-pizero.md](08-rp2350-pizero.md). The remaining work is implementing the HAL, the QR approach (decided: microSD handoff first, SPI camera later) and measuring signing speed |
+| **Support for all-in-one hardware (M5Stack etc.)** | Devices with a screen, buttons and camera built in are "solder-free and easy to popularize". However, they do not run Linux, and current Zig has no official support for the ESP32-S3 and similar parts, so **the firmware would have to be redesigned as a separate line** |
+| Custom board (ESP32-S3 etc.) | Smaller size, lower cost. The full KiCad set would be published |
+| Considering an auditable SE (TROPIC01) | The main candidate if availability improves |
+| Support for larger display panels | Better UX for displaying EVM calldata |
 
 ---
 
-## 進め方の原則
+## Working principles
 
-1. **テストネットで再現できない機能は実装しない**（実装 → 検証の順序を守る）
-2. **表示できないものには署名しない**（clear signing を後回しにしない）
-3. **秘密は常に一時的**（永続化を前提とした設計変更をしない）
-4. 迷ったら、既存の実装（SeedSigner / Krux / Trezor）と**バイト単位で比較**して決める
+1. **Do not implement a feature that cannot be reproduced on a test network** (keep the order: implement, then verify)
+2. **Do not sign anything that cannot be displayed** (do not postpone clear signing)
+3. **Secrets are always temporary** (do not make design changes that assume persistence)
+4. When in doubt, decide by **comparing byte-for-byte** against existing implementations (SeedSigner / Krux / Trezor)

@@ -1,7 +1,8 @@
 name: CI
 
-# 目的: 開発機（macOS）だけでなく、実機と同じ Linux でもビルドとテストが通ることを
-# 継続的に確認する。Raspberry Pi は Linux なので、ここが通ることは実機の前提条件になる。
+# Goal: keep confirming that the build and tests pass not only on the development
+# machine (macOS) but also on the same Linux as the device. The Raspberry Pi runs
+# Linux, so passing here is a prerequisite for the real device.
 
 on:
   push:
@@ -17,8 +18,8 @@ jobs:
 
       - name: Install Zig 0.17.0
         run: |
-          # 注意: ziglang.org の index.json には 0.17.0 が載っていないことがあるが、
-          # バイナリの tarball は取得できる。バージョンを固定して再現性を保つ。
+          # Note: ziglang.org's index.json does not always list 0.17.0, but the
+          # binary tarball is available. Pin the version to keep builds reproducible.
           curl -fsSL -o zig.tar.xz https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
           tar -xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-0.17.0" >> "$GITHUB_PATH"
@@ -28,37 +29,38 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsecp256k1-dev pkg-config
 
-      - name: 依存の確認
+      - name: Check dependencies
         run: |
           pkg-config --modversion libsecp256k1
           zig version
 
-      - name: テスト（公式テストベクタ + 統合テスト + Core 相互運用）
+      - name: Tests (official test vectors + integration + Core interop)
         working-directory: firmware
         run: zig build test
 
-      - name: ReleaseSafe でもテスト
+      - name: Tests in ReleaseSafe too
         working-directory: firmware
         run: |
           zig test tests.zig -OReleaseSafe $(pkg-config --cflags --libs libsecp256k1) -lc
 
-      - name: Pico 系（RP2040 / RP2350）向けのコンパイル確認
+      - name: Compile check for Pico (RP2040 / RP2350)
         working-directory: firmware
         run: |
-          # Linux を前提にしない Pico 系へ移植できるかを毎回確認する
+          # Check on every run that the core still ports to the Pico family,
+          # which does not assume Linux.
           zig build pico --summary all
 
-      - name: CLI のビルドと動作確認
+      - name: Build the CLI and check it runs
         working-directory: firmware
         run: |
           zig build
           ./zig-out/bin/zhww version
-          # BIP84 の公式テストベクタと同じアドレスが出ること
+          # The address must match the official BIP84 test vector
           OUT=$(./zig-out/bin/zhww address --mnemonic "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
           test "$OUT" = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu"
           echo "CLI OK: $OUT"
 
-      - name: 署名が Core 検証済みのベクタと一致すること
+      - name: Signature matches the Core-verified vector
         working-directory: firmware
         run: |
           PSBT=$(jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json)
@@ -67,9 +69,9 @@ jobs:
             --mnemonic "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
             2>/dev/null | grep '^FINAL_TX=' | cut -d= -f2-)
           test "$MINE" = "$EXPECTED"
-          echo "署名 OK（Bitcoin Core の出力と一致）"
+          echo "sign OK (matches Bitcoin Core output)"
 
-      - name: microSD（FAT32）での受け渡し
+      - name: Handoff over microSD (FAT32)
         working-directory: firmware
         run: |
           sudo apt-get install -y mtools dosfstools
@@ -81,14 +83,14 @@ jobs:
           ./zig-out/bin/zhww card sign --image "$IMG" \
             --mnemonic "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
           ./zig-out/bin/zhww card list --image "$IMG"
-          # 署名済み PSBT が固定した期待値と一致すること
+          # The signed PSBT must match the pinned expectation
           GOT=$(mtype -i "$IMG" ::/OUT.PSBT | sha256sum | cut -d' ' -f1)
           WANT=$(jq -r .signed_psbt_sha256 tests/vectors/core_psbt.json)
           test "$GOT" = "$WANT"
           fsck.fat -n "$IMG"
-          echo "FAT32 OK（受け渡しと署名が期待値と一致、fsck も異常なし）"
+          echo "FAT32 OK (handoff and signature match expectations; fsck clean)"
 
-      - name: EVM 署名（独立実装 eth-account の値と一致）
+      - name: EVM signing (matches the independent eth-account implementation)
         working-directory: firmware
         run: |
           MN="abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
@@ -96,9 +98,9 @@ jobs:
             | ./zig-out/bin/zhww evm-sign --mnemonic "$MN" 2>/dev/null)
           EXPECTED="02f86f0107843b9aca008506fc23ac0082520894353535353535353535353535353535353535353584075bcd1580c080a08b29bfd611a0f695677f38218b2a6d02218f906adedbb1f171aa49b261794de2a02e5c9604faa6d3f48c89f8568aa04ea6cef7e058d0464ef4447989524c1bd4cf"
           test "$TX" = "$EXPECTED"
-          echo "EVM OK（EIP-1559 の署名が独立実装と一致）"
+          echo "EVM OK (EIP-1559 signature matches the independent implementation)"
 
-      - name: EVM の表示（evm-show）
+      - name: EVM display (evm-show)
         working-directory: firmware
         run: |
           RAW="02f8b001018459682f008509502f900082ea6094a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4880b844a9059cbb000000000000000000000000353535353535353535353535353535353535353a0000000000000000000000000000000000000000000000000000000005f5e100c080a0f81c6287143005ecacc19b19ed1f8929c0d1ac1304d1e4c365c97c9f0410b003a019c85ccdf57b11bb85a28151b1847ce6777524240ef8ec55441b3cda63643de9"
@@ -106,22 +108,22 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q 'transfer(address,uint256)'
           echo "$OUT" | grep -q '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
-          echo "evm-show OK（セレクタと EIP-55 のアドレスを表示）"
+          echo "evm-show OK (shows the selector and the EIP-55 address)"
 
-      - name: 表示（show）の確認
+      - name: Display check (show)
         working-directory: firmware
         run: |
           PSBT=$(jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json)
           OUT=$(printf '%s' "$PSBT" | ./zig-out/bin/zhww show --network regtest 2>/dev/null)
           echo "$OUT"
-          echo "$OUT" | grep -q '手数料: 10000 sats'
-          echo "show OK（手数料を Core と同じ 10000 sats と表示）"
+          echo "$OUT" | grep -q 'fee: 10000 sats'
+          echo "show OK (fee shown as 10000 sats, same as Core)"
 
-      - name: UR（QR 転送）の往復
+      - name: UR round trip (QR transfer)
         working-directory: firmware
         run: |
           PSBT=$(jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json)
           MINE=$(printf '%s' "$PSBT" | ./zig-out/bin/zhww ur --fragment 40 2>/dev/null \
             | ./zig-out/bin/zhww ur-decode 2>/dev/null)
           test "$MINE" = "$PSBT"
-          echo "UR OK（PSBT → UR → PSBT が一致）"
+          echo "UR OK (PSBT -> UR -> PSBT round-trips)"

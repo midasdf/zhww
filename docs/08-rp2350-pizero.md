@@ -1,64 +1,64 @@
-# 08. RP2350-PiZero への移植計画
+# 08. Port plan for the RP2350-PiZero
 
-- **対象**: Waveshare RP2350-PiZero
-- **最終更新**: 2026-10-12
-- **位置づけ**: v0.2 の本命。ハードウェアを必要としない準備は [pico_smoke.zig](../firmware/pico_smoke.zig) と `zig build pico` で済ませてある
+- **Target**: Waveshare RP2350-PiZero
+- **Last updated**: 2026-10-12
+- **Position**: the main v0.2 candidate. The preparation that does not need hardware is already done with [pico_smoke.zig](../firmware/pico_smoke.zig) and `zig build pico`
 
 ---
 
-## 1. なぜこのボードか
+## 1. Why this board
 
-Pi Zero 1.3 の在庫難とピンヘッダの半田付けを避けつつ、「無線なし」「半田付けなし」を両立できる。
+It achieves both "no wireless" and "no soldering" while avoiding the stock shortage of the Pi Zero 1.3 and the soldering of a pin header.
 
-**RP2350-PiZero の仕様**（出典: [Waveshare wiki](https://www.waveshare.com/wiki/RP2350-PiZero)、[CNX Software の紹介記事](https://www.cnx-software.com/2025/07/08/rp2350-pizero-rp2350-board-with-raspberry-pi-zero-form-factor-mini-hdmi-16mb-flash/)）:
+**RP2350-PiZero specifications** (sources: [Waveshare wiki](https://www.waveshare.com/wiki/RP2350-PiZero), [CNX Software's introduction](https://www.cnx-software.com/2025/07/08/rp2350-pizero-rp2350-board-with-raspberry-pi-zero-form-factor-mini-hdmi-16mb-flash/)):
 
-| 項目 | 内容 |
+| Item | Content |
 |---|---|
-| MCU | RP2350B（Cortex-M33 ×2 または RISC-V Hazard3 ×2、最大 150MHz、520KB SRAM） |
-| フラッシュ | 16MB（PSRAM 用パッドあり） |
-| 記録 | **microSD（TF）スロット** |
-| GPIO | **40pin（Raspberry Pi 互換）**。28 GPIO、SPI ×2、I2C ×2、UART ×2、PWM ×16、PIO ×12 |
-| 電源 | USB Type-C（給電・書き込み）＋ **LiPo 充電コネクタ** |
-| その他 | USB Type-C（PIO-USB）、DVI 出力、BOOT/RUN ボタン、65×30mm（Pi Zero と同寸） |
-| 価格 | $9.99（Waveshare 直販）。国内は[スイッチサイエンス](https://www.switch-science.com/products/10733)等 |
-| 書き込み | UF2 をドラッグ&ドロップ（BOOT ボタン） |
+| MCU | RP2350B (2× Cortex-M33 or 2× RISC-V Hazard3, up to 150MHz, 520KB SRAM) |
+| Flash | 16MB (with pads for PSRAM) |
+| Storage | **microSD (TF) slot** |
+| GPIO | **40-pin (Raspberry Pi compatible)**. 28 GPIO, 2× SPI, 2× I2C, 2× UART, 16× PWM, 12× PIO |
+| Power | USB Type-C (power and flashing) + **LiPo charging connector** |
+| Other | USB Type-C (PIO-USB), DVI output, BOOT/RUN buttons, 65×30mm (same size as the Pi Zero) |
+| Price | $9.99 (direct from Waveshare). In Japan, [スイッチサイエンス (Switch Science)](https://www.switch-science.com/products/10733) and others |
+| Flashing | Drag and drop a UF2 file (BOOT button) |
 
-**本プロジェクトとの相性**:
+**How it fits this project**:
 
-- **無線チップが無い** — エアギャップをソフトではなくハードウェアで達成できる（Zero 2 WH の残存リスクが消える）
-- **Pi Zero と同寸・40pin 互換** — 既存の [Waveshare 1.3inch LCD HAT](https://www.waveshare.com/wiki/1.3inch_LCD_HAT)（BOM の標準ディスプレイ）を**そのまま差せる**。筐体はポート位置が異なるため新規 STL が必要
-- **microSD を標準搭載** — カメラ無しでも PSBT を受け渡せる
-- **LiPo 給電＋充電回路** — 携帯できる
-- **UF2 書き込み** — 利用者の導入が「ファイルをコピーするだけ」で済む
-- **Zig が公式対応**（Cortex-M33）— ESP32-S3 の Xtensa と違い、現行の Zig で書ける
+- **No wireless chip** — the air gap is achieved in hardware rather than in software (the residual risk of the Zero 2 WH disappears)
+- **Same size and 40-pin compatible with the Pi Zero** — the existing [Waveshare 1.3inch LCD HAT](https://www.waveshare.com/wiki/1.3inch_LCD_HAT) (the BOM's standard display) **plugs straight in**. The enclosure needs a new STL because the port positions differ
+- **microSD is standard** — PSBTs can be handed over even without a camera
+- **LiPo power and charging circuit** — portable
+- **UF2 flashing** — onboarding for users is just "copy a file"
+- **Zig supports it officially** (Cortex-M33) — unlike the ESP32-S3's Xtensa, it can be written in current Zig
 
-## 2. 実測で確認できていること
+## 2. What has been confirmed by measurement
 
-| 確かめたこと | 結果 | 再現方法 |
+| What was checked | Result | How to reproduce |
 |---|---|---|
-| コア（BIP39/32・アドレス・PSBT・署名経路・EVM・UR）のコンパイル | **成功**（RP2040 / RP2350 の両方、各約 64KB） | `zig build pico` |
-| libsecp256k1 0.6.0 のビルド | **成功**（`zig cc` + 最小 libc シム。実移植では picolibc を使い `-DNDEBUG` で stdio 依存を消す） | [03-hardware-bom.md](03-hardware-bom.md) の 2.3 節 |
-| 署名速度 | **未検証**（実機が必要） | — |
-| HAL（画面・SD・入力・乱数） | **未着手** | — |
+| Compilation of the core (BIP39/32, addresses, PSBT, signing path, EVM, UR) | **Succeeds** (both RP2040 and RP2350, about 64KB each) | `zig build pico` |
+| Building libsecp256k1 0.6.0 | **Succeeds** (`zig cc` + a minimal libc shim. A real port would use picolibc and remove the stdio dependency with `-DNDEBUG`) | §2.3 of [03-hardware-bom.md](03-hardware-bom.md) |
+| Signing speed | **Not verified** (hardware required) | — |
+| HAL (screen, SD, input, randomness) | **Not started** | — |
 
-## 3. ハード構成（案）
+## 3. Hardware configuration (draft)
 
-| # | 部品 | 備考 | 概算 |
+| # | Part | Notes | Approx. |
 |---|---|---|---|
-| 1 | RP2350-PiZero | 本体。40pin 実装済み | $9.99（約 ¥1,600） |
-| 2 | Waveshare 1.3inch LCD HAT（SKU 14972） | ST7789VW 240×240、ジョイスティック＋3 ボタン | $13.99 |
-| 3 | microSD（8〜32GB） | 本体スロットに挿す | ¥800 |
-| 4 | **電源は搭載しない**（USB 外部給電・**採用**） | 給電専用ケーブル＋手持ちの電源。乾電池ボックスは任意の持ち歩き用（[03-hardware-bom.md](03-hardware-bom.md) の 2.7 節） | ¥0〜3,000 |
-| 5 | 筐体 | 3D プリント。**ポート位置が Pi Zero と違うため新規 STL** | ¥0〜1,500 |
-| 6 | USB-C ケーブル | 書き込み・給電 | ¥500 |
+| 1 | RP2350-PiZero | The board itself. 40-pin header pre-installed | $9.99 (about ¥1,600) |
+| 2 | Waveshare 1.3inch LCD HAT (SKU 14972) | ST7789VW 240×240, joystick + 3 buttons | $13.99 |
+| 3 | microSD (8–32GB) | Inserted into the board's slot | ¥800 |
+| 4 | **No power supply on board** (external USB power, **adopted**) | A power-only cable plus a power source you already have. A dry-cell box is optional for carrying it around (§2.7 of [03-hardware-bom.md](03-hardware-bom.md)) | ¥0–3,000 |
+| 5 | Enclosure | 3D printed. **A new STL is needed because the port positions differ from the Pi Zero** | ¥0–1,500 |
+| 6 | USB-C cable | Flashing and power | ¥500 |
 
-**合計目安: ¥6,000〜9,000**（カメラを付けない場合）
+**Estimated total: ¥6,000–9,000** (about USD 40–60; without a camera)
 
-## 4. ピン配置（LCD HAT の公式表）
+## 4. Pin assignment (the LCD HAT's official table)
 
-Waveshare の HAT は BCM 番号で次のピンを使う。40pin が Pi 互換である以上、同じ物理ピンに載る。
+Waveshare's HAT uses the following pins by BCM number. As long as the 40-pin header is Pi-compatible, they land on the same physical pins.
 
-| 用途 | BCM | 用途 | BCM |
+| Function | BCM | Function | BCM |
 |---|---|---|---|
 | KEY1 | 21 | Joystick UP | 6 |
 | KEY2 | 20 | Joystick DOWN | 19 |
@@ -66,279 +66,279 @@ Waveshare の HAT は BCM 番号で次のピンを使う。40pin が Pi 互換�
 | SCLK (SPI0) | 11 | Joystick RIGHT | 26 |
 | MOSI (SPI0) | 10 | Joystick PRESS | 13 |
 | CS (CE0) | 8 | DC | 25 |
-| RST | 27 | BL（バックライト） | 24 |
+| RST | 27 | BL (backlight) | 24 |
 
-**移植時に必ず確認すること**:
+**Things to confirm before porting**:
 
-1. 「BCM 番号 = RP2350 の GPIO 番号」として扱えるか（基板の回路図・ピン配置図で確認する）
-2. **microSD がどの GPIO に繋がっているか** — 基板の回路図は Waveshare が公開している（[RP2350-PiZero Schematic](https://files.waveshare.com/wiki/RP2350-PiZero/RP2350-PiZero.pdf)）。40pin とは独立の可能性が高い
-3. DVI は使わない（無効のまま）
+1. Whether "BCM number = RP2350 GPIO number" can be assumed (check the board's schematic and pinout diagram)
+2. **Which GPIO the microSD is connected to** — Waveshare publishes the board schematic ([RP2350-PiZero Schematic](https://files.waveshare.com/wiki/RP2350-PiZero/RP2350-PiZero.pdf)). It is very likely independent of the 40-pin header
+3. DVI is not used (leave it disabled)
 
-## 4b. 電源ポリシー（外部給電で確定）
+## 4b. Power policy (settled: external power)
 
-本体に電池を積まないので、**「挿したら動く・抜いたら消える」**が基本になる。
-電源断は異常ではなく**通常の電源の切り方**なので、次の方針で設計する。
+Since no battery is fitted in the device, the basics are **"plug it in and it runs, unplug it and it is gone"**.
+Cutting the power is not an anomaly but **the normal way to switch the device off**, so the design follows the policy below.
 
-| 項目 | 方針 |
+| Item | Policy |
 |---|---|
-| 電源の入れ方 | USB を挿す（RUN ボタンで再起動も可） |
-| 電源の切り方 | **USB を抜く**（これが正常な使い方。安全に抜けなければならない） |
-| 待機（スリープ） | **不要**。挿している間だけ動く。電池が無いので待機消費を気にしなくてよい |
-| 残量表示 | **不要**（電池が無いので問題自体が存在しない） |
-| 電源断 | **署名は「最後まで通すか、何も残さないか」のどちらか**。書き出し前の電源断で中途半端な署名が有効にならないこと（microSD は `OUT.TMP` → リネーム方式。7b 節） |
-| 起動直後 | 「前回の署名が完了していたか」を確認できるようにする。カードに `OUT.PSBT` があれば結果、`OUT.TMP` だけなら未完了として扱う |
-| 消費電流 | **実測が必要**（RP2350 150MHz で数十 mA、LCD バックライトも数十 mA）。USB 給電なので容量の制約は無い |
+| How to turn on | Plug in USB (the RUN button also reboots) |
+| How to turn off | **Unplug USB** (this is normal use. It must be safe to unplug) |
+| Standby (sleep) | **Not needed**. It runs only while plugged in. With no battery there is no standby drain to worry about |
+| Battery indicator | **Not needed** (with no battery the problem itself does not exist) |
+| Power loss | **A signature either goes all the way through or leaves nothing**. A power loss before the write completes must not leave a half-finished signature valid (the microSD uses `OUT.TMP` → rename; §7b) |
+| Right after boot | Make it possible to confirm "did the previous signing finish?". If `OUT.PSBT` is on the card, it is a result; if only `OUT.TMP` is there, treat it as incomplete |
+| Current draw | **Measurement required** (an RP2350 at 150MHz draws tens of mA, and the LCD backlight draws tens of mA too). USB-powered, so there is no capacity constraint |
 
-### 状態表示（LED とバックライト）
+### Status indication (LED and backlight)
 
-**基板上の LED について分かっていること**（2026-10-12 時点）:
+**What is known about the LEDs on the board** (as of 2026-10-12):
 
-| 項目 | 状況 |
+| Item | Status |
 |---|---|
-| Power LED | **ある**（電源が入ると点く）。ただし電源レールに直結されている可能性が高く、**ソフトからは制御できない見込み**。回路図で確定させる |
-| GPIO で制御できる LED（WS2812 等） | この基板には**無い可能性が高い**（RP2040-Zero などには搭載されている）。回路図で確定させる |
-| 40pin の空き | あるが、LCD HAT が被るため、LED を足すにはスタッキングヘッダが要る |
+| Power LED | **Present** (lights when powered). However, it is most likely wired directly to the power rail and **probably cannot be controlled from software**. To be settled from the schematic |
+| An LED controllable from GPIO (WS2812 etc.) | **Most likely absent** on this board (boards such as the RP2040-Zero have one). To be settled from the schematic |
+| Spare 40-pin pins | There are some, but the LCD HAT covers them, so adding an LED would require a stacking header |
 
-**そこで「方針」を先にコードにした**（[src/ui/indicator.zig](../firmware/src/ui/indicator.zig)）。
-ハードが未確定でも、どの状態でどう光らせるかは決められ、テストできる。
+**So the "policy" was turned into code first** ([src/ui/indicator.zig](../firmware/src/ui/indicator.zig)).
+Even with the hardware undecided, what should light up in which state can be decided and tested.
 
-| 状態 | 表示 | 平均点灯率 |
+| State | Indication | Average on-time |
 |---|---|---|
-| 待機 | 3 秒ごとに 20ms だけ光る（心拍）※電池を積む構成のときだけ意味がある | **0.7%** |
-| 処理中 | 点灯したまま | 100%（利用者が見ている短時間） |
-| 確認待ち | ゆっくり点滅（400ms / 600ms） | 40% |
-| エラー | 速く点滅（100ms / 100ms） | 50% |
-| 電池少（推定） | 2 回点滅して長く消える | 3% |
+| Idle | Lights for 20ms every 3 seconds (heartbeat) — only meaningful in a configuration with a battery | **0.7%** |
+| Working | Steady on | 100% (the short time the user is watching) |
+| Waiting for confirmation | Slow blink (400ms / 600ms) | 40% |
+| Error | Fast blink (100ms / 100ms) | 50% |
+| Low battery (estimated) | Two blinks then a long off period | 3% |
 
-**画面のバックライト（BCM24）は制御できるので、こちらを主な表示に使う**（待機中は消す）。
-LED は「画面を消している待機中」と「暗い場所」の補助という位置づけにする。
+**The screen backlight (BCM24) can be controlled, so it is used as the main indicator** (turned off while idle).
+The LED is positioned as an auxiliary for "idle periods when the screen is off" and "dark places".
 
-**電池残量そのものは測れない**（5V レールを ADC で見るには分圧抵抗の追加＝半田付けが必要）。
-現実的な選択肢は次の 3 つ。
+**The battery level itself cannot be measured** (reading the 5V rail with an ADC would require adding a voltage-divider resistor, i.e. soldering).
+The realistic options are the following three.
 
-1. **電池ボックス側の残量表示に頼る**（多くの製品に LED 表示がある）— 追加部品ゼロ
-2. **使用時間から推定する**: 設定で「新しい電池」を宣言し、累積の使用時間から交換時期を画面に出す
-   （精度は粗いが、ハード追加なしで実装できる）
-3. **任意改造**: 空き ADC ピンに分圧抵抗を 1 本足す（半田付け 1 箇所）。上級者向けとして文書化する
+1. **Rely on the battery box's own level indicator** (many products have an LED display) — zero extra parts
+2. **Estimate from usage time**: declare a "new battery" in the settings and show the replacement time on screen from accumulated usage time
+   (coarse accuracy, but implementable without extra hardware)
+3. **Optional modification**: add one voltage-divider resistor to a spare ADC pin (one solder joint). To be documented as an advanced option
 
-**なぜ「何も残さない」で安全か**: 秘密（seed）はメモリ上にしか置かず、署名結果は書き出しが
-完了したときだけ有効になる。電源断で消えるのは「まだ書き出していない中間状態」だけである。
-この性質は [05-threat-model.md](05-threat-model.md) の stateless 設計と同じ考え方。
+**Why "leave nothing behind" is safe**: secrets (the seed) are kept only in memory, and a signing result
+becomes valid only when the write-out has completed. All that a power loss destroys is "an intermediate state that has not been written out yet".
+This property is the same idea as the stateless design in [05-threat-model.md](05-threat-model.md).
 
 
-## 4c. フラッシュ（16MB）の使い方
+## 4c. How the 16MB of flash is used
 
-RP2350-PiZero は 16MB のフラッシュを持つ。**実測した使用量**は次のとおりで、余裕が大きい。
+The RP2350-PiZero has 16MB of flash. **The measured usage** is as follows, leaving plenty of headroom.
 
-| 用途 | 見込み | 備考 |
+| Purpose | Estimate | Notes |
 |---|---|---|
-| ファームウェア本体（コア + UI + FAT32 + QR） | **68 KB**（実測） | RP2350 向け `-OReleaseSmall` |
-| libsecp256k1 | **340 KB**（実測） | 楕円曲線演算 |
-| 日本語フォント（JIS 第 1 水準 + かな + ASCII、12×12 ビットマップ） | 70 KB | 画面を日本語にできる |
-| ERC-7730 記述子（clear signing 用） | 500 KB | レジストリの主要なトークン/プロトコル |
-| テストベクタ（端末内セルフテスト用） | 300 KB | 公式ベクタ + Core 相互運用の記録 |
-| 多言語 UI 文字列（日本語 / 英語） | 20 KB | — |
-| **合計** | **約 1.3 MB / 16 MB（8%）** | 残り約 14.7MB |
+| Firmware body (core + UI + FAT32 + QR) | **68 KB** (measured) | `-OReleaseSmall` for the RP2350 |
+| libsecp256k1 | **340 KB** (measured) | Elliptic-curve arithmetic |
+| Japanese font (JIS level 1 + kana + ASCII, 12×12 bitmap) | 70 KB | Would make the screen Japanese-capable |
+| ERC-7730 descriptors (for clear signing) | 500 KB | Major tokens/protocols from the registry |
+| Test vectors (for on-device self-test) | 300 KB | Official vectors + records of Core interoperability |
+| Multilingual UI strings (Japanese / English) | 20 KB | — |
+| **Total** | **about 1.3 MB / 16 MB (8%)** | About 14.7MB left |
 
-### 方針: フラッシュは「読み取り専用の資産」にだけ使う
+### Policy: use flash only for read-only assets
 
-**秘密も状態も書かない。** これは [設計の 3 原則](../README.md) の「秘密は電源と共に消える
-（stateless）」を守るためであり、同時にフラッシュの書き換え劣化を避けるためでもある。
+**Write neither secrets nor state.** This upholds "secrets die with the power (stateless)" from the
+[three design principles](../README.md), and at the same time avoids flash wear from rewrites.
 
-| 置くもの | 置かないもの |
+| What is stored | What is not stored |
 |---|---|
-| フォント、UI 文字列 | seed・派生鍵・パスフレーズ |
-| ERC-7730 記述子、テストベクタ | 署名の途中状態・履歴 |
-| プログラム本体 | 残量や設定（電池を積まないので不要） |
+| Fonts, UI strings | seed, derived keys, passphrase |
+| ERC-7730 descriptors, test vectors | Intermediate signing state, history |
+| The program itself | Battery level and settings (not needed with no battery) |
 
-SD カードは**受け渡しだけ**に使う。端末は「挿せば動く・抜けば何も残らない」を保つ。
+The SD card is used **only for handoff**. The device keeps the property "insert it and it runs, remove it and nothing remains".
 
-## 5. 移植するもの（HAL）
+## 5. What gets ported (HAL)
 
-| 層 | 内容 | 難易度 |
+| Layer | Content | Difficulty |
 |---|---|---|
-| display | ST7789VW を SPI0 で駆動（240×240、RGB565）、バックライト制御、オフセット補正 | 低（既存の C 実装が多数） |
-| input | ジョイスティック 5 方向＋KEY1〜3（GPIO 入力、プルアップ） | 低 |
-| storage | microSD（FAT32）の読み書き。PSBT ファイルの入出力 | 中（FatFs 相当が必要） |
-| entropy | RP2350 内蔵 TRNG | 低 |
-| 署名 | libsecp256k1 をターゲット向けにビルドしてリンク | 中（ビルドは実測済み） |
-| 起動 | BOOTSEL → UF2、ベクタテーブル、リンカスクリプト | 中 |
-| UI | 画面（アドレス・金額・手数料・警告の表示、QR 描画） | 中〜高 |
+| display | Drive the ST7789VW over SPI0 (240×240, RGB565), backlight control, offset correction | Low (many existing C implementations) |
+| input | 5-way joystick + KEY1–3 (GPIO inputs, pull-ups) | Low |
+| storage | microSD (FAT32) read/write. PSBT file input/output | Medium (the FAT32 implementation itself already exists in Zig; an SD block-device driver is still needed) |
+| entropy | RP2350 built-in TRNG | Low |
+| signing | Build libsecp256k1 for the target and link it | Medium (the build has been measured) |
+| boot | BOOTSEL → UF2, vector table, linker script | Medium |
+| UI | Screens (displaying addresses, amounts, fees and warnings; drawing QR codes). The drawing layer is implemented and tested on the host; what remains is wiring it to hardware input and the screen flow | Medium–High |
 
-### 実装済みの UI 層（ハードウェア非依存・2026-10-12）
+### Implemented UI layer (hardware-independent, 2026-10-12)
 
-実機が無くても UI を固められるよう、**画面の組み立ては PC 上で完結する形**にしてある。
+So that the UI can be pinned down without a device, **screen composition is made to work entirely on a PC**.
 
-| ファイル | 内容 | テスト |
+| File | Content | Tests |
 |---|---|---|
-| [src/ui/font.zig](../firmware/src/ui/font.zig) | 8×8 ビットマップフォント（パブリックドメイン、出典を明記） | 字形の検証 |
-| [src/ui/framebuffer.zig](../firmware/src/ui/framebuffer.zig) | RGB565 の描画（点・矩形・文字・ドット列）。範囲外はクリップ | ピクセル単位で検証 |
-| [src/ui/screen.zig](../firmware/src/ui/screen.zig) | 240×240 の画面レイアウト（タイトル・ラベル/値・警告・QR・フッター） | 領域ごとの描画を検証 |
-| [src/ui/qr.zig](../firmware/src/ui/qr.zig) | QR エンコーダ（ISO/IEC 18004。表示専用、デコーダは含まない） | 独立実装（qrcodegen）と**全モジュール行列が一致** |
-| [src/cli/png.zig](../firmware/src/cli/png.zig) | PNG 出力（無圧縮 zlib。外部ライブラリ不要） | 構造と CRC / Adler-32 を検証 |
+| [src/ui/font.zig](../firmware/src/ui/font.zig) | 8×8 bitmap font (public domain, source credited) | Glyph shape verification |
+| [src/ui/framebuffer.zig](../firmware/src/ui/framebuffer.zig) | RGB565 drawing (points, rectangles, text, dot rows). Out-of-range coordinates are clipped | Verified pixel by pixel |
+| [src/ui/screen.zig](../firmware/src/ui/screen.zig) | 240×240 screen layout (title, label/value, warnings, QR, footer) | Drawing verified per region |
+| [src/ui/qr.zig](../firmware/src/ui/qr.zig) | QR encoder (ISO/IEC 18004. Display only; no decoder) | **Every module of the matrix matches** the independent implementation (qrcodegen) |
+| [src/cli/png.zig](../firmware/src/cli/png.zig) | PNG output (uncompressed zlib. No external libraries) | Structure and CRC / Adler-32 verified |
 
-**PC で画面を見る方法**（実機は不要）:
+**How to view the screens on a PC** (no device required):
 
 ```bash
 cd firmware && zig build
 ./zig-out/bin/zhww screen --demo --scale 2 > demo.png
 cat psbt.txt | ./zig-out/bin/zhww screen --network regtest --scale 2 > confirm.png
 
-# UR の 1 パートを QR として表示する（実機の「スマホに見せる」画面）
+# Show one UR part as a QR code (the device's "show it to your phone" screen)
 cat psbt.txt | ./zig-out/bin/zhww ur --fragment 40 | head -1 \
   | ./zig-out/bin/zhww screen --qr --scale 2 > qr.png
 ```
 
-![UR の 1 パートを QR にした画面](images/screen-qr-ur.png)
+![A screen rendering one UR part as a QR code](images/screen-qr-ur.png)
 
-*Bitcoin Core の PSBT を BC-UR のパートに変換し、その 1 つを QR にした画面（v7・45×45 モジュール・EC M）。
-この PNG を独立した読み取り実装（OpenCV の QRCodeDetector）で復号すると、元の UR 文字列と
-**完全に一致**することを確認済み。*
+*A screen that converts a Bitcoin Core PSBT into BC-UR parts and renders one of them as a QR code (v7, 45×45 modules, EC M).
+Decoding this PNG with an independent reader implementation (OpenCV's QRCodeDetector) has been confirmed to reproduce the original UR string
+**exactly**.*
 
-**QR エンコーダの検証**（重要）:
-- 独立実装 **qrcodegen 1.8.0** と、同一入力・同一 EC・同一マスクで**全モジュール行列が一致**（強制マスクで 16/16、全 40 バージョン × 4 EC の網羅比較は実装時に 320/320）
-- 自動マスク選択は **ISO/IEC 18004 Annex I.2 の作業例**（`"01234567"`・EC M → マスク 2）を再現する
-- 生成した QR を **OpenCV で復号**して内容が一致することまで確認
-- **注意**: オラクルとして使った segno 1.6.6 にはバイトモードのパディングのバグがある
-  （[heuer/segno#123](https://github.com/heuer/segno/issues/123)、未修正）。本実装は規格どおりで、
-  qrcodegen とは一致し segno とは一致しない。詳細は [../firmware/tests/README.md](../firmware/tests/README.md) の #10
+**QR encoder verification** (important):
+- **Every module of the matrix matches** the independent implementation **qrcodegen 1.8.0** for the same input, EC level and mask (16/16 with forced masks; the exhaustive comparison across all 40 versions × 4 EC levels was 320/320 at implementation time)
+- Automatic mask selection reproduces the **worked example in ISO/IEC 18004 Annex I.2** (`"01234567"`, EC M → mask 2)
+- Generated QR codes have been **decoded with OpenCV** and the content confirmed to match
+- **Note**: segno 1.6.6, which was used as an oracle, has a byte-mode padding bug
+  ([heuer/segno#123](https://github.com/heuer/segno/issues/123), unfixed). This implementation follows the specification,
+  so it matches qrcodegen and does not match segno. See #10 in [../firmware/tests/README.md](../firmware/tests/README.md)
 
-実際に Bitcoin Core が作った PSBT から「送金先・金額・手数料」の確認画面が描けることを確認済み。
+It has been confirmed that a confirmation screen showing "destination, amount and fee" can be drawn from a PSBT actually created by Bitcoin Core.
 
-![Core の PSBT から描いた確認画面（240×240 を 2 倍で出力）](images/screen-confirm-psbt.png)
+![Confirmation screen drawn from a Core PSBT (240×240 rendered at 2×)](images/screen-confirm-psbt.png)
 
-*Core の PSBT（送金先 bcrt1qf593…、99990000 sats、手数料 10000 sats。手数料は Core の
-`decodepsbt` と一致）から描いた確認画面。*
+*The confirmation screen drawn from a Core PSBT (destination bcrt1qf593…, 99990000 sats, fee 10000 sats. The fee matches Core's
+`decodepsbt`).*
 
-![デモ画面](images/screen-confirm-demo.png)
+![Demo screen](images/screen-confirm-demo.png)
 
-*デモ画面。QR の位置には現在デモ用の市松模様が入っている（QR エンコーダ実装後に差し替える）。*
+*Demo screen. The QR area currently shows a demo checkerboard pattern (the demo screen has not yet been switched over to a real QR code).*
 
-## 6. 変えずに済むもの
+## 6. What does not need changing
 
-- `core/` と `apps/`（BIP39/BIP32・アドレス・PSBT・署名・EVM・ERC-7730・UR）は**そのまま**
-- 公式テストベクタによる 203 件のテストはホストで実行を継続し、回帰を防ぐ
-- 開発用 CLI もそのまま（ホストでの検証・ベクタ生成に使う）
+- `core/` and `apps/` (BIP39/BIP32, addresses, PSBT, signing, EVM, ERC-7730, UR) stay **as they are**
+- The 304 tests, including the official test vectors, continue to run on the host to prevent regressions
+- The development CLI stays as it is too (used for host-side verification and vector generation)
 
-## 7. 未解決の判断: QR の扱い
+## 7. Open decision: how to handle QR
 
-**採用: C（まず A を作り、余力で B を足す）** — 2026-10-12 決定
+**Adopted: C (build A first, add B if capacity allows)** — decided 2026-10-12
 
-| 案 | 長所 | 短所 | 判定 |
+| Option | Pros | Cons | Verdict |
 |---|---|---|---|
-| **A. microSD で受け渡し、QR は表示のみ** | 追加部品ゼロ。カメラ不要。確実 | スマホから直接読めない（PC 経由が必要） | **先に実装する** |
-| B. SPI カメラを追加して QR を読む | スマホと直接やり取りできる | 部品追加、PIO での取り込み、QR デコードの実装（マイコンでは重い） | A の後、余力で |
-| C. 両方（まず A、余力で B） | 現実的 | 実装量は増える | **採用** |
+| **A. Hand off over microSD, QR display only** | Zero extra parts. No camera needed. Reliable | Cannot be read directly from a phone (a PC is required in between) | **Implement first** |
+| B. Add an SPI camera and read QR codes | Direct interaction with a phone | Extra parts, capture over PIO, implementing QR decoding (heavy on a microcontroller) | After A, if capacity allows |
+| C. Both (A first, B if capacity allows) | Realistic | More implementation work | **Adopted** |
 
-A を先に作る理由: 署名結果を QR で**表示**できれば、受け渡しは microSD でも成立する。
-カメラは「入力の手間を減らす」部品であり、無くても署名フローは完結する。
+Why build A first: if the signing result can be **displayed** as a QR code, the handoff works over microSD as well.
+The camera is a part that "reduces the effort of input", and the signing flow is complete without it.
 
-### 画面に出す文字について
+### About the text shown on screen
 
-240×240 の画面に日本語を出すにはフォントを同梱する必要があり、容量と実装が増える。
-当面は**画面上は英語（ASCII）**とし、日本語はドキュメントと CLI 側で扱う。
-日本語フォント（必要な字形だけを絞ったビットマップ）は、UI が固まってから検討する。
+Displaying Japanese on a 240×240 screen would require bundling a font, increasing both size and implementation work.
+For now the **on-screen text is English (ASCII)**, and Japanese appears only in translation files such as [README.ja.md](../README.ja.md).
+A Japanese font (a bitmap restricted to the necessary glyphs) will be considered once the UI settles.
 
 
-## 7b. microSD での受け渡しプロトコル（確定）
+## 7b. microSD handoff protocol (settled)
 
-カメラを使わない方針（C）なので、**PSBT の受け渡しは microSD のファイルで行う**。
-PC / スマホ側のツールと取り決める仕様をここで固定する。
+Since the policy is not to use a camera (C), **PSBTs are handed over as files on the microSD card**.
+The specification agreed with the PC / phone-side tools is fixed here.
 
-### ファイル名（カードのルート直下）
+### File names (directly under the card's root)
 
-| 名前 | 誰が書くか | 意味 |
+| Name | Who writes it | Meaning |
 |---|---|---|
-| `IN.PSBT` | PC / スマホ | 署名してほしい PSBT（base64 ではなく**バイナリ**） |
-| `OUT.PSBT` | **端末** | 署名済み PSBT。全入力に署名できていれば最終トランザクションも含む |
-| `OUT.TMP` | 端末 | 書き込み途中の一時ファイル。**これは結果ではない** |
-| `OUT.LOG` | 端末 | 何に署名したかの記録（送金先・金額・手数料・警告。人間が読む用） |
+| `IN.PSBT` | PC / phone | The PSBT to be signed (**binary**, not base64) |
+| `OUT.PSBT` | **The device** | The signed PSBT. Includes the final transaction if every input could be signed |
+| `OUT.TMP` | The device | Temporary file for a write in progress. **This is not a result** |
+| `OUT.LOG` | The device | A record of what was signed (destination, amount, fee, warnings; for a human to read) |
 
-### 手順
+### Procedure
 
-1. PC / スマホが `IN.PSBT` をカードに書く（既存の `OUT.PSBT` は消しておく）
-2. 端末にカードを挿し、メニューから「SIGN」を選ぶ
-3. 端末は `IN.PSBT` を読み、**確認画面**（送金先・金額・手数料・警告）を出す
-4. 利用者が確認して署名する
-5. 端末は `OUT.TMP` に書き、**完了してから `OUT.PSBT` にリネーム**する（`OUT.LOG` も同様）
-6. 端末は署名結果を **QR でも表示**できる（スマホに直接渡したいとき）
-7. カードを PC に戻し、`OUT.PSBT` をブロードキャストする
+1. The PC / phone writes `IN.PSBT` to the card (delete any existing `OUT.PSBT` first)
+2. Insert the card into the device and choose "SIGN" from the menu
+3. The device reads `IN.PSBT` and shows the **confirmation screen** (destination, amount, fee, warnings)
+4. The user reviews it and signs
+5. The device writes `OUT.TMP` and **renames it to `OUT.PSBT` only after the write completes** (`OUT.LOG` likewise)
+6. The device can also **display the signing result as a QR code** (for handing it directly to a phone)
+7. Put the card back in the PC and broadcast `OUT.PSBT`
 
-### 守るべき約束（安全性の根拠）
+### Promises to keep (the basis for safety)
 
-| 約束 | 理由 |
+| Promise | Reason |
 |---|---|
-| **`OUT.TMP` を結果として扱わない** | 電源断やカード抜去で中途半端なファイルが残りうる。リネームが完了したものだけが結果（[電源ポリシー](#4b-電源ポリシー乾電池で確定) の「最後まで通すか何も残さないか」と同じ考え方） |
-| **`IN.PSBT` は上書きしない** | 後から「何に署名したか」を利用者が再確認できるようにする |
-| 署名前に**カード上のファイル一覧と対象ファイル名を画面に出す** | 別のファイルに署名してしまう事故を防ぐ |
-| マルチシグでは `OUT.PSBT` を次の署名者の `IN.PSBT` にする | 複数台での署名リレーが同じ手順で回る |
-| ファイルサイズの上限を決める（**64KB**） | 実機の SRAM は 520KB。上限を超えたら署名せず画面に理由を出す |
+| **Do not treat `OUT.TMP` as a result** | A power loss or card removal can leave a half-written file behind. Only what has completed the rename is a result (the same idea as "either it goes all the way through or nothing remains" in the [power policy](#4b-power-policy-settled-external-power)) |
+| **Do not overwrite `IN.PSBT`** | So the user can go back later and re-check what was signed |
+| **Show the list of files on the card and the target file name on screen before signing** | Prevents the accident of signing the wrong file |
+| For multisig, make `OUT.PSBT` the next signer's `IN.PSBT` | The signing relay across multiple devices follows the same procedure |
+| Decide a file-size limit (**64KB**) | The device's SRAM is 520KB. If the limit is exceeded, do not sign and show the reason on screen |
 
-### 画面の流れ（PC 上で再現できる）
+### Screen flow (reproducible on a PC)
 
-実機が無くても、**すべての画面**を PNG で確認できる。状態と画面の対応は
-[src/app/device.zig](../firmware/src/app/device.zig) にあり、**実機の main ループと PC の確認が同じ関数を使う**。
+Even without a device, **every screen** can be checked as a PNG. The mapping between states and screens lives in
+[src/app/device.zig](../firmware/src/app/device.zig), and **the device's main loop and the PC preview use the same functions**.
 
 ```bash
-# カードを用意する（mtools）
+# Prepare a card (mtools)
 mkfs.fat -F 32 -C card.img 40000
 jq -r .unsigned_psbt_base64 firmware/tests/vectors/core_psbt.json > in.txt
 mcopy -i card.img in.txt ::/IN.PSBT
 
-# 全画面を出力する
+# Render every screen
 cd firmware && zig build
 ./zig-out/bin/zhww walkthrough --image ../card.img \
   --mnemonic "abandon … about" --out-dir ../docs/images
 ```
 
-| 画面 | いつ出るか | 出力 |
+| Screen | When it appears | Output |
 |---|---|---|
-| ![待機](images/1-waiting.png) | カードが挿さっていない | `1-waiting.png` |
-| ![FAT32 でない](images/2-not-fat32.png) | カードは読めたが FAT32 でない | `2-not-fat32.png` |
-| ![IN.PSBT が無い](images/3-no-input.png) | `IN.PSBT` が無い | `3-no-input.png` |
-| ![大きすぎる](images/4-too-large.png) | 64KB を超えている | `4-too-large.png` |
-| ![PSBT が不正](images/5-invalid-psbt.png) | PSBT として解釈できない | `5-invalid-psbt.png` |
-| ![確認](images/6-confirm.png) | 署名前の確認（カード上のファイル一覧） | `6-confirm.png` |
-| ![結果](images/7-signed.png) | 署名完了（UR を QR で表示） | `7-signed.png` |
+| ![Idle](images/1-waiting.png) | No card inserted | `1-waiting.png` |
+| ![Not FAT32](images/2-not-fat32.png) | The card could be read but is not FAT32 | `2-not-fat32.png` |
+| ![No IN.PSBT](images/3-no-input.png) | There is no `IN.PSBT` | `3-no-input.png` |
+| ![Too large](images/4-too-large.png) | Larger than 64KB | `4-too-large.png` |
+| ![Invalid PSBT](images/5-invalid-psbt.png) | Cannot be interpreted as a PSBT | `5-invalid-psbt.png` |
+| ![Confirmation](images/6-confirm.png) | Confirmation before signing (list of files on the card) | `6-confirm.png` |
+| ![Result](images/7-signed.png) | Signing complete (UR shown as a QR code) | `7-signed.png` |
 
-**すべてのエラー画面に「署名は行っていない」ことを赤字で出す**（利用者に誤解させない）。
-エラーの対応づけは `problemForMountError` / `problemForSignError` にあり、テストで固定してある。
+**Every error screen states in red that "No signing was performed."** (so the user is not misled).
+The error mapping lives in `problemForMountError` / `problemForSignError` and is pinned by tests.
 
-**多パート QR**: 署名済み PSBT は UR の複数パートになる（上の例では 4 パート）。実機は
-`NEXT PART` で送り、PC では `--part 3` のように指定して確認できる。
+**Multi-part QR**: a signed PSBT becomes multiple UR parts (4 parts in the example above). On the device you page
+through with `NEXT PART`; on a PC you can specify `--part 3` to check a specific part.
 
-QR は独立した読み取り実装（OpenCV の QRCodeDetector）で `ur:crypto-psbt/…` として復号できることを確認済み。
+The QR has been confirmed decodable as `ur:crypto-psbt/…` by an independent reader implementation (OpenCV's QRCodeDetector).
 
-### エラー時の表示（画面に出す）
+### Error display (shown on screen)
 
-上の表のとおり（`NO CARD` / `NOT FAT32` / `NO IN.PSBT` / `FILE TOO LARGE` / `INVALID PSBT`）。
-いずれも画面に出し、**署名していないこと**を赤字で添える。
+As in the table above (`NO CARD` / `NOT FAT32` / `NO IN.PSBT` / `FILE TOO LARGE` / `INVALID PSBT`).
+All are shown on screen with a red note that **nothing was signed**.
 
-## 8. 検証計画
+## 8. Verification plan
 
-1. **ホスト**: 既存の 203 テストを維持（回帰検出）
-2. **ターゲット**: 同じベクタの一部を実機で実行するセルフテスト画面（起動時に「BIP39/BIP32/PSBT のベクタが通ったか」を表示）
-3. **署名速度**: 実機で 1 署名あたりの時間を測る（実用判断の材料）
-4. **実機**: signet で送金し、Core / エクスプローラで確認
+1. **Host**: keep the existing 304 tests (regression detection)
+2. **Target**: a self-test screen that runs part of the same vectors on the device (shows at boot whether "the BIP39/BIP32/PSBT vectors passed")
+3. **Signing speed**: measure the time per signature on the device (input for the usability decision)
+4. **Device**: send on signet and verify with Core / a block explorer
 
-## 9. 作業順序
+## 9. Order of work
 
-| # | 作業 | 完了条件 |
+| # | Task | Completion condition |
 |---|---|---|
-| 1 | ボード入手 → UF2 で L チカ | 画面なしで動くことを確認 |
-| 2 | ST7789 表示 | 文字と図形が出る |
-| 3 | 入力（ジョイスティック・ボタン） | 押下が取れる |
-| 4 | microSD 読み書き | PSBT ファイルを読める |
-| 5 | libsecp256k1 リンク＋署名速度測定 | 実用範囲か判断できる |
-| 6 | 画面 UI（署名前の確認表示） | 「表示できないものには署名しない」を満たす |
-| 7 | signet で送金 | 実際に使える |
+| 1 | Get the board → blink an LED with a UF2 | Confirm that it runs without a screen |
+| 2 | ST7789 display | Text and shapes appear |
+| 3 | Input (joystick, buttons) | Presses are detected |
+| 4 | microSD read/write | PSBT files can be read |
+| 5 | Link libsecp256k1 + measure signing speed | Decide whether it is usable in practice |
+| 6 | Screen UI (pre-signing confirmation display) | Satisfies "sign only what is displayed" |
+| 7 | Send on signet | Actually usable |
 
-## 10. Pi Zero（Linux）案との関係
+## 10. Relationship to the Pi Zero (Linux) plan
 
-Linux 案（[03-hardware-bom.md](03-hardware-bom.md) の Pi Zero 2 WH）は**捨てない**。
-理由は 2 つある。
+The Linux plan (the Pi Zero 2 WH in [03-hardware-bom.md](03-hardware-bom.md)) is **not abandoned**.
+There are two reasons.
 
-- 移植が難航したときの退避先になる（現行ファームウェアがそのまま動く）
-- ホストでのテスト・ベクタ生成・CLI として今後も使う（`core/` は共通）
+- It is a fallback if the port runs into trouble (the current firmware runs on it as-is)
+- It will continue to be used for host-side tests, vector generation and the CLI (`core/` is shared)
 
-つまり **「Linux で検証し、実機は RP2350 で動かす」** という二本立てが最終形になる。
+In other words, the final shape is a two-track setup: **"verify on Linux, run on RP2350 hardware"**.

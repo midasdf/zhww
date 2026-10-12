@@ -1,148 +1,148 @@
-# hardware/enclosure/ — 筐体
+# hardware/enclosure/ — enclosure
 
-- **対象**: RP2350-PiZero（65 × 30mm）＋ Waveshare 1.3inch LCD HAT
-- **形式**: [OpenSCAD](https://openscad.org/)（テキスト。差分管理と再生成ができる）
-- **ライセンス**: **CC-BY-SA-4.0**（リポジトリの [LICENSE-ENCLOSURE](../../LICENSE-ENCLOSURE)）
+- **Target**: RP2350-PiZero (65 × 30mm) + Waveshare 1.3inch LCD HAT
+- **Format**: [OpenSCAD](https://openscad.org/) (text; can be version-controlled and regenerated)
+- **License**: **CC-BY-SA-4.0** (the repository's [LICENSE-ENCLOSURE](../../LICENSE-ENCLOSURE))
 
-## なぜ SeedSigner の STL をそのまま使わないのか
+## Why we do not use the SeedSigner STL as-is
 
-**寸法は合うが、ポートの穴が合わない。**
+**The dimensions fit, but the port cut-outs do not.**
 
-| | SeedSigner（Raspberry Pi Zero） | 本プロジェクト（RP2350-PiZero） |
+| | SeedSigner (Raspberry Pi Zero) | This project (RP2350-PiZero) |
 |---|---|---|
-| 基板寸法 | 65 × 30mm | **同じ**（65 × 30mm） |
-| 画面 | Waveshare 1.3inch LCD HAT | **同じ HAT**（65 × 30.2mm） |
-| 電源・データ端子 | micro-USB ×2（左の短辺と手前の長辺） | **手前の長辺に mini HDMI ＋ USB-C ×2**（左から HDMI / PIO-USB / USB） |
-| 記録媒体 | microSD（手前の長辺寄り） | **左の短辺**（カードは左から挿す） |
-| 電池 | なし | **右の短辺に BAT の 2pin コネクタ**（使わないが開口しておく） |
-| 取付穴 | Φ2.75 前後（機種による） | **Φ3.00 ×4**（四隅。Pi Zero と同じ配置） |
-| ボタン | なし | **BOOT / RUN ボタンあり**（基板上。ケースから押せるようにするか、蓋を外して使う） |
-| カメラ | Pi カメラ（QR 読み取り） | **積まない**（カメラ穴は不要） |
+| Board dimensions | 65 × 30mm | **The same** (65 × 30mm) |
+| Display | Waveshare 1.3inch LCD HAT | **The same HAT** (65 × 30.2mm) |
+| Power and data connectors | micro-USB ×2 (on the left short edge and the front long edge) | **mini HDMI + USB-C ×2 on the front long edge** (from the left: HDMI / PIO-USB / USB) |
+| Storage medium | microSD (towards the front long edge) | **The left short edge** (the card is inserted from the left) |
+| Battery | None | **A 2-pin BAT connector on the right short edge** (not used, but leave an opening for it) |
+| Mounting holes | Around Φ2.75 (varies by model) | **Φ3.00 ×4** (at the four corners; the same placement as the Pi Zero) |
+| Buttons | None | **BOOT / RUN buttons present** (on the board. Either make them pressable through the case, or use it with the lid off) |
+| Camera | Pi camera (QR reading) | **Not fitted** (no camera hole needed) |
 
-**HAT（Waveshare 1.3inch LCD HAT）の実物の配置**（製品写真より）:
+**The actual layout of the HAT (Waveshare 1.3inch LCD HAT)** (from product photos):
 
-| 部位 | 位置 |
+| Part | Position |
 |---|---|
-| 3 ボタン（KEY1〜3） | **左の短辺に沿って縦一列** |
-| LCD | 中央やや左（表示領域 23.4 × 23.4mm） |
-| ジョイスティック | **右の短辺寄り、中央** |
-| 取付穴 | 四隅（基板と同位置） |
+| 3 buttons (KEY1–3) | **A single vertical column along the left short edge** |
+| LCD | Slightly left of centre (display area 23.4 × 23.4mm) |
+| Joystick | **Towards the right short edge, centred** |
+| Mounting holes | The four corners (the same positions as the board) |
 
-そのため、既存の STL を流用すると**穴の位置が合わない**。改造して配布する場合は、
-配布元のライセンス条件を引き継ぐ必要もある（配布元によって MIT / CC / 不明とばらついている。
-例: [cyphergurke/seedsigner-thincase](https://github.com/cyphergurke/seedsigner-thincase) は MIT で
-Inventor（.ipt）の編集可能ソース付き）。
+So reusing an existing STL means **the hole positions do not line up**. If you modify one and
+redistribute it, you also have to carry over the license terms of the source (they vary: MIT / CC /
+unknown. For example, [cyphergurke/seedsigner-thincase](https://github.com/cyphergurke/seedsigner-thincase) is MIT
+and includes editable Inventor (.ipt) sources).
 
-**そこで、SeedSigner のケースは「作り方の参考」にとどめ、自前のパラメトリックな OpenSCAD を用意した。**
+**So the SeedSigner case is kept only as "a reference for how to build one", and we provide our own parametric OpenSCAD instead.**
 
-- ライセンスを自分たちで決められる（CC-BY-SA-4.0）
-- **寸法がパラメータ**なので、部品を変えたら再生成できる
-- テキストなので差分管理・レビューができる（本リポジトリの他の部分と同じ流儀）
+- We can decide the license ourselves (CC-BY-SA-4.0)
+- **The dimensions are parameters**, so the model can be regenerated when parts change
+- It is text, so it can be version-controlled and reviewed (the same style as the rest of this repository)
 
-## レンダリング結果（確認済み）
+## Rendered results (verified)
 
-![筐体の斜視図](../../docs/images/case-iso-v2.png)
+![Isometric view of the enclosure](../../docs/images/case-iso-v2.png)
 
-**真上からの正投影**（上蓋のレイアウト確認用）:
+**Orthographic projection from directly above** (for checking the lid layout):
 
-![上蓋の上面](../../docs/images/case-top-v2.png)
+![Top of the lid](../../docs/images/case-top-v2.png)
 
-**正面の正投影**（前面のコネクタ穴）:
+**Orthographic front projection** (the front connector cut-outs):
 
-![前面](../../docs/images/case-front-v2.png)
+![Front](../../docs/images/case-front-v2.png)
 
-*左が下側（トレイ。四隅に HAT を押さえる支柱、右側面に USB-C の穴）、右が上蓋
-（表示窓・ジョイスティック・3 ボタン）。2026-10-12 に OpenSCAD 2026.10.11 でレンダリング。*
+*Left is the bottom (the tray: posts at the four corners holding the HAT down, a USB-C cut-out on the right side), right is the lid
+(display window, joystick, 3 buttons). Rendered on 2026-10-12 with OpenSCAD 2026.10.11.*
 
-**確認したこと**:
+**What we verified**:
 
-| 項目 | 結果 |
+| Item | Result |
 |---|---|
-| 構文とレンダリング | `Status: NoError`（有効な多様体） |
-| 下側（tray） | 外形 69.8 × 34.8 × 15.7mm ＝ 基板 65×30 ＋ 肉厚 2×2 ＋ 遊び 0.4×2 ✅ |
-| 上蓋（lid） | 外形 69.8 × 34.8 × 3.5mm ✅ |
-| **コネクタの向き** | 初版は USB-C を右側面に置いていたが、**公式の寸法図では手前の長辺**だったため全面修正 ✅ |
-| **HAT の配置** | 初版はボタンを横一列にしていたが、**実物は左端に縦一列**だったため修正 ✅ |
-| 干渉 | 表示窓とボタン穴の重なりを初版で検出して修正済み ✅ |
-| 取付 | 基板の Φ3.00 の穴に合わせたボス（M2.5 の下穴）を追加 ✅ |
+| Syntax and rendering | `Status: NoError` (a valid manifold) |
+| Bottom (tray) | Outer 69.8 × 34.8 × 15.7mm = board 65×30 + wall 2×2 + clearance 0.4×2 ✅ |
+| Lid | Outer 69.8 × 34.8 × 3.5mm ✅ |
+| **Connector orientation** | The first version put USB-C on the right side, but **the official dimension drawing puts it on the front long edge**, so it was corrected everywhere ✅ |
+| **HAT layout** | The first version put the buttons in a horizontal row, but **the real unit has a vertical column at the left edge**, so it was corrected ✅ |
+| Interference | The overlap between the display window and the button holes was detected in the first version and has already been fixed ✅ |
+| Mounting | Added bosses aligned with the board's Φ3.00 holes (M2.5 pilot holes) ✅ |
 
-**まだ実測していないのは穴の位置だけ**で、外形と構造は確定している。
+**The only thing not yet measured is the hole positions**; the outer shape and structure are settled.
 
-### 高さ関係（ボタンと microSD は干渉しない）
+### Heights (the buttons and the microSD do not interfere)
 
-「穴とボタンが干渉して見える」という指摘を受けて断面を確認した。
-2D の重ね図は**投影**なので、高さが違うものも重なって見える。実際の高さは次のとおり。
+After a comment that "the cut-outs and the buttons look like they interfere", we checked the cross-section.
+A 2D overlay is a **projection**, so things at different heights also appear to overlap. The actual heights are as follows.
 
-| 層 | 高さ（z、ケース底面 = 0） |
+| Layer | Height (z, case bottom = 0) |
 |---|---|
-| ケース底板 | 0〜2.0mm |
-| 基板（65 × 30 × 1.6） | 2.0〜3.6mm |
-| **microSD カード** | 3.6〜4.4mm（基板のすぐ上） |
-| 40pin ヘッダ | 3.6〜12.1mm |
-| **HAT** | 12.1〜13.7mm |
-| 上蓋（**ボタンの穴**） | 13.7〜15.7mm |
+| Case base plate | 0–2.0mm |
+| Board (65 × 30 × 1.6) | 2.0–3.6mm |
+| **microSD card** | 3.6–4.4mm (directly above the board) |
+| 40-pin header | 3.6–12.1mm |
+| **HAT** | 12.1–13.7mm |
+| Lid (**button holes**) | 13.7–15.7mm |
 
-**ボタンの穴は microSD カードより 10mm 以上上**にあるため、干渉しない。
-カードは基板と HAT の間（8.5mm の隙間）を通り、ケース左面の開口（14 × 3mm）から出し入れする。
+**The button holes are more than 10mm above the microSD card**, so they do not interfere.
+The card passes between the board and the HAT (an 8.5mm gap) and is inserted and removed through the opening in the left face of the case (14 × 3mm).
 
-![断面（手前半分を切り取った斜視図）](../../docs/images/case-section.png)
+![Cross-section (isometric view with the front half cut away)](../../docs/images/case-section.png)
 
-### 配置確認図（公式の寸法図と見比べる用）
+### Layout check drawing (for comparing against the official dimension drawing)
 
-**左パネル = 基板（下の層）**、**右パネル = HAT（上の層）**として分けて描いたもの
-（重ねると高さの違いで干渉して見えるため）。
+The **left panel is the board (lower layer)** and the **right panel is the HAT (upper layer)**, drawn separately
+(overlaying them would make them look like they interfere because of the height difference).
 
-![配置確認図](../../docs/images/layout-check.png)
+![Layout check drawing](../../docs/images/layout-check.png)
 
 ```bash
 openscad -o layout-check.png --imgsize=1300,700 --projection=o --camera=0,0,0,0,0,0,300 \
   --autocenter --viewall -D 'part="check"' hardware/enclosure/zhww-case.scad
 ```
 
-読み方: 青 = 基板（65×30、角丸、四隅に Φ3.00 の穴）、緑 = 40pin ヘッダ（奥の長辺）、
-灰 = コネクタ（手前の長辺に HDMI と USB-C ×2、左の短辺に microSD、右の短辺に BAT）、
-橙 = HAT の LCD、赤 = HAT の 3 ボタン（左端に縦一列）とジョイスティック（右）。
+How to read it: blue = the board (65×30, rounded corners, Φ3.00 holes at the four corners), green = the 40-pin header (the rear long edge),
+grey = the connectors (HDMI and USB-C ×2 on the front long edge, microSD on the left short edge, BAT on the right short edge),
+orange = the HAT's LCD, red = the HAT's 3 buttons (a vertical column at the left edge) and the joystick (right).
 
-## 使い方
+## Usage
 
 ```bash
-# OpenSCAD を入れる
-#   macOS: 公式の配布（https://openscad.org/downloads.html）から .dmg を入れる
-#          ※ Homebrew の cask は Gatekeeper の検査を通らず 2026-09-01 に無効化されている
+# Install OpenSCAD
+#   macOS: install the .dmg from the official distribution (https://openscad.org/downloads.html)
+#          Note: the Homebrew cask does not pass Gatekeeper checks and was disabled on 2026-09-01
 #   Linux: apt install openscad
-openscad -o zhww-case.stl hardware/enclosure/zhww-case.scad          # STL を書き出す
+openscad -o zhww-case.stl hardware/enclosure/zhww-case.scad          # export the STL
 openscad -o tray.stl -D 'part="tray"' hardware/enclosure/zhww-case.scad
 openscad -o lid.stl  -D 'part="lid"'  hardware/enclosure/zhww-case.scad
 
-# プレビュー画像（README の画像と同じもの）
+# preview image (the same one used in this README)
 openscad -o case.png --imgsize=1000,750 --autocenter --viewall --projection=o \
   --colorscheme=Tomorrow hardware/enclosure/zhww-case.scad
 ```
 
-## 実機が届いたら実測して埋めること
+## Parameters to measure and fill in once the hardware arrives
 
-`zhww-case.scad` の中で **`// --- 実測して埋める ---`** の印を付けたパラメータは、
-**公開情報から分からないため仮の値**になっている。実機で測って更新する。
+The parameters marked **`MEASURED`** in `zhww-case.scad` are
+**placeholder values, because public information does not give them**. Measure them on the real hardware and update them.
 
-| パラメータ | 何を測るか |
+| Parameter | What to measure |
 |---|---|
-| `display_x` / `display_y` | HAT の基板端から LCD 表示領域までの距離（現在は写真からの読み取り） |
-| `joystick_x` / `joystick_y` / `joystick_d` | ジョイスティックの中心位置と軸の直径（現在は LCD の右側という仮置き） |
-| `button1..3_x/y` / `button_d` | 3 ボタンの中心位置と直径 |
-| `usb_c1_x` / `usb_c2_x` / `usb_c_w/h` | USB-C ×2 の左右位置・寸法（手前の長辺） |
-| `hdmi_x` / `hdmi_w/h` | mini HDMI の位置・寸法（手前の長辺の左寄り） |
-| `sd_y0` / `sd_len` / `sd_h` | microSD スロットの位置・長さ・高さ（左の短辺） |
-| `bat_y0` / `bat_w/h` | BAT コネクタの位置（右の短辺。任意の LiPo 改造用） |
-| `hole_inset` / `hole_d` | 取付穴の位置（端からの距離）と直径（**Φ3.00 は公式図で確認済み**） |
-| `header_h` | 40pin ヘッダ＋ソケットを挿したときの高さ |
+| `display_x` / `display_y` | Distance from the HAT board edge to the LCD display area (currently read off photos) |
+| `joystick_x` / `joystick_y` / `joystick_d` | Joystick centre position and shaft diameter (currently placed provisionally to the right of the LCD) |
+| `button1..3_x/y` / `button_d` | Centre positions and diameter of the 3 buttons |
+| `usb_c1_x` / `usb_c2_x` / `usb_c_w/h` | Left/right positions and dimensions of the two USB-C connectors (front long edge) |
+| `hdmi_x` / `hdmi_w/h` | Position and dimensions of the mini HDMI (towards the left of the front long edge) |
+| `sd_y0` / `sd_len` / `sd_h` | Position, length and height of the microSD slot (left short edge) |
+| `bat_y0` / `bat_w/h` | Position of the BAT connector (right short edge; for an optional LiPo mod) |
+| `hole_inset` / `hole_d` | Mounting hole position (distance from the edge) and diameter (**Φ3.00 is confirmed in the official drawing**) |
+| `header_h` | Height with the 40-pin header and socket mated |
 
-**注意**: 外形と構造はレンダリングで確認済みだが、**穴の位置は実測してから確定する**。
-現在の値は公開情報から分かる範囲＋妥当な仮置きであり、実機に合わせて更新すること。
+**Note**: the outer shape and structure have been verified by rendering, but **the hole positions will be settled after measuring**.
+The current values are what public information gives plus reasonable placeholders; update them to match the real hardware.
 
-## 出典（参考にした公開情報）
+## Sources (public information we referenced)
 
-- RP2350-PiZero の寸法図（65.00 × 30.00mm、Φ3.00 の取付穴、2.54mm ピッチ、コネクタの配置）:
-  [Waveshare wiki](https://www.waveshare.com/wiki/RP2350-PiZero) の Dimensions 画像 /
+- RP2350-PiZero dimension drawing (65.00 × 30.00mm, Φ3.00 mounting holes, 2.54mm pitch, connector placement):
+  the Dimensions image on the [Waveshare wiki](https://www.waveshare.com/wiki/RP2350-PiZero) /
   [CNX Software](https://www.cnx-software.com/2025/07/08/rp2350-pizero-rp2350-board-with-raspberry-pi-zero-form-factor-mini-hdmi-16mb-flash/)
-- 1.3inch LCD HAT の寸法 65 × 30.2mm・表示領域 23.4 × 23.4mm: [Waveshare wiki](https://www.waveshare.com/wiki/1.3inch_LCD_HAT)
-- 筐体の作り方の参考（SeedSigner のコミュニティ製ケース）: [cyphergurke/seedsigner-thincase](https://github.com/cyphergurke/seedsigner-thincase)（MIT）ほか
+- 1.3inch LCD HAT dimensions 65 × 30.2mm, display area 23.4 × 23.4mm: [Waveshare wiki](https://www.waveshare.com/wiki/1.3inch_LCD_HAT)
+- Reference for how to build the enclosure (community-made SeedSigner cases): [cyphergurke/seedsigner-thincase](https://github.com/cyphergurke/seedsigner-thincase) (MIT) and others

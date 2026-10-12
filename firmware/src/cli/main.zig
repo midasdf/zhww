@@ -1,87 +1,87 @@
-//! zhww 開発用 CLI。
+//! zhww developer CLI.
 //!
-//! 実機（Raspberry Pi）に画面 UI を用意する前でも、ターミナルから
-//! アドレス生成・PSBT 署名・ダイス検証ができるようにするための道具。
+//! A tool for generating addresses, signing PSBTs and checking dice rolls from
+//! the terminal, before the on-device (Raspberry Pi) screen UI exists.
 //!
-//! **出力の方針**: 結果は標準出力、診断（手数料・警告など）は標準エラー。
-//! これにより `zhww sign < psbt.txt > signed.txt` のように繋げられる。
+//! **Output policy**: results go to stdout, diagnostics (fees, warnings, ...)
+//! go to stderr. This allows pipelines like `zhww sign < psbt.txt > signed.txt`.
 //!
-//! Zig 0.17 では標準出力が `std.Io` 経由になり、プロセスの引数は
-//! `pub fn main(init: std.process.Init.Minimal)` で受け取る。
+//! In Zig 0.17 stdout goes through `std.Io`, and process arguments arrive via
+//! `pub fn main(init: std.process.Init.Minimal)`.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 const std = @import("std");
 const zhww = @import("zhww");
 
 const usage =
-    \\使い方: zhww <コマンド> [オプション]
+    \\Usage: zhww <command> [options]
     \\
-    \\コマンド:
-    \\  address     アドレスを表示する
-    \\  show        PSBT の中身を人間可読で表示する
-    \\  screen      実機の画面（240×240）を PNG で出力する
-    \\  walkthrough 実機の画面の流れ（カード待ち → 確認 → 結果の QR）を PNG で出力する
-    \\  card        FAT32 イメージ（microSD の代わり）を操作する
-    \\  sign        PSBT（base64）に署名する。標準入力から読む
-    \\  ur          PSBT（base64）を UR（QR 転送用）に変換する
-    \\  ur-decode   UR のパートを読み取って PSBT（base64）に戻す
-    \\  mnemonic    ダイスの出目から mnemonic を作る（記録の検証用）
-    \\  evm-sign    EVM のトランザクション（JSON）に署名する
-    \\  evm-show    署名済み/未署名の EVM トランザクションを表示する（raw hex）
-    \\  version     バージョンを表示する
+    \\Commands:
+    \\  address     Show the address for a mnemonic
+    \\  show        Show the contents of a PSBT in human-readable form
+    \\  screen      Render the device screen (240x240) as a PNG
+    \\  walkthrough Render the device screen flow (card, confirm, result QR) as PNGs
+    \\  card        Work with a FAT32 image (a stand-in for the microSD card)
+    \\  sign        Sign a PSBT (base64) read from stdin
+    \\  ur          Convert a PSBT (base64) to UR (for QR transfer)
+    \\  ur-decode   Read UR parts and turn them back into a PSBT (base64)
+    \\  mnemonic    Build a mnemonic from dice rolls (for verifying your records)
+    \\  evm-sign    Sign an EVM transaction (JSON)
+    \\  evm-show    Show a signed or unsigned EVM transaction (raw hex)
+    \\  version     Show the version
     \\
-    \\address のオプション:
-    \\  --mnemonic "<12/24 語>"    鍵の元にする mnemonic（必須）
-    \\  --passphrase "<文字列>"    パスフレーズ（任意）
-    \\  --path "m/84'/0'/0'/0/0"   派生パス（既定: m/84'/0'/0'/0/0）
-    \\  --network mainnet|testnet|signet|regtest （既定: mainnet）
-    \\  --kind p2wpkh|p2pkh|p2sh-p2wpkh|p2tr （既定: p2wpkh）
+    \\address options:
+    \\  --mnemonic "<12/24 words>"  Source mnemonic (required)
+    \\  --passphrase "<string>"     Passphrase (optional)
+    \\  --path "m/84'/0'/0'/0/0"    Derivation path (default: m/84'/0'/0'/0/0)
+    \\  --network mainnet|testnet|signet|regtest (default: mainnet)
+    \\  --kind p2wpkh|p2pkh|p2sh-p2wpkh|p2tr (default: p2wpkh)
     \\
-    \\sign のオプション:
-    \\  --mnemonic "..."           署名に使う mnemonic（必須）
-    \\  --passphrase "..."         パスフレーズ（任意）
+    \\sign options:
+    \\  --mnemonic "..."           Mnemonic to sign with (required)
+    \\  --passphrase "..."         Passphrase (optional)
     \\
-    \\show / screen のオプション:
-    \\  --network mainnet|testnet|signet|regtest （アドレス表示用。既定: mainnet）
-    \\  --mnemonic "..."           渡すとお釣りを判定する（任意）
-    \\  --scale <n>                1 ドットを n 倍で出力する（screen。既定: 1）
-    \\  --demo                     サンプルの確認画面を出す（screen。入力不要）
-    \\  --qr                       標準入力の文字列を QR として表示する（screen）
-    \\  --ec l|m|q|h               QR の誤り訂正レベル（既定: m）
+    \\show / screen options:
+    \\  --network mainnet|testnet|signet|regtest (for address display; default: mainnet)
+    \\  --mnemonic "..."           If given, detect the change output (optional)
+    \\  --scale <n>                Scale each pixel by n (screen; default: 1)
+    \\  --demo                     Draw a sample confirmation screen (screen; no input)
+    \\  --qr                       Show the stdin text as a QR code (screen)
+    \\  --ec l|m|q|h               QR error correction level (default: m)
     \\
-    \\walkthrough のオプション:
-    \\  --image <ファイル>         FAT32 イメージ（必須）
-    \\  --mnemonic "..."           署名に使う mnemonic（必須）
-    \\  --out-dir <ディレクトリ>    PNG の出力先（既定: カレント）
-    \\  --scale <n>                1 ドットを n 倍（既定: 2）
-    \\  --part <n>                 結果の QR で表示するパート番号（既定: 1）
+    \\walkthrough options:
+    \\  --image <file>             FAT32 image (required)
+    \\  --mnemonic "..."           Mnemonic to sign with (required)
+    \\  --out-dir <dir>            PNG output directory (default: current directory)
+    \\  --scale <n>                Scale each pixel by n (default: 2)
+    \\  --part <n>                 UR part to show in the result QR (default: 1)
     \\
-    \\card の使い方（--image <ファイル> が必須。カードの実物が無くても試せる）:
-    \\  card list                    ファイル一覧
-    \\  card read  --name /IN.PSBT   内容を標準出力へ
-    \\  card write --name /OUT.PSBT  標準入力から書く
-    \\  card rm    --name /OUT.PSBT  削除
-    \\  card mv    --name /OUT.TMP --to /OUT.PSBT   リネーム
-    \\  card sign  --mnemonic "..."  /IN.PSBT に署名して /OUT.PSBT を作る
-    \\                               （/OUT.TMP に書いてからリネームする）
+    \\card usage (--image <file> is required; works without a physical card):
+    \\  card list                    List files
+    \\  card read  --name /IN.PSBT   Write the contents to stdout
+    \\  card write --name /OUT.PSBT  Write stdin to the file
+    \\  card rm    --name /OUT.PSBT  Delete
+    \\  card mv    --name /OUT.TMP --to /OUT.PSBT   Rename
+    \\  card sign  --mnemonic "..."  Sign /IN.PSBT and create /OUT.PSBT
+    \\                               (write /OUT.TMP first, then rename)
     \\
-    \\ur のオプション:
-    \\  --fragment <n>             QR 1 枚あたりの最大バイト数（既定: 40）
-    \\  --type <型名>              UR の型（既定: crypto-psbt）
+    \\ur options:
+    \\  --fragment <n>             Max bytes per QR code (default: 40)
+    \\  --type <type name>         UR type (default: crypto-psbt)
     \\
-    \\mnemonic のオプション:
-    \\  --dice "123456..."         ダイスの出目（1〜6）
-    \\  --words 12|24              語数（既定: 24）
-    \\  --camera <hex>             カメラ等の追加エントロピー（任意）
+    \\mnemonic options:
+    \\  --dice "123456..."         Dice rolls (1-6)
+    \\  --words 12|24              Word count (default: 24)
+    \\  --camera <hex>             Extra entropy such as camera noise (optional)
     \\
-    \\evm-sign のオプション:
-    \\  --mnemonic "..."           署名に使う mnemonic（必須。44h/60h/0h/0/0 を使う）
-    \\  --passphrase "..."         パスフレーズ（任意）
-    \\  入力（JSON）: chainId / nonce / to / value / gasLimit / gasPrice、
-    \\                 または maxFeePerGas と maxPriorityFeePerGas（EIP-1559）
+    \\evm-sign options:
+    \\  --mnemonic "..."           Mnemonic to sign with (required; uses 44h/60h/0h/0/0)
+    \\  --passphrase "..."         Passphrase (optional)
+    \\  Input (JSON): chainId / nonce / to / value / gasLimit / gasPrice,
+    \\                or maxFeePerGas and maxPriorityFeePerGas (EIP-1559)
     \\
-    \\evm-show のオプション:
-    \\  入力は raw トランザクションの 16 進数（0x の有無は問わない）
+    \\evm-show options:
+    \\  Input is a raw transaction in hex (the 0x prefix is optional)
     \\
 ;
 
@@ -106,13 +106,13 @@ pub fn main(init: std.process.Init.Minimal) void {
                 stderrPrint("{s}", .{usage});
             },
             else => {
-                stderrPrint("エラー: {s}\n", .{@errorName(err)});
+                stderrPrint("error: {s}\n", .{@errorName(err)});
             },
         }
         stdout.interface.flush() catch {};
         std.process.exit(1);
     };
-    // 出力はバッファリングされるため、必ず吐き出す
+    // Output is buffered, so always flush it
     stdout.interface.flush() catch {};
 }
 
@@ -127,7 +127,7 @@ fn run(init: std.process.Init.Minimal, stdout: anytype, io: std.Io) !void {
 
     var args = std.ArrayList([]const u8).empty;
     var iterator = std.process.Args.Iterator.init(init.args);
-    _ = iterator.next(); // argv[0] は読み飛ばす
+    _ = iterator.next(); // skip argv[0]
     while (iterator.next()) |arg| try args.append(allocator, arg);
 
     if (args.items.len == 0) return error.Usage;
@@ -187,7 +187,7 @@ fn run(init: std.process.Init.Minimal, stdout: anytype, io: std.Io) !void {
     return error.Usage;
 }
 
-// ---------------------------------------------------------------- 引数
+// ---------------------------------------------------------------- arguments
 
 fn option(args: []const []const u8, name: []const u8) ?[]const u8 {
     var i: usize = 0;
@@ -197,9 +197,20 @@ fn option(args: []const []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
+/// 値を持たないフラグ（`--demo` など）が指定されているか。
+///
+/// `option()` は「次の引数を値として読む」ため、値を伴わないフラグには使えない
+/// （`--demo` だけを渡すと、たまたま次にある引数を値として消費してしまう）。
+fn hasFlag(args: []const []const u8, name: []const u8) bool {
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, name)) return true;
+    }
+    return false;
+}
+
 fn requiredOption(args: []const []const u8, name: []const u8) ![]const u8 {
     return option(args, name) orelse {
-        stderrPrint("{s} が必要です\n", .{name});
+        stderrPrint("{s} is required\n", .{name});
         return error.Usage;
     };
 }
@@ -210,7 +221,7 @@ fn networkOf(args: []const []const u8) !zhww.btc_address.Network {
     if (std.mem.eql(u8, name, "testnet")) return .testnet;
     if (std.mem.eql(u8, name, "signet")) return .signet;
     if (std.mem.eql(u8, name, "regtest")) return .regtest;
-    stderrPrint("--network の値が不正です: {s}\n", .{name});
+    stderrPrint("invalid value for --network: {s}\n", .{name});
     return error.InvalidArgument;
 }
 
@@ -242,7 +253,7 @@ fn commandAddress(
     else if (std.mem.eql(u8, kind, "p2tr"))
         try zhww.btc_address.p2tr(&buffer, try zhww.secp256k1.xonly(pub_key), network)
     else {
-        stderrPrint("--kind の値が不正です: {s}\n", .{kind});
+        stderrPrint("invalid value for --kind: {s}\n", .{kind});
         return error.InvalidArgument;
     };
 
@@ -260,17 +271,17 @@ fn commandSign(
     const mnemonic = try requiredOption(args, "--mnemonic");
     const passphrase = option(args, "--passphrase") orelse "";
 
-    // 標準入力から base64 の PSBT を読む
+    // Read the base64 PSBT from stdin
     const input = try readAllStdin(allocator);
     const trimmed = std.mem.trim(u8, input, " \t\r\n");
     if (trimmed.len == 0) {
-        stderrPrint("PSBT（base64）を標準入力から渡してください\n", .{});
+        stderrPrint("pass a PSBT (base64) on stdin\n", .{});
         return error.Usage;
     }
 
     const decoder = std.base64.standard.Decoder;
     const raw_len = decoder.calcSizeForSlice(trimmed) catch {
-        stderrPrint("PSBT の base64 を解釈できません\n", .{});
+        stderrPrint("cannot decode the base64 PSBT\n", .{});
         return error.InvalidArgument;
     };
     const raw = try allocator.alloc(u8, raw_len);
@@ -279,25 +290,25 @@ fn commandSign(
     const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, passphrase);
     const outcome = try zhww.btc_sign.signPsbtBytes(allocator, raw, keys);
 
-    // 診断は標準エラーへ
+    // Diagnostics go to stderr
     stderrPrint(
-        "署名した入力: {d} / 署名できなかった入力: {d}\n",
+        "signed inputs: {d} / unsigned inputs: {d}\n",
         .{ outcome.result.partial_sigs.len, outcome.result.unsigned_inputs.len },
     );
-    if (outcome.result.total_input) |total| stderrPrint("入力合計: {d} sats\n", .{total});
+    if (outcome.result.total_input) |total| stderrPrint("input total: {d} sats\n", .{total});
     if (outcome.result.fee) |fee| {
-        stderrPrint("手数料: {d} sats\n", .{fee});
+        stderrPrint("fee: {d} sats\n", .{fee});
     } else {
-        stderrPrint("手数料: 不明（入力額が揃っていないため計算しない）\n", .{});
+        stderrPrint("fee: unknown (input amounts incomplete; not calculated)\n", .{});
     }
     if (outcome.result.change_outputs.len > 0) {
-        stderrPrint("お釣り: 出力 {d} 番\n", .{outcome.result.change_outputs[0]});
+        stderrPrint("change: output #{d}\n", .{outcome.result.change_outputs[0]});
     }
     for (outcome.result.unsigned_inputs) |index| {
-        stderrPrint("警告: 入力 {d} は署名できませんでした\n", .{index});
+        stderrPrint("warning: input {d} could not be signed\n", .{index});
     }
 
-    // 結果は標準出力へ
+    // Results go to stdout
     const encoder = std.base64.standard.Encoder;
     const encoded = try allocator.alloc(u8, encoder.calcSize(outcome.signed_psbt.len));
     _ = encoder.encode(encoded, outcome.signed_psbt);
@@ -332,13 +343,13 @@ fn commandMnemonic(
     const dice_text = try requiredOption(args, "--dice");
     const words_text = option(args, "--words") orelse "24";
     const word_count = std.fmt.parseInt(usize, words_text, 10) catch {
-        stderrPrint("--words の値が不正です: {s}\n", .{words_text});
+        stderrPrint("invalid value for --words: {s}\n", .{words_text});
         return error.InvalidArgument;
     };
 
     var dice: zhww.entropy.Dice = .{};
     dice.rollString(dice_text) catch {
-        stderrPrint("--dice には 1〜6 の数字だけを並べてください\n", .{});
+        stderrPrint("use only digits 1-6 in --dice\n", .{});
         return error.InvalidArgument;
     };
 
@@ -346,12 +357,12 @@ fn commandMnemonic(
     if (option(args, "--camera")) |camera_hex| {
         const cleaned = if (std.mem.startsWith(u8, camera_hex, "0x")) camera_hex[2..] else camera_hex;
         if (cleaned.len % 2 != 0) {
-            stderrPrint("--camera は 16 進数で指定してください\n", .{});
+            stderrPrint("--camera must be hex\n", .{});
             return error.InvalidArgument;
         }
         const bytes = try allocator.alloc(u8, cleaned.len / 2);
         _ = std.fmt.hexToBytes(bytes, cleaned) catch {
-            stderrPrint("--camera は 16 進数で指定してください\n", .{});
+            stderrPrint("--camera must be hex\n", .{});
             return error.InvalidArgument;
         };
         camera_bytes = bytes;
@@ -366,13 +377,13 @@ fn commandMnemonic(
     var mnemonic: [256]u8 = undefined;
     const text = try zhww.entropy.mnemonicFromDice(&mnemonic, dice, extra, word_count);
 
-    // 記録の検証用に、出目の個数と必要な個数も出す（診断は標準エラー）
+    // Also report the roll count and the required count (diagnostics go to stderr)
     const needed = if (word_count == 12)
         zhww.entropy.rolls_for_12_words
     else
         zhww.entropy.rolls_for_24_words;
     if (dice.len < needed) {
-        stderrPrint("警告: {d} 語には {d} 回の出目が必要です（{d} 回しかありません）\n", .{
+        stderrPrint("warning: {d} words need {d} rolls (only {d} given)\n", .{
             word_count,
             needed,
             dice.len,
@@ -384,10 +395,10 @@ fn commandMnemonic(
 
 // ---------------------------------------------------------------- EVM
 
-/// EVM のトランザクション（JSON）に署名して raw tx を出力する。
+/// Sign an EVM transaction (JSON) and output the raw tx.
 ///
-/// 対応: EIP-155（legacy）と EIP-1559（type 2）。`maxFeePerGas` があれば EIP-1559 とみなす。
-/// 鍵は `m/44'/60'/0'/0/0`（EVM の標準的な派生パス）。
+/// Supported: EIP-155 (legacy) and EIP-1559 (type 2). `maxFeePerGas` means EIP-1559.
+/// The key is `m/44'/60'/0'/0/0` (the standard EVM derivation path).
 fn commandEvmSign(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -399,7 +410,7 @@ fn commandEvmSign(
     const input = try readAllStdin(allocator);
     const trimmed = std.mem.trim(u8, input, " \t\r\n");
     if (trimmed.len == 0) {
-        stderrPrint("トランザクションの JSON を標準入力から渡してください\n", .{});
+        stderrPrint("pass the transaction JSON on stdin\n", .{});
         return error.Usage;
     }
 
@@ -409,7 +420,7 @@ fn commandEvmSign(
         trimmed,
         .{ .parse_numbers = false },
     ) catch {
-        stderrPrint("JSON を解釈できません\n", .{});
+        stderrPrint("cannot parse the JSON\n", .{});
         return error.InvalidArgument;
     };
     defer parsed.deinit();
@@ -423,7 +434,7 @@ fn commandEvmSign(
     const to = try jsonAddress(root, "to");
     const data = try jsonHex(allocator, root, "data");
 
-    // 鍵（EVM は m/44'/60'/0'/0/0）
+    // Key (EVM uses m/44'/60'/0'/0/0)
     const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, passphrase);
     const node = try keys.derive(&[_]u32{
         44 | zhww.bip32.hardened,
@@ -450,7 +461,7 @@ fn commandEvmSign(
             .access_list = &.{},
         };
         signed = try zhww.evm_transaction.signEip1559(&buffer, tx, priv);
-        stderrPrint("種別: EIP-1559（type 2）\n", .{});
+        stderrPrint("type: EIP-1559 (type 2)\n", .{});
     } else {
         const tx = zhww.evm_transaction.LegacyTx{
             .nonce = nonce,
@@ -462,16 +473,16 @@ fn commandEvmSign(
             .chain_id = chain_id,
         };
         signed = try zhww.evm_transaction.signLegacy(&buffer, tx, priv);
-        stderrPrint("種別: legacy（EIP-155）\n", .{});
+        stderrPrint("type: legacy (EIP-155)\n", .{});
     }
 
-    // 送信元アドレスも表示する（確認用）
+    // Also print the sender address (for verification)
     const address_buffer = try allocator.alloc(u8, 42);
     const signer = try zhww.evm_address.fromPublicKey(
         address_buffer,
         try zhww.secp256k1.pubKeyUncompressed(priv),
     );
-    stderrPrint("送信元: {s}\n", .{signer});
+    stderrPrint("from: {s}\n", .{signer});
 
     const hex = try allocator.alloc(u8, signed.len * 2);
     try stdout.interface.print("{s}\n", .{toHex(signed, hex)});
@@ -479,7 +490,7 @@ fn commandEvmSign(
 
 fn jsonU256(root: std.json.ObjectMap, name: []const u8) !u256 {
     const value = root.get(name) orelse {
-        stderrPrint("{s} がありません\n", .{name});
+        stderrPrint("{s} is missing\n", .{name});
         return error.InvalidArgument;
     };
     const text = switch (value) {
@@ -528,8 +539,8 @@ fn jsonHex(allocator: std.mem.Allocator, root: std.json.ObjectMap, name: []const
 
 // ---------------------------------------------------------------- walkthrough
 
-/// 実機の画面の流れ（カードを挿す → 対象を確認 → 署名 → 結果を QR で出す）を
-/// PNG に書き出す。実機が無くても UI と受け渡しの流れを確認できる。
+/// Write the device screen flow (insert card -> confirm -> sign -> show result QR)
+/// to PNG files. Lets you check the UI and the handoff flow without a device.
 fn commandWalkthrough(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -544,7 +555,7 @@ fn commandWalkthrough(
     const scale = try std.fmt.parseInt(usize, scale_text, 10);
 
     const file = std.Io.Dir.cwd().openFile(io, image_path, .{ .mode = .read_write }) catch {
-        stderrPrint("イメージを開けません: {s}\n", .{image_path});
+        stderrPrint("cannot open image: {s}\n", .{image_path});
         return error.InvalidArgument;
     };
     defer file.close(io);
@@ -559,11 +570,11 @@ fn commandWalkthrough(
     const pixels = try allocator.alloc(u16, width * height);
     const big = try allocator.alloc(u16, width * scale * height * scale);
 
-    // --- 画面 1: カードを待っている ---
+    // --- Screen 1: waiting for the card ---
     try renderNotice(allocator, io, out_dir, "1-waiting.png",
         zhww.app_device.noticeFor(.waiting_card), pixels, big, width, height, scale);
 
-    // --- 画面 2〜5: エラー（署名は行わないことを必ず画面に出す）---
+    // --- Screens 2-5: errors (always show on screen that nothing is signed) ---
     try renderNotice(allocator, io, out_dir, "2-not-fat32.png",
         zhww.app_device.noticeFor(.not_fat32), pixels, big, width, height, scale);
     try renderNotice(allocator, io, out_dir, "3-no-input.png",
@@ -573,7 +584,7 @@ fn commandWalkthrough(
     try renderNotice(allocator, io, out_dir, "5-invalid-psbt.png",
         zhww.app_device.noticeFor(.invalid_psbt), pixels, big, width, height, scale);
 
-    // --- 画面 2: カードの中身を確認 ---
+    // --- Screen 2: inspect the contents of the card ---
     {
         var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, width, height);
         var list_buffer: [4]zhww.ui_screen.Line = undefined;
@@ -608,7 +619,7 @@ fn commandWalkthrough(
         try writeScreenPng(allocator, io, out_dir, "6-confirm.png", pixels, big, width, height, scale);
     }
 
-    // --- 画面 3: 結果を QR で出す（署名済み PSBT を UR にする）---
+    // --- Screen 3: show the result as a QR code (turn the signed PSBT into UR) ---
     {
         const raw = try fs.readFileAlloc(allocator, "/IN.PSBT", 64 * 1024);
         var psbt_bytes: []const u8 = raw;
@@ -625,7 +636,7 @@ fn commandWalkthrough(
         const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, "");
         const outcome = try zhww.btc_sign.signPsbtBytes(allocator, psbt_bytes, keys);
 
-        // 署名済み PSBT を UR にする（1 パート目を表示する = 実機のアニメーション QR と同じ）
+        // Turn the signed PSBT into UR (show part 1 = same as the device's animated QR)
         var scratch: [8192]u8 = undefined;
         var encoder = try zhww.ur.Encoder.init(
             zhww.ur.type_crypto_psbt,
@@ -634,12 +645,12 @@ fn commandWalkthrough(
             zhww.ur.default_min_fragment_len,
             &scratch,
         );
-        // 全パートを作って、指定されたものを表示する（実機の NEXT PART と同じ）
+        // Build all parts and show the requested one (same as NEXT PART on the device)
         var parts = std.ArrayList([]const u8).empty;
         var part_buffer: [1024]u8 = undefined;
         while (try encoder.next(&part_buffer, .lower)) |part| {
             try parts.append(allocator, try allocator.dupe(u8, part));
-            if (parts.items.len > 64) break; // 念のため
+            if (parts.items.len > 64) break; // just in case
         }
         const part_index_text = option(args, "--part") orelse "1";
         const part_index = @max(@as(usize, 1), std.fmt.parseInt(usize, part_index_text, 10) catch 1);
@@ -676,11 +687,11 @@ fn commandWalkthrough(
         };
         screen.render(&fb);
         try writeScreenPng(allocator, io, out_dir, "7-signed.png", pixels, big, width, height, scale);
-        stderrPrint("QR: パート {d}/{d}・{d} 文字・v{d}\n", .{ shown_index, parts.items.len, first_part.len, matrix.version });
+        stderrPrint("QR: part {d}/{d}, {d} chars, v{d}\n", .{ shown_index, parts.items.len, first_part.len, matrix.version });
     }
 }
 
-/// 状況（Notice）を画面にして PNG に書く。
+/// Render a status Notice on the screen and write it as a PNG.
 fn renderNotice(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -701,7 +712,7 @@ fn renderNotice(
     try writeScreenPng(allocator, io, out_dir, name, pixels, big, width, height, scale);
 }
 
-/// フレームバッファを拡大して PNG としてファイルに書く。
+/// Scale the framebuffer and write it to a file as a PNG.
 fn writeScreenPng(
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -728,16 +739,16 @@ fn writeScreenPng(
     var writer = file.writer(io, &buffer);
     try png.writeRgb565(&writer.interface, allocator, big, width * s, height * s);
     try writer.interface.flush();
-    stderrPrint("書きました: {s}（{d}×{d}）\n", .{ path, width * s, height * s });
+    stderrPrint("wrote: {s} ({d}x{d})\n", .{ path, width * s, height * s });
 }
 
-// ---------------------------------------------------------------- card（FAT32 イメージ）
+// ---------------------------------------------------------------- card (FAT32 image)
 
 const file_device = @import("file_device.zig");
 
-/// FAT32 のイメージファイルを microSD の代わりに操作する。
+/// Work with a FAT32 image file as a stand-in for the microSD card.
 ///
-/// 実機が無くても、カードでの受け渡し（docs/08 の 7b 節）を端から端まで再現できる。
+/// Reproduces the card handoff (docs/08, section 7b) end to end without a device.
 fn commandCard(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -745,19 +756,19 @@ fn commandCard(
     io: std.Io,
 ) !void {
     if (args.len == 0) {
-        stderrPrint("使い方: zhww card <list|read|write|rm|mv|sign> --image <ファイル>\n", .{});
+        stderrPrint("usage: zhww card <list|read|write|rm|mv|sign> --image <file>\n", .{});
         return error.Usage;
     }
     const verb = args[0];
     const image_path = try requiredOption(args, "--image");
 
     const file = std.Io.Dir.cwd().openFile(io, image_path, .{ .mode = .read_write }) catch {
-        stderrPrint("イメージを開けません: {s}\n", .{image_path});
+        stderrPrint("cannot open image: {s}\n", .{image_path});
         return error.InvalidArgument;
     };
     defer file.close(io);
     const stat = std.Io.File.stat(file, io) catch {
-        stderrPrint("イメージの大きさを取得できません\n", .{});
+        stderrPrint("cannot get the image size\n", .{});
         return error.InvalidArgument;
     };
 
@@ -770,10 +781,10 @@ fn commandCard(
         var entry: zhww.fs_fat32.Entry = .{};
         while (try iterator.next(&entry)) {
             if (entry.isDot()) continue;
-            try stdout.interface.print("{s: <40} {d: >10} バイト{s}\n", .{
+            try stdout.interface.print("{s: <40} {d: >10} bytes{s}\n", .{
                 entry.nameSlice(),
                 entry.size,
-                if (entry.isDirectory()) "  (ディレクトリ)" else "",
+                if (entry.isDirectory()) "  (directory)" else "",
             });
         }
         return;
@@ -782,7 +793,7 @@ fn commandCard(
     if (std.mem.eql(u8, verb, "read")) {
         const name = try requiredOption(args, "--name");
         const data = fs.readFileAlloc(allocator, name, 1024 * 1024) catch {
-            stderrPrint("読めません: {s}\n", .{name});
+            stderrPrint("cannot read: {s}\n", .{name});
             return error.InvalidArgument;
         };
         try stdout.interface.writeAll(data);
@@ -794,14 +805,14 @@ fn commandCard(
         const name = try requiredOption(args, "--name");
         const input = try readAllStdin(allocator);
         try fs.writeFile(name, input);
-        stderrPrint("{s} に {d} バイト書きました\n", .{ name, input.len });
+        stderrPrint("{s}: wrote {d} bytes\n", .{ name, input.len });
         return;
     }
 
     if (std.mem.eql(u8, verb, "rm")) {
         const name = try requiredOption(args, "--name");
         try fs.deleteFile(name);
-        stderrPrint("{s} を削除しました\n", .{name});
+        stderrPrint("deleted {s}\n", .{name});
         return;
     }
 
@@ -810,7 +821,7 @@ fn commandCard(
         const to = try requiredOption(args, "--to");
         if (try fs.exists(to)) try fs.deleteFile(to);
         try fs.rename(from, to);
-        stderrPrint("{s} → {s}\n", .{ from, to });
+        stderrPrint("{s} -> {s}\n", .{ from, to });
         return;
     }
 
@@ -819,11 +830,11 @@ fn commandCard(
         return;
     }
 
-    stderrPrint("知らない操作です: {s}\n", .{verb});
+    stderrPrint("unknown operation: {s}\n", .{verb});
     return error.Usage;
 }
 
-/// 受け渡しプロトコル（docs/08 の 7b 節）を実行する。
+/// Run the handoff protocol (docs/08, section 7b).
 fn cardSign(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -837,16 +848,16 @@ fn cardSign(
     const out_name = option(args, "--out") orelse "/OUT.PSBT";
     const tmp_name = option(args, "--tmp") orelse "/OUT.TMP";
 
-    // 1. IN.PSBT を読む（バイナリでも base64 でも受け付ける）
+    // 1. Read IN.PSBT (accepts either binary or base64)
     const raw = fs.readFileAlloc(allocator, in_name, 64 * 1024) catch {
-        stderrPrint("{s} を読めません（64KB 上限）\n", .{in_name});
+        stderrPrint("cannot read {s} (64KB limit)\n", .{in_name});
         return error.InvalidArgument;
     };
-    stderrPrint("{s}: {d} バイト\n", .{ in_name, raw.len });
+    stderrPrint("{s}: {d} bytes\n", .{ in_name, raw.len });
 
     var psbt_bytes: []const u8 = raw;
     if (!std.mem.startsWith(u8, raw, "psbt\xff")) {
-        // base64 として解釈する（改行・空白を除く）
+        // Parse as base64 (strip newlines and spaces)
         var cleaned = std.ArrayList(u8).empty;
         defer cleaned.deinit(allocator);
         for (raw) |c| {
@@ -855,31 +866,31 @@ fn cardSign(
         }
         const decoder = std.base64.standard.Decoder;
         const needed = decoder.calcSizeForSlice(cleaned.items) catch {
-            stderrPrint("PSBT として解釈できません\n", .{});
+            stderrPrint("cannot parse as PSBT\n", .{});
             return error.InvalidArgument;
         };
         const decoded = try allocator.alloc(u8, needed);
         decoder.decode(decoded, cleaned.items) catch {
-            stderrPrint("PSBT の base64 を解釈できません\n", .{});
+            stderrPrint("cannot decode the base64 PSBT\n", .{});
             return error.InvalidArgument;
         };
         psbt_bytes = decoded;
-        stderrPrint("base64 として解釈しました（{d} バイト）\n", .{psbt_bytes.len});
+        stderrPrint("parsed as base64 ({d} bytes)\n", .{psbt_bytes.len});
     }
 
-    // 2. 解析して署名する（署名したら検証まで行う既存の経路を使う）
+    // 2. Parse and sign (reuse the existing path that also verifies after signing)
     const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, passphrase);
     const outcome = zhww.btc_sign.signPsbtBytes(allocator, psbt_bytes, keys) catch |err| {
-        stderrPrint("署名できません: {s}\n", .{@errorName(err)});
+        stderrPrint("cannot sign: {s}\n", .{@errorName(err)});
         return error.InvalidArgument;
     };
 
-    // 3. OUT.TMP に書いてから OUT.PSBT にリネームする（電源断で中途半端な結果を残さない）
+    // 3. Write OUT.TMP first, then rename to OUT.PSBT (a power cut leaves no partial result)
     try fs.writeFile(tmp_name, outcome.signed_psbt);
     if (try fs.exists(out_name)) try fs.deleteFile(out_name);
     try fs.rename(tmp_name, out_name);
 
-    // 4. 人間が読む記録
+    // 4. Human-readable log
     const fee_text = if (outcome.result.fee) |fee|
         try std.fmt.allocPrint(allocator, "{d}", .{fee})
     else
@@ -903,15 +914,15 @@ fn cardSign(
     try fs.writeFile("/OUT.LOG", log);
 
     stderrPrint(
-        "署名しました: 入力 {d} 件（未署名 {d} 件）→ {s}（{d} バイト）\n",
+        "signed: {d} inputs ({d} unsigned) -> {s} ({d} bytes)\n",
         .{ outcome.result.partial_sigs.len, outcome.result.unsigned_inputs.len, out_name, outcome.signed_psbt.len },
     );
-    if (outcome.result.fee) |fee| stderrPrint("手数料: {d} sats\n", .{fee});
+    if (outcome.result.fee) |fee| stderrPrint("fee: {d} sats\n", .{fee});
 }
 
-// ---------------------------------------------------------------- EVM 表示
+// ---------------------------------------------------------------- EVM display
 
-/// EVM のトランザクション（raw hex）を人間可読で表示する。署名は行わない。
+/// Show an EVM transaction (raw hex) in human-readable form. Does not sign.
 fn commandEvmShow(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -921,44 +932,44 @@ fn commandEvmShow(
     const input = try readAllStdin(allocator);
     const trimmed = std.mem.trim(u8, input, " \t\r\n");
     if (trimmed.len == 0) {
-        stderrPrint("raw トランザクション（16 進数）を標準入力から渡してください\n", .{});
+        stderrPrint("pass a raw transaction (hex) on stdin\n", .{});
         return error.Usage;
     }
     const hex_text = if (std.mem.startsWith(u8, trimmed, "0x")) trimmed[2..] else trimmed;
     if (hex_text.len % 2 != 0) {
-        stderrPrint("16 進数として解釈できません\n", .{});
+        stderrPrint("cannot parse as hex\n", .{});
         return error.InvalidArgument;
     }
     const raw = try allocator.alloc(u8, hex_text.len / 2);
     _ = std.fmt.hexToBytes(raw, hex_text) catch {
-        stderrPrint("16 進数として解釈できません\n", .{});
+        stderrPrint("cannot parse as hex\n", .{});
         return error.InvalidArgument;
     };
 
     const decoded = try zhww.evm_transaction.decode(allocator, raw);
 
     const kind_name = switch (decoded.kind) {
-        .legacy => "legacy（EIP-155）",
-        .eip2930 => "EIP-2930（type 1）",
-        .eip1559 => "EIP-1559（type 2）",
+        .legacy => "legacy (EIP-155)",
+        .eip2930 => "EIP-2930 (type 1)",
+        .eip1559 => "EIP-1559 (type 2)",
     };
-    try stdout.interface.print("種別: {s}\n", .{kind_name});
+    try stdout.interface.print("type: {s}\n", .{kind_name});
     if (decoded.chain_id) |chain_id| {
-        try stdout.interface.print("チェーン ID: {d}\n", .{chain_id});
+        try stdout.interface.print("chain ID: {d}\n", .{chain_id});
     }
     if (decoded.nonce) |nonce| try stdout.interface.print("nonce: {d}\n", .{nonce});
 
     if (decoded.to) |to| {
         var buffer: [42]u8 = undefined;
         const address = try zhww.evm_address.checksum(&buffer, to);
-        try stdout.interface.print("送金先: {s}\n", .{address});
+        try stdout.interface.print("to: {s}\n", .{address});
     } else {
-        try stdout.interface.print("送金先: なし（コントラクト作成）\n", .{});
-        stderrPrint("警告: コントラクト作成のトランザクションです\n", .{});
+        try stdout.interface.print("to: none (contract creation)\n", .{});
+        stderrPrint("warning: this transaction creates a contract\n", .{});
     }
 
     if (decoded.value) |value| {
-        try stdout.interface.print("金額: {d} wei", .{value});
+        try stdout.interface.print("value: {d} wei", .{value});
         if (value > 0) {
             try stdout.interface.print(" ({d}.{d:0>18} ETH)", .{
                 value / 1_000_000_000_000_000_000,
@@ -968,62 +979,62 @@ fn commandEvmShow(
         try stdout.interface.print("\n", .{});
     }
     if (decoded.gas_limit) |gas_limit| {
-        try stdout.interface.print("gas 上限: {d}\n", .{gas_limit});
+        try stdout.interface.print("gas limit: {d}\n", .{gas_limit});
     }
     if (decoded.gas_price) |gas_price| {
-        try stdout.interface.print("gas 価格: {d} wei/gas\n", .{gas_price});
+        try stdout.interface.print("gas price: {d} wei/gas\n", .{gas_price});
         if (decoded.gas_limit) |gas_limit| {
-            try stdout.interface.print("最大手数料: {d} wei\n", .{gas_price * gas_limit});
+            try stdout.interface.print("max fee: {d} wei\n", .{gas_price * gas_limit});
         }
     }
     if (decoded.max_fee_per_gas) |max_fee| {
-        try stdout.interface.print("手数料上限: {d} wei/gas\n", .{max_fee});
+        try stdout.interface.print("max fee per gas: {d} wei/gas\n", .{max_fee});
         if (decoded.max_priority_fee_per_gas) |tip| {
-            try stdout.interface.print("優先手数料: {d} wei/gas\n", .{tip});
+            try stdout.interface.print("max priority fee: {d} wei/gas\n", .{tip});
         }
         if (decoded.gas_limit) |gas_limit| {
-            try stdout.interface.print("最大手数料: {d} wei\n", .{max_fee * gas_limit});
+            try stdout.interface.print("max fee: {d} wei\n", .{max_fee * gas_limit});
         }
     }
 
-    // data（calldata）
+    // data (calldata)
     if (decoded.data.len == 0) {
-        try stdout.interface.print("data: なし（送金）\n", .{});
+        try stdout.interface.print("data: none (plain transfer)\n", .{});
     } else if (zhww.evm_abi.selector(decoded.data)) |selector| {
         var selector_hex: [8]u8 = undefined;
-        try stdout.interface.print("data: {d} バイト  セレクタ: 0x{s}\n", .{
+        try stdout.interface.print("data: {d} bytes  selector: 0x{s}\n", .{
             decoded.data.len,
             toHex(&selector, &selector_hex),
         });
         if (zhww.evm_abi.knownFunction(selector)) |known| {
-            try stdout.interface.print("  関数: {s}\n", .{known.signature});
+            try stdout.interface.print("  function: {s}\n", .{known.signature});
         } else {
-            try stdout.interface.print("  関数: 不明\n", .{});
-            stderrPrint("警告: 知らない関数です。内容を確認できないまま署名しないでください\n", .{});
+            try stdout.interface.print("  function: unknown\n", .{});
+            stderrPrint("warning: unknown function. Do not sign without verifying what it does\n", .{});
         }
         try warnDangerousCalldata(selector);
     } else {
-        try stdout.interface.print("data: {d} バイト（セレクタなし）\n", .{decoded.data.len});
+        try stdout.interface.print("data: {d} bytes (no selector)\n", .{decoded.data.len});
     }
 
-    try stdout.interface.print("署名: {s}\n", .{if (decoded.signed) "あり" else "なし"});
-    stderrPrint("これは表示のみで、署名は行っていません\n", .{});
+    try stdout.interface.print("signed: {s}\n", .{if (decoded.signed) "yes" else "no"});
+    stderrPrint("this is display only; nothing was signed\n", .{});
 }
 
-/// 危険な操作（無制限 approve・全権委譲・permit）を警告する。
+/// Warn about dangerous operations (unlimited approve, full delegation, permit).
 fn warnDangerousCalldata(selector: [4]u8) !void {
     // approve(address,uint256) / increaseAllowance / setApprovalForAll / permit
     const approve = [_]u8{ 0x09, 0x5e, 0xa7, 0xb3 };
     const set_approval_for_all = [_]u8{ 0xa2, 0x2c, 0xb4, 0x65 };
     const permit = [_]u8{ 0xd5, 0x05, 0xac, 0xcf };
     if (std.mem.eql(u8, &selector, &approve)) {
-        stderrPrint("注意: approve です。金額を確認してください（無制限の許可は危険）\n", .{});
+        stderrPrint("caution: approve. Check the amount (an unlimited allowance is dangerous)\n", .{});
     }
     if (std.mem.eql(u8, &selector, &set_approval_for_all)) {
-        stderrPrint("警告: setApprovalForAll です。全トークンの操作権を委ねます\n", .{});
+        stderrPrint("warning: setApprovalForAll. This grants control over all your tokens\n", .{});
     }
     if (std.mem.eql(u8, &selector, &permit)) {
-        stderrPrint("注意: permit（オフチェーン署名の代行）です\n", .{});
+        stderrPrint("caution: permit (an off-chain signature that grants approval)\n", .{});
     }
 }
 
@@ -1031,10 +1042,10 @@ fn warnDangerousCalldata(selector: [4]u8) !void {
 
 const png = @import("png.zig");
 
-/// 実機の画面（240×240）を組み立てて PNG で出力する。
+/// Build the device screen (240x240) and output it as a PNG.
 ///
-/// 実機が無くても UI を確認できるようにするためのコマンド。
-/// `--demo` ならサンプル、PSBT を渡せばその確認画面を描く。
+/// A command for checking the UI without a device.
+/// `--demo` draws a sample; passing a PSBT draws its confirmation screen.
 fn commandScreen(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -1053,8 +1064,8 @@ fn commandScreen(
     var warnings_buf: [3][]const u8 = undefined;
     var warning_count: usize = 0;
 
-    const qr_mode = option(args, "--qr") != null;
-    const demo = option(args, "--demo") != null;
+    const qr_mode = hasFlag(args, "--qr");
+    const demo = hasFlag(args, "--demo");
     if (qr_mode) return commandScreenQr(allocator, args, stdout);
     var qr_modules: ?[]u8 = null;
     if (demo) {
@@ -1069,7 +1080,7 @@ fn commandScreen(
         const input = try readAllStdin(allocator);
         const trimmed = std.mem.trim(u8, input, " \t\r\n");
         if (trimmed.len == 0) {
-            stderrPrint("PSBT（base64）を渡すか、--demo を指定してください\n", .{});
+            stderrPrint("pass a PSBT (base64), or specify --demo\n", .{});
             return error.Usage;
         }
         const decoder = std.base64.standard.Decoder;
@@ -1077,7 +1088,7 @@ fn commandScreen(
         try decoder.decode(raw, trimmed);
         const psbt = try zhww.btc_psbt.Psbt.parse(allocator, raw);
 
-        // 送金先（お釣り以外の最初の出力）を探す
+        // Find the recipient (the first output that is not change)
         const change = try changeOutputs(allocator, psbt, args);
         title = "CONFIRM";
         var to_address: []const u8 = "(unknown script)";
@@ -1098,14 +1109,14 @@ fn commandScreen(
             break;
         }
         if (!found) {
-            stderrPrint("送金先の出力が見つかりません\n", .{});
+            stderrPrint("no recipient output found\n", .{});
             return error.InvalidArgument;
         }
 
         lines_buf[0] = .{ .label = "To", .value = to_address };
         lines_buf[1] = .{ .label = "Amount", .value = try std.fmt.allocPrint(allocator, "{d} sats", .{amount}) , .kind = .strong };
 
-        // 手数料
+        // Fee
         var total_input: u64 = 0;
         var unknown_value = false;
         for (0..psbt.inputs.len) |i| {
@@ -1146,7 +1157,7 @@ fn commandScreen(
         }
     }
 
-    // QR（デモでは市松模様。実際の UR は QR エンコーダ実装後に差し込む）
+    // QR (a checkerboard in the demo; the real UR goes here once the encoder is wired in)
     var qr_bitmap: ?zhww.ui_screen.Bitmap = null;
     if (demo) {
         const size: usize = 25;
@@ -1171,7 +1182,7 @@ fn commandScreen(
     };
     screen.render(&fb);
 
-    // 拡大して PNG で出す（既定は等倍）
+    // Scale up and output as a PNG (default is 1:1)
     const scale_text = option(args, "--scale") orelse "1";
     const scale = try std.fmt.parseInt(usize, scale_text, 10);
     if (scale <= 1) {
@@ -1187,10 +1198,10 @@ fn commandScreen(
         try png.writeRgb565(&stdout.interface, allocator, big, screen_width * scale, screen_height * scale);
     }
     try stdout.interface.flush();
-    stderrPrint("画面を PNG で出力しました（{d}×{d}）\n", .{ screen_width * scale, screen_height * scale });
+    stderrPrint("wrote screen PNG ({d}x{d})\n", .{ screen_width * scale, screen_height * scale });
 }
 
-/// 文字列（UR の 1 パートなど）を QR として表示する画面を描く。
+/// Draw a screen that shows a string (such as one UR part) as a QR code.
 fn commandScreenQr(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -1202,7 +1213,7 @@ fn commandScreenQr(
     const input = try readAllStdin(allocator);
     const text = std.mem.trim(u8, input, " \t\r\n");
     if (text.len == 0) {
-        stderrPrint("QR にする文字列を標準入力から渡してください\n", .{});
+        stderrPrint("pass the text to show as a QR code on stdin\n", .{});
         return error.Usage;
     }
 
@@ -1251,18 +1262,18 @@ fn commandScreenQr(
     }
     try stdout.interface.flush();
     stderrPrint(
-        "QR を出力しました（v{d}・{d}×{d}モジュール）\n",
+        "wrote QR (v{d}, {d}x{d} modules)\n",
         .{ matrix.version, matrix.size, matrix.size },
     );
     matrix.deinit(allocator);
 }
 
-// ---------------------------------------------------------------- show（表示）
+// ---------------------------------------------------------------- show
 
-/// PSBT の中身を人間可読で表示する。
+/// Show the contents of a PSBT in human-readable form.
 ///
-/// 実機の画面が無くても「何に署名しようとしているか」を確認できるようにする。
-/// 署名は行わない（表示だけ）。
+/// Lets you check what you are about to sign, even without the device screen.
+/// It does not sign (display only).
 fn commandShow(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -1273,7 +1284,7 @@ fn commandShow(
     const input = try readAllStdin(allocator);
     const trimmed = std.mem.trim(u8, input, " \t\r\n");
     if (trimmed.len == 0) {
-        stderrPrint("PSBT（base64）を標準入力から渡してください\n", .{});
+        stderrPrint("pass a PSBT (base64) on stdin\n", .{});
         return error.Usage;
     }
 
@@ -1284,10 +1295,10 @@ fn commandShow(
     const psbt = try zhww.btc_psbt.Psbt.parse(allocator, raw);
     const tx = psbt.unsigned_tx;
 
-    // --- 入力 ---
+    // --- Inputs ---
     var total_input: u64 = 0;
     var unknown_value = false;
-    try stdout.interface.print("入力:\n", .{});
+    try stdout.interface.print("inputs:\n", .{});
     for (tx.inputs, 0..) |_, i| {
         const info = try inputInfo(allocator, psbt, i);
         if (info) |utxo| {
@@ -1297,22 +1308,22 @@ fn commandShow(
             if (try zhww.btc_address.fromScriptPubKey(&buffer, utxo.script_pubkey, network)) |address| {
                 try stdout.interface.print("  {s}", .{address});
             } else {
-                try stdout.interface.print("  (未対応の script)", .{});
+                try stdout.interface.print("  (unsupported script)", .{});
             }
         } else {
             unknown_value = true;
-            try stdout.interface.print("  {d}: 金額不明（UTXO 情報がありません）", .{i});
+            try stdout.interface.print("  {d}: amount unknown (no UTXO info)", .{i});
         }
         if (psbt.inputs[i].partial_sigs.len > 0) {
-            try stdout.interface.print("  [署名あり]", .{});
+            try stdout.interface.print("  [signed]", .{});
         }
         try stdout.interface.print("\n", .{});
     }
 
-    // --- 出力 ---
+    // --- Outputs ---
     const change = try changeOutputs(allocator, psbt, args);
     var total_output: u64 = 0;
-    try stdout.interface.print("出力:\n", .{});
+    try stdout.interface.print("outputs:\n", .{});
     for (tx.outputs, 0..) |output, i| {
         total_output += output.value;
         try stdout.interface.print("  {d}: {d} sats", .{ i, output.value });
@@ -1320,40 +1331,40 @@ fn commandShow(
         if (try zhww.btc_address.fromScriptPubKey(&buffer, output.script_pubkey, network)) |address| {
             try stdout.interface.print("  {s}", .{address});
         } else {
-            try stdout.interface.print("  (未対応の script)", .{});
+            try stdout.interface.print("  (unsupported script)", .{});
         }
         var is_change = false;
         for (change) |index| {
             if (index == i) is_change = true;
         }
-        try stdout.interface.print("  {s}\n", .{if (is_change) "お釣り" else "送金"});
+        try stdout.interface.print("  {s}\n", .{if (is_change) "change" else "payment"});
     }
-    try stdout.interface.print("出力合計: {d} sats\n", .{total_output});
+    try stdout.interface.print("output total: {d} sats\n", .{total_output});
 
-    // --- 手数料と警告 ---
+    // --- Fee and warnings ---
     if (unknown_value) {
-        try stdout.interface.print("手数料: 計算できません（入力額が不明）\n", .{});
-        stderrPrint("警告: 入力額が分からないため手数料を確認できません\n", .{});
+        try stdout.interface.print("fee: cannot compute (input amount unknown)\n", .{});
+        stderrPrint("warning: cannot verify the fee because an input amount is unknown\n", .{});
     } else if (total_input >= total_output) {
         const fee = total_input - total_output;
         try stdout.interface.print(
-            "手数料: {d} sats ({d}.{d:0>2}%)\n",
+            "fee: {d} sats ({d}.{d:0>2}%)\n",
             .{ fee, fee * 100 / total_input, (fee * 10000 / total_input) % 100 },
         );
         if (fee * 100 > total_input) {
-            stderrPrint("警告: 手数料が入力合計の 1% を超えています\n", .{});
+            stderrPrint("warning: fee is more than 1% of the total input\n", .{});
         }
     } else {
-        stderrPrint("警告: 出力合計が入力合計を超えています\n", .{});
+        stderrPrint("warning: the output total exceeds the input total\n", .{});
     }
 
     if (change.len == 0 and psbt.outputs.len > 1) {
-        stderrPrint("注意: お釣りを判定できませんでした（--mnemonic を渡すと判定します）\n", .{});
+        stderrPrint("note: could not identify change (pass --mnemonic to detect it)\n", .{});
     }
-    stderrPrint("これは表示のみで、署名は行っていません\n", .{});
+    stderrPrint("this is display only; nothing was signed\n", .{});
 }
 
-/// 入力の UTXO 情報（金額と scriptPubKey）を解決する。分からなければ null。
+/// Resolve UTXO info (amount and scriptPubKey) for an input. Null if unknown.
 fn inputInfo(
     allocator: std.mem.Allocator,
     psbt: zhww.btc_psbt.Psbt,
@@ -1371,7 +1382,7 @@ fn inputInfo(
     return null;
 }
 
-/// mnemonic が渡されていればお釣りを判定する。
+/// Detect the change output when a mnemonic is given.
 fn changeOutputs(
     allocator: std.mem.Allocator,
     psbt: zhww.btc_psbt.Psbt,
@@ -1393,11 +1404,11 @@ fn toHex(bytes: []const u8, out: []u8) []const u8 {
     return out[0 .. bytes.len * 2];
 }
 
-// ---------------------------------------------------------------- UR（QR 転送）
+// ---------------------------------------------------------------- UR (QR transfer)
 
-/// PSBT（base64）を UR に変換し、1 行 1 パートで出力する。
+/// Convert a PSBT (base64) to UR and print one part per line.
 ///
-/// 画面とカメラが無くても、生成される UR 文字列を目で確認できる。
+/// Lets you inspect the generated UR strings without a screen or camera.
 fn commandUr(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -1405,7 +1416,7 @@ fn commandUr(
 ) !void {
     const fragment_text = option(args, "--fragment") orelse "40";
     const max_fragment = std.fmt.parseInt(usize, fragment_text, 10) catch {
-        stderrPrint("--fragment の値が不正です: {s}\n", .{fragment_text});
+        stderrPrint("invalid value for --fragment: {s}\n", .{fragment_text});
         return error.InvalidArgument;
     };
     const ur_type = option(args, "--type") orelse zhww.ur.type_crypto_psbt;
@@ -1413,20 +1424,20 @@ fn commandUr(
     const input = try readAllStdin(allocator);
     const trimmed = std.mem.trim(u8, input, " \t\r\n");
     if (trimmed.len == 0) {
-        stderrPrint("PSBT（base64）を標準入力から渡してください\n", .{});
+        stderrPrint("pass a PSBT (base64) on stdin\n", .{});
         return error.Usage;
     }
 
     const decoder = std.base64.standard.Decoder;
     const raw_len = decoder.calcSizeForSlice(trimmed) catch {
-        stderrPrint("PSBT の base64 を解釈できません\n", .{});
+        stderrPrint("cannot decode the base64 PSBT\n", .{});
         return error.InvalidArgument;
     };
     const raw = try allocator.alloc(u8, raw_len);
     try decoder.decode(raw, trimmed);
 
-    // BC-UR の `crypto-psbt` / `bytes` は CBOR のバイト文字列として運ぶ。
-    // 生のバイト列をそのまま入れると、規格に沿った復号器が拒否する。
+    // BC-UR `crypto-psbt` / `bytes` travel as a CBOR byte string.
+    // Putting raw bytes in directly makes standards-compliant decoders reject it.
     const cbor_buffer = try allocator.alloc(u8, zhww.cbor.bytesLength(raw.len));
     const message = try zhww.cbor.writeBytes(cbor_buffer, raw);
 
@@ -1445,10 +1456,10 @@ fn commandUr(
         try stdout.interface.print("{s}\n", .{part});
         part_count += 1;
     }
-    stderrPrint("{s}: {d} パート（{d} バイト）\n", .{ ur_type, part_count, raw.len });
+    stderrPrint("{s}: {d} parts ({d} bytes)\n", .{ ur_type, part_count, raw.len });
 }
 
-/// UR のパート（1 行 1 つ）を読み取って PSBT（base64）に戻す。
+/// Read UR parts (one per line) and convert them back to a PSBT (base64).
 fn commandUrDecode(
     allocator: std.mem.Allocator,
     args: []const []const u8,
@@ -1459,7 +1470,7 @@ fn commandUrDecode(
 
     var lines = std.mem.tokenizeAny(u8, input, "\r\n");
     const first = lines.next() orelse {
-        stderrPrint("UR の文字列を標準入力から渡してください\n", .{});
+        stderrPrint("pass the UR string on stdin\n", .{});
         return error.Usage;
     };
 
@@ -1467,11 +1478,11 @@ fn commandUrDecode(
     const uri = try zhww.ur.parse(first);
 
     if (uri.seq == null) {
-        // 単一パート
+        // Single part
         const buffer = try allocator.alloc(u8, 64 * 1024);
         message = try zhww.ur.decodeSingle(buffer, first, null);
     } else {
-        // マルチパート: 最初のパートから大きさを決めてから溜める
+        // Multipart: the first part gives the size, then collect the rest
         var probe_buffer: [4096]u8 = undefined;
         const probe = try zhww.ur.decodePartUr(&probe_buffer, first);
 
@@ -1490,21 +1501,21 @@ fn commandUrDecode(
             if (status == .complete) break;
         }
 
-        stderrPrint("{d}/{d} パート受信\n", .{
+        stderrPrint("received {d}/{d} parts\n", .{
             decoder.receivedFragmentCount(),
             decoder.expectedFragmentCount(),
         });
         message = decoder.result() orelse {
-            stderrPrint("パートが揃っていません\n", .{});
+            stderrPrint("not all parts were received\n", .{});
             return error.InvalidArgument;
         };
     }
 
     const encoder = std.base64.standard.Encoder;
-    // CBOR のバイト文字列から中身（PSBT など）を取り出す
+    // Extract the payload (a PSBT, etc.) from the CBOR byte string
     var reader = zhww.cbor.Reader.init(message);
     const payload = reader.readBytes() catch {
-        stderrPrint("UR の中身を CBOR として解釈できません\n", .{});
+        stderrPrint("cannot parse the UR payload as CBOR\n", .{});
         return error.InvalidArgument;
     };
     const encoded = try allocator.alloc(u8, encoder.calcSize(payload.len));

@@ -1,55 +1,57 @@
-# ライセンス方針
+# License Policy
 
-- **最終更新**: 2026-10-12
+- **Last updated**: 2026-10-12
 
-本プロジェクトは「完全オープンソース」を掲げるため、**成果物の種類ごとにライセンスを明示**する。ライセンスの正典テキストは各公式ソースから取得してリポジトリに同梱する（下記 TODO 参照）。
+Because this project claims to be "fully open source", it **states a license explicitly for each kind
+of deliverable**. The canonical license texts are obtained from each official source and bundled with
+the repository (see the TODO below).
 
 ---
 
-## 1. 成果物ごとのライセンス
+## 1. License by deliverable
 
-| 成果物 | ライセンス | 理由 |
+| Deliverable | License | Reason |
 |---|---|---|
-| ハードウェア設計（回路図・BOM・基板データ） | **CERN-OHL-S-2.0** | 強コピーレフト。改変版も設計を公開させる。ハードウェアのオープンソースライセンスとして OSHWA 認証と整合 |
-| ファームウェア | **GPL-3.0-or-later** | 改変版のソース公開を義務付ける。Trezor ファームウェア（GPLv3）から学んだコードを取り込む場合の受け皿にもなる |
-| 筐体・3D データ | **CC-BY-SA-4.0** | 3D プリント文化との相性。改変版も同じ条件で共有 |
-| ドキュメント | **CC-BY-4.0** | 引用・翻訳・再配布を歓迎 |
-| ロゴ・名称 | **全権留保** | 改変版を本プロジェクト名で配布されると混乱するため |
+| Hardware design (schematics, BOM, board data) | **CERN-OHL-S-2.0** | Strong copyleft. Modified versions must publish their design too. As an open-source hardware license it is consistent with OSHWA certification |
+| Firmware | **GPL-3.0-or-later** | Requires modified versions to publish their source. It also works as the destination license if we incorporate code learned from Trezor firmware (GPLv3) |
+| Enclosure and 3D data | **CC-BY-SA-4.0** | Fits the 3D-printing culture. Modified versions are shared under the same terms |
+| Documentation | **CC-BY-4.0** | Quoting, translation and redistribution are welcome |
+| Logo and name | **All rights reserved** | Distributing a modified version under this project's name would cause confusion |
 
-CERN-OHL の各バリアント（S: 強コピーレフト / W: 弱 / P: 許諾型）の違いは[公式の解説](https://ohwr.org/project/cernohl/-/wikis/uploads/c2e5e9d297949b5c2d324a6cbf6adda0/cern_ohl_w_v2_howto.pdf)を参照。
+For the differences between the CERN-OHL variants (S: strongly reciprocal / W: weakly reciprocal / P: permissive), see the [official explanation](https://ohwr.org/project/cernohl/-/wikis/uploads/c2e5e9d297949b5c2d324a6cbf6adda0/cern_ohl_w_v2_howto.pdf).
 
-## 2. 第三者コードの利用方針
+## 2. Policy on using third-party code
 
-| 出所 | ライセンス | 取り込み時の扱い |
+| Source | License | Handling when incorporated |
 |---|---|---|
-| SeedSigner | オープンソース | 部品構成・筐体 STL の流用時は出典とライセンスを明記 |
-| Krux | MIT | 取り込み可。著作権表示を保持 |
-| Trezor ファームウェア | **GPLv3** | 取り込んだ場合、本プロジェクトのファームは GPLv3 となり、**"Trezor" の名称・ロゴは使用不可**。コードの系譜を明記する |
-| libsecp256k1 | MIT | 動的リンクまたは同梱時に表示を保持 |
-| BC-UR / bc-ur | BSD 系 | 表示を保持 |
-| ERC-7730 記述子 | レジストリのライセンスに従う | 同梱時に出典とハッシュを記録 |
+| SeedSigner | Open source | When reusing the parts list or the enclosure STL, state the source and the license |
+| Krux | MIT | May be incorporated. Keep the copyright notice |
+| Trezor firmware | **GPLv3** | If incorporated, this project's firmware becomes GPLv3 and the **"Trezor" name and logo cannot be used**. State the code's lineage |
+| libsecp256k1 | MIT | Keep the notice when linking dynamically or bundling |
+| BC-UR / bc-ur | BSD-family | Keep the notice |
+| ERC-7730 descriptors | Follow the registry's license | Record the source and hash when bundling |
 
-**ファームウェアは GPL-3.0-or-later を既定とする。** 互換性のないライセンス（独自 EULA 等）のコードを取り込んではならない。
+**Firmware defaults to GPL-3.0-or-later.** Code under an incompatible license (a proprietary EULA, etc.) must not be incorporated.
 
-## 3. 「完全オープンソース」の範囲の明示
+## 3. Stating the scope of "fully open source"
 
-本プロジェクトは以下を**オープンにしない**。これは設計上の制約であり、README に明記する。
+This project does **not** open the following. This is a design constraint and is stated in the README.
 
-| 非公開要素 | 理由 |
+| Closed element | Reason |
 |---|---|
-| Raspberry Pi のブート ROM および GPU ファームウェア | ベンダ非公開。本プロジェクトでは代替できない |
-| 使用する液晶ドライバ IC・カメラモジュールの内部実装 | ベンダ非公開 |
-| （採用時のみ）セキュアエレメント内部 | 採用しないため現状は該当なし |
+| Raspberry Pi boot ROM and GPU firmware | Closed by the vendor. This project cannot replace them |
+| The internal implementation of the LCD driver IC and camera module used | Closed by the vendor |
+| (Only if adopted) the internals of a secure element | Not applicable at present, since none is adopted |
 
-したがって本プロジェクトは「**アプリケーション層と設計の全てを公開し、それ以外を明示する**」立場を取る。「完全オープンソース」という語はこの範囲を指す。
+This project therefore takes the position of "**opening everything in the application layer and the design, and stating explicitly what is not open**". The phrase "fully open source" refers to this scope.
 
-## 4. TODO（v0.1 公開まで）
+## 4. TODO (before the v0.1 release)
 
-- [x] GPL-3.0 の正典テキストを取得し `LICENSE` として配置（ファームウェア用）
-- [x] CERN-OHL-S-2.0 の正典テキストを取得し `LICENSE-HARDWARE` として配置（ハードウェア設計用）
-- [x] CC-BY-4.0 を `LICENSE-DOCS`（ドキュメント用）、CC-BY-SA-4.0 を `LICENSE-ENCLOSURE`
-      （筐体用）として配置
-- [x] ファイルごとの SPDX ヘッダ（`SPDX-License-Identifier: GPL-3.0-or-later`）を
-      全 Zig ソースに付与（ドキュメントコメントの直後に置いている）
-- [x] 第三者コードの `THIRD-PARTY-NOTICES.md` を作成（libsecp256k1、テストベクタ、オラクル）
-- [x] 脆弱性開示ポリシー `SECURITY.md` を作成
+- [x] Obtain the canonical GPL-3.0 text and place it as `LICENSE` (for the firmware)
+- [x] Obtain the canonical CERN-OHL-S-2.0 text and place it as `LICENSE-HARDWARE` (for the hardware design)
+- [x] Place CC-BY-4.0 as `LICENSE-DOCS` (for documentation) and CC-BY-SA-4.0 as `LICENSE-ENCLOSURE`
+      (for the enclosure)
+- [x] Add a per-file SPDX header (`SPDX-License-Identifier: GPL-3.0-or-later`) to
+      every Zig source (placed directly after the doc comment)
+- [x] Create `THIRD-PARTY-NOTICES.md` for third-party code (libsecp256k1, test vectors, oracles)
+- [x] Create the vulnerability disclosure policy `SECURITY.md`

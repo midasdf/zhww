@@ -1,8 +1,8 @@
-# セキュリティポリシー
+# Security Policy
 
 ---
 
-## Summary (English)
+## Summary
 
 This project is experimental and is not audited. Security reports are genuinely welcome — even
 for a hobby project, a wallet bug matters.
@@ -15,80 +15,78 @@ for a hobby project, a wallet bug matters.
   signing the wrong thing, key material leaking into flash or logs, anything that makes the device
   display something different from what it signs.
 
-The full policy below is in Japanese. Corrections and translations are welcome.
+---
+
+- **Last updated**: 2026-10-12
+- **Scope**: every deliverable in this repository (firmware, documentation, hardware design)
 
 ---
 
-- **最終更新**: 2026-10-12
-- **対象**: 本リポジトリのすべての成果物（ファームウェア・ドキュメント・ハードウェア構成）
+## 1. Where this project stands
 
----
+**zhww is an experimental research and development project and has not undergone a third-party security audit.**
+It is not finished as a hardware wallet at this point, and **is not intended for use with real funds**.
 
-## 1. このプロジェクトの位置づけ
+See [DISCLAIMER.md](DISCLAIMER.md) for details.
 
-**zhww は実験的な研究開発プロジェクトであり、第三者によるセキュリティ監査を受けていません。**
-現時点でハードウェアウォレットとして完成しておらず、**実資金での使用を想定していません**。
+## 2. How to report a vulnerability
 
-詳細は [DISCLAIMER.md](DISCLAIMER.md) を参照してください。
+If you find a security problem, please **do not open a public issue**; report it privately through one of the following.
 
-## 2. 脆弱性の報告方法
+1. **GitHub Security Advisories** (recommended)
+   - Report it from the repository's "Security" tab → "Report a vulnerability"
+   - You can discuss it privately and publish the disclosure in the same place after the fix
 
-セキュリティ上の問題を見つけた場合は、**公開 Issue ではなく**、以下のいずれかで非公開に連絡してください。
+2. If that is not possible, open a repository issue saying that you would like to make contact
+   privately, and we will work out a channel (**do not put the vulnerability itself in a public issue**)
 
-1. **GitHub Security Advisories**（推奨）
-   - リポジトリの「Security」タブ →「Report a vulnerability」から報告する
-   - 非公開で議論でき、修正後の開示も同じ場所で行える
+### What to include in the report
 
-2. それが使えない場合は、リポジトリの Issue で「非公開で連絡したい」旨を書き、
-   連絡手段を相談してください（**脆弱性の内容そのものは公開 Issue に書かないこと**）
+- The affected file, function and commit
+- Steps to reproduce (test code or input data if possible)
+- The expected impact (key leakage, signing something other than what is displayed, loss of funds, etc.)
+- Whether it is already public
 
-### 報告に含めてほしいこと
+### Response targets (best effort)
 
-- 影響を受けるファイル・関数・コミット
-- 再現手順（可能ならテストコードや入力データ）
-- 想定される影響（鍵の漏洩、署名内容のすり替え、資金の喪失など）
-- すでに公開しているかどうか
-
-### 対応のめやす（ベストエフォート）
-
-| 段階 | めやす |
+| Stage | Target |
 |---|---|
-| 受領の返信 | できるだけ早く（数日以内を目標） |
-| 初期評価 | 2 週間以内 |
-| 修正 | 内容と開発状況による |
+| Acknowledgement | As soon as possible (aiming for within a few days) |
+| Initial assessment | Within 2 weeks |
+| Fix | Depends on the issue and the state of development |
 
-**このプロジェクトはボランティアベースであり、対応を保証するものではありません。**
-それでも、知らせていただけることが利用者の保護につながります。
+**This project is volunteer-based and cannot guarantee any response.**
+Even so, letting us know helps protect users.
 
-## 3. 特に重要と考える脆弱性の種類
+## 3. Vulnerability classes we consider especially important
 
-以下は優先的に扱います。
+The following are handled with priority.
 
-| 分類 | 例 |
+| Class | Example |
 |---|---|
-| 鍵の漏洩 | seed・秘密鍵・パスフレーズがメモリやストレージに残る、外部に送出される |
-| 署名内容のすり替え | 画面表示と実際の署名対象が食い違う（[docs/02-architecture.md](docs/02-architecture.md) の不変条件 I-3 の破れ） |
-| 署名の偽造・検証漏れ | 生成した署名が検証を通らない、他者の署名を受理する |
-| 手数料・送金先の偽装 | 表示されない出力への送金、手数料の水増し |
-| PSBT の検証漏れ | 不正な PSBT を受理する（重複キー、キー長、マップ数の不一致など） |
-| 乱数の欠陥 | 予測可能な seed が生成される |
+| Key leakage | The seed, private keys or passphrase remain in memory or storage, or are sent outside the device |
+| Signing something other than what is displayed | What the screen shows and what is actually signed disagree (a violation of invariant I-3 in [docs/02-architecture.md](docs/02-architecture.md)) |
+| Forged signatures / missing verification | A generated signature does not pass verification, or someone else's signature is accepted |
+| Spoofed fees or destinations | Paying to an output that is not displayed, or inflating the fee |
+| Missing PSBT validation | Accepting an invalid PSBT (duplicate keys, wrong key lengths, mismatched map counts, etc.) |
+| RNG flaws | A predictable seed is generated |
 
-## 4. 対象外
+## 4. Out of scope
 
-- 本プロジェクトが利用している外部ライブラリ（[libsecp256k1](https://github.com/bitcoin-core/secp256k1) 等）自体の脆弱性
-  → それぞれのプロジェクトへ報告してください
-- 設計上の既知の制約（[docs/05-threat-model.md](docs/05-threat-model.md) の「守れないもの」に列挙済み）
-  → 例: 物理アクセス下での seed 保護、Raspberry Pi にセキュアブートが無いこと
-- 「監査を受けていないこと」「LLM をヘビーに使っていること」自体
-  → これらは [DISCLAIMER.md](DISCLAIMER.md) で開示済みです
+- Vulnerabilities in the external libraries this project uses ([libsecp256k1](https://github.com/bitcoin-core/secp256k1) and others)
+  → please report them to those projects
+- Known design constraints (already listed under "what we cannot protect" in [docs/05-threat-model.md](docs/05-threat-model.md))
+  → e.g. protecting the seed under physical access, or the lack of secure boot on the Raspberry Pi
+- The facts that it "has not been audited" and "is developed with heavy LLM use"
+  → these are already disclosed in [DISCLAIMER.md](DISCLAIMER.md)
 
-## 5. 開示の方針
+## 5. Disclosure policy
 
-- 修正が用意できるまで、詳細の公開は控えていただけると助かります
-- 修正後は、報告者の希望に応じて GitHub Security Advisories で公開します
-- クレジットを希望する場合はお知らせください
+- We would appreciate it if you held off publishing the details until a fix is available
+- After the fix, we will publish it through GitHub Security Advisories according to the reporter's wishes
+- Let us know if you would like credit
 
-## 6. 謝辞
+## 6. Acknowledgements
 
-セキュリティ上の指摘は、たとえ小さなものでもプロジェクトの価値を高めます。
-報告いただいた方には、この場を借りて感謝します。
+Security reports, however small, make this project more valuable.
+We would like to thank everyone who has reported something.

@@ -110,6 +110,43 @@ The receiving logic is pure software and can be developed and tested on a PC tod
 
 None of this needs the board. The hardware only decides *which* sensor and *which* pin.
 
+
+## 7. Parts that can be used for a light receiver
+
+Nothing here needs an ADC, because **both ADC-capable pins on the header are taken by the LCD HAT**
+(section 2.2). All three options below present a digital interface.
+
+| Option | Example part | Interface | Notes |
+|---|---|---|---|
+| **Photodiode / phototransistor + comparator module** (recommended) | "LM393 light sensor module" boards sold by Akizuki Denshi, aitendo, Amazon and others; discrete photodiodes such as the S6775 / TEPT-family parts if a bare sensor is preferred | **Digital out** (open collector or push-pull), threshold set by an on-board trimmer | ~¥200–500. Works with **any visible light source**, including a phone screen. Bandwidth is kHz-class, so the sender's screen refresh (60–120 Hz) is the limiting factor, not the receiver. |
+| IR receiver module | **TSOP4838** (38 kHz carrier demodulator) | **Digital out**, already demodulated | Very clean signal and **immune to ambient light flicker**, because it only sees modulated IR. But a phone screen emits no IR, so the sender needs an IR emitter (an IR LED dongle) — that hurts the "any phone, no app" story. Good as a *second* channel, not as the primary one. |
+| Digital ambient-light sensor | **VEML7700** (I²C), Adafruit / DFRobot "Gravity" breakouts | **I²C** (digital) | No threshold calibration and a huge dynamic range. Slower: a measurement takes on the order of 100 ms, so the usable rate is a few bytes/s at best. Convenient, but the comparator option is faster and cheaper. |
+
+### Wiring (no soldering)
+
+- Any **free GPIO** on the 40-pin header works: 0, 1, 2, 3, 4, 7, 9, 12, 14, 15, 17, 18, 22, 23
+  (the HAT occupies 14 pins; see section 2.2).
+- Reach them with a **40-pin stacking header** between the board and the HAT, then a jumper wire to
+  the sensor breakout.
+- For the IR module the output is a clean digital edge; both it and the comparator module can be
+  decoded with **PIO** (edge timestamps in hardware) rather than by polling, which is what makes a
+  fast, jitter-free decode possible.
+
+### Ambient light is the real enemy
+
+Indoor lighting flickers at 100/120 Hz, which is the same order as the data rate. Three mitigations,
+all cheap:
+
+1. A **physical light guide** — a short opaque tube or cup over the sensor, so only the sender's
+   screen reaches it. This is the single most effective measure.
+2. **Manchester encoding** plus a preamble and CRC-32 in the frame (section 3), so that a wrong
+   threshold produces a rejected frame rather than wrong data. Nothing is signed on a failed CRC.
+3. The comparator module's **trimmed threshold**, set once while the phone screen is at the distance
+   it will be used at.
+
+The sender can be a **static web page** (a canvas that flashes the screen at 2–4 brightness levels).
+No app installation, which is what makes this practical for other people.
+
 ## 6. Open questions
 
 - Which sensor first: light (simpler, line-of-sight) or sound (faster, usable without aiming)?

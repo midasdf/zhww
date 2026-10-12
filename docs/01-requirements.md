@@ -1,91 +1,91 @@
-# 01. 要求仕様
+# 01. Requirements
 
-- **対象バージョン**: v0.1（初期スコープ）
-- **最終更新**: 2026-10-12
+- **Target version**: v0.1 (initial scope)
+- **Last updated**: 2026-10-12
 
 ---
 
-## 1. 目的
+## 1. Purpose
 
-既成部品のみで組み立て可能な、完全オープンソースのマルチチェーン署名デバイスを設計・公開する。ユーザーは「何を買って、どう組んで、どう検証するか」をリポジトリ内の情報だけで完結できること。
+Design and publish a fully open-source, multi-chain signing device that can be assembled from commodity parts alone. Users must be able to settle "what to buy, how to assemble it, and how to verify it" using only the information in this repository.
 
-## 2. スコープ
+## 2. Scope
 
-### 対象チェーン（初期）
+### Chains in scope (initial)
 
-| 系統 | 対象 | 備考 |
+| Family | Targets | Notes |
 |---|---|---|
-| Bitcoin | P2WPKH (BIP84)、P2PKH/P2SH-P2WPKH、P2WSH マルチシグ、P2TR key-path | まず BIP84 単一署名から |
-| EVM | Ethereum および主要 L2（ERC-20 送金・approve・EIP-191/EIP-712 署名） | chainId 単位で対応 |
+| Bitcoin | P2WPKH (BIP84), P2PKH/P2SH-P2WPKH, P2WSH multisig, P2TR key-path | Single-signature, 2-of-3 multisig and Taproot signing are implemented and verified against Bitcoin Core |
+| EVM | Ethereum and major L2s (ERC-20 transfer/approve, EIP-191/EIP-712 signing) | Supported per chainId |
 
-### 明示的にスコープ外（v0.1）
+### Explicitly out of scope (v0.1)
 
-- ed25519 系チェーン（Solana, TON, Cardano, Polkadot 等）— v0.2 以降
-- モバイル/デスクトップアプリの独自開発（既存の Sparrow / Electrum / MetaMask 等を利用する）
-- 無線通信（Wi-Fi / Bluetooth / NFC）
-- セキュアエレメントによる鍵保護
-- 法規制対応（技適・PSE・CE/FCC）、および本設計の**販売**
-- BIP85、SLIP-39、マルチシグのスクリプトパス（Taproot script-path）
+- ed25519 chains (Solana, TON, Cardano, Polkadot, etc.) — v0.2 and later
+- Developing our own mobile/desktop app (existing Sparrow / Electrum / MetaMask, etc. are used)
+- Wireless communication (Wi-Fi / Bluetooth / NFC)
+- Key protection with a secure element
+- Regulatory compliance for Japanese radio certification (giteki), PSE and CE/FCC, and **selling** this design
+- BIP85, SLIP-39, and the script path of multisig (Taproot script-path)
 
-## 3. 機能要件
+## 3. Functional requirements
 
-| ID | 要件 | 優先度 |
+| ID | Requirement | Priority |
 |---|---|---|
-| FR-01 | ダイス入力（12語: 50回 / 24語: 99回）とカメラ画像エントロピーから BIP39 seed を生成できる | 必須 |
-| FR-02 | BIP39 mnemonic を SeedQR（標準 / Compact）から読み込みできる | 必須 |
-| FR-03 | BIP39 パスフレーズ（word 25）に対応し、誤入力検出のため再入力またはチェックサム表示を行う | 必須 |
-| FR-04 | BIP44/49/84/86 の派生パスで BTC アドレスを導出・画面表示できる | 必須 |
-| FR-05 | PSBT を QR（BC-UR, animated）または SD カード経由で受け取り、署名して返せる | 必須 |
-| FR-06 | PSBT の送金先・金額・手数料・お釣り先を画面に明示し、承認を要求する | 必須 |
-| FR-07 | EVM トランザクション（Legacy / EIP-1559）を RLP 解析し、送金先・金額・チェーンID・手数料を表示して署名できる | 必須 |
-| FR-08 | ERC-20 の `transfer` / `approve` をデコードし、トークン量を表示できる | 必須 |
-| FR-09 | EIP-191（personal_sign）および EIP-712 typed data に署名でき、署名対象を画面表示する | 必須 |
-| FR-10 | ERC-7730 記述子を読み込み、対応コントラクトの呼び出しを人間可読形式で表示する | 高 |
-| FR-11 | 記述子に無いコントラクト呼び出しは「未知のコントラクト」警告＋ raw calldata ハッシュ表示にフォールバックする | 必須 |
-| FR-12 | BTC マルチシグ（P2WSH, sortedmulti）の xpub 導出と PSBT 署名ができる | 高 |
-| FR-13 | 署名後に seed・中間鍵・セッション状態をメモリから消去し、その状態を画面で確認できる | 必須 |
+| FR-01 | Generate a BIP39 seed from dice input (12 words: 50 rolls / 24 words: 99 rolls) and camera-image entropy | Required |
+| FR-02 | Load a BIP39 mnemonic from a SeedQR (standard / Compact) | Required |
+| FR-03 | Support a BIP39 passphrase (word 25), with re-entry or checksum display to detect typos | Required |
+| FR-04 | Derive and display BTC addresses for the BIP44/49/84/86 derivation paths | Required |
+| FR-05 | Receive a PSBT over QR (BC-UR, animated) or via the SD card, sign it and return it | Required |
+| FR-06 | Show the PSBT's destination, amount, fee and change address on screen, and require approval | Required |
+| FR-07 | RLP-parse EVM transactions (Legacy / EIP-1559), display the destination, amount, chain ID and fee, and sign them | Required |
+| FR-08 | Decode ERC-20 `transfer` / `approve` and display the token amount | Required |
+| FR-09 | Sign EIP-191 (personal_sign) and EIP-712 typed data, and display what is being signed | Required |
+| FR-10 | Load ERC-7730 descriptors and display calls to supported contracts in human-readable form | High |
+| FR-11 | For contract calls not covered by a descriptor, fall back to an "unknown contract" warning plus a raw calldata hash | Required |
+| FR-12 | Derive xpubs and sign PSBTs for BTC multisig (P2WSH, sortedmulti) | High |
+| FR-13 | After signing, erase the seed, intermediate keys and session state from memory, and let the user confirm that state on screen | Required |
 
-## 4. 非機能要件
+## 4. Non-functional requirements
 
-| ID | 要件 | 目標 |
+| ID | Requirement | Target |
 |---|---|---|
-| NFR-01 | 組立に半田付けを要しない | 全工程で半田・特殊工具ゼロ |
-| NFR-02 | 1台あたりの部品コスト | ¥12,000 以下 |
-| NFR-03 | 部品点数 | 10点以下（消耗品・筐体を除く） |
-| NFR-04 | 組立時間（経験者） | 60分以内 |
-| NFR-05 | seed の永続化 | フラッシュ・SD・スワップに一切書かない |
-| NFR-06 | ネットワーク接続 | ハードウェアとして無線機能を持たない、または無効化されている |
-| NFR-07 | ファームウェアの検証可能性 | 再現可能ビルド＋PGP 署名付きリリース |
-| NFR-08 | 楕円曲線演算 | 監査済み libsecp256k1 を使用（純 Python 実装の禁止） |
-| NFR-09 | 起動時間 | 60秒以内（標準構成の Pi Zero 2 WH での実測。無線なしの Zero 1.3 を使う場合は長めになることを許容する） |
-| NFR-10 | ホスト側依存 | 署名要求は標準フォーマット（PSBT / JSON-RPC ペイロード）のみ |
+| NFR-01 | Assembly requires no soldering | Zero soldering or special tools at any step |
+| NFR-02 | Parts cost per unit | ¥12,000 or less (about USD 80) |
+| NFR-03 | Number of parts | 10 or fewer (excluding consumables and the enclosure) |
+| NFR-04 | Assembly time (experienced) | Within 60 minutes |
+| NFR-05 | Seed persistence | Never written to flash, SD or swap |
+| NFR-06 | Network connectivity | No wireless capability in hardware, or it is disabled |
+| NFR-07 | Firmware verifiability | Reproducible builds + PGP-signed releases |
+| NFR-08 | Elliptic-curve arithmetic | Use audited libsecp256k1 (pure-Python implementations forbidden) |
+| NFR-09 | Boot time | 60 seconds or less (a target, not a measurement: the firmware has not run on hardware yet. The v0.1 Linux build targets the Pi Zero 2 WH; a wireless-free Zero 1.3 may boot more slowly, which is accepted) |
+| NFR-10 | Host-side dependencies | Signing requests use only standard formats (PSBT / JSON-RPC payloads) |
 
-## 5. 制約
+## 5. Constraints
 
-- **C-01**: Raspberry Pi Zero はセキュアブートを持たない。ファームウェア完全性は「再現可能ビルド＋SD 差し替え運用的に検出」でしか担保できない（残存リスクとして明記）。
-- **C-02**: SE を持たないため、物理アクセスを受けた場合の seed 保護は保証できない。
-- **C-03**: 240×240 の画面では EVM の calldata 全文表示に制約がある。ページ送り表示を前提とする（大画面オプションは BOM に記載）。
-- **C-04**: ライセンス上、Trezor ファームウェア（GPLv3）のコードを流用した場合、本プロジェクトのファームは GPLv3 となり "Trezor" 名称は使用できない。
+- **C-01**: The Raspberry Pi Zero (the v0.1 Linux build) has no secure boot. Firmware integrity can therefore only be assured by "reproducible builds + detection through SD-card swapping in operation" (stated as a residual risk).
+- **C-02**: With no SE, seed protection cannot be guaranteed if an attacker gains physical access.
+- **C-03**: A 240×240 screen limits full display of EVM calldata. A paged display is assumed (a larger-screen option is described in the BOM).
+- **C-04**: Under its license, reusing code from Trezor firmware (GPLv3) would make this project's firmware GPLv3 and forbid use of the "Trezor" name.
 
-## 6. 受け入れ基準（v0.1 Done の定義）
+## 6. Acceptance criteria (definition of v0.1 Done)
 
-以下をすべて満たしたとき v0.1 完了とする。
+v0.1 is complete when all of the following are satisfied.
 
-1. BOM 記載の部品のみで、半田付けなしに 1 台を組み立てられる（手順書どおりに 60 分以内）
-2. Bitcoin Signet で、SeedSigner 等の既存デバイスと**同一 seed から同一アドレス**が導出される（BIP84 テストベクタ一致）
-3. Sparrow（または Electrum）から PSBT を受け取り、署名して返し、ブロードキャストが成功する
-4. Ethereum Sepolia で EIP-1559 トランザクションに署名し、viem または ethers.js で生成した署名と**バイト単位で一致**する
-5. ERC-20 `transfer` が、コントラクトアドレス・送金額・送金先を画面表示した上で署名できる
-6. 電源断後、seed を含むいかなる秘密情報も SD カードおよびフラッシュから復元できないことを確認する
-7. リリースイメージが 2 台の異なる環境でビルドして同一ハッシュになる（再現可能ビルド）
-8. 脅威モデルに記載された残存リスクが README から辿れる
+1. A single unit can be assembled from the parts listed in the BOM without soldering (within 60 minutes following the procedure)
+2. On Bitcoin Signet, the **same addresses are derived from the same seed** as existing devices such as SeedSigner (BIP84 test vectors match)
+3. A PSBT received from Sparrow (or Electrum) is signed and returned, and the broadcast succeeds
+4. An EIP-1559 transaction signed on Ethereum Sepolia **matches byte-for-byte** signatures produced with viem or ethers.js
+5. ERC-20 `transfer` can be signed after displaying the contract address, the amount and the destination on screen
+6. After power loss, no secret information including the seed can be recovered from the SD card or flash
+7. Release images built in two different environments produce the same hash (reproducible build)
+8. The residual risks described in the threat model can be reached from the README
 
-## 7. 用語
+## 7. Terminology
 
-| 用語 | 意味 |
+| Term | Meaning |
 |---|---|
-| clear signing | 署名前にトランザクションの意味を人間可読で表示し、表示内容と署名内容の一致を保証する設計 |
-| blind signing | デコードできないデータをそのまま承認させる行為。本プロジェクトでは禁止 |
-| stateless | seed を永続ストレージに置かず、電源断で消える設計 |
-| PSBT | BIP174 で定義される Bitcoin の部分署名トランザクション形式 |
-| BC-UR | Blockchain Commons の Uniform Resources。QR で任意データを分割転送する形式 |
+| clear signing | A design that displays the meaning of a transaction in human-readable form before signing, and guarantees that what is displayed matches what is signed |
+| blind signing | Approving undecodable data as it is. Forbidden in this project |
+| stateless | A design in which the seed is not placed in persistent storage and disappears when power is cut |
+| PSBT | The Bitcoin partially signed transaction format defined in BIP174 |
+| BC-UR | Blockchain Commons Uniform Resources. A format that splits arbitrary data for transfer over QR |

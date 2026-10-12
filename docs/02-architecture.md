@@ -1,64 +1,66 @@
-# 02. アーキテクチャ
+# 02. Architecture
 
-- **対象バージョン**: v0.1
-- **最終更新**: 2026-10-12
+- **Target version**: v0.1
+- **Last updated**: 2026-10-12
 
 ---
 
-## 1. 全体構成
+## 1. Overall structure
 
 ```
-                 ┌──────────────────────────────────────────────┐
-                 │  ホスト（信頼しない）                         │
-                 │  Sparrow / Electrum / MetaMask / 任意の dApp  │
-                 └───────┬──────────────────────────┬───────────┘
-                         │ PSBT / tx JSON           │ 署名済みデータ
-                         │ （QR または SD）          │
-┌────────────────────────▼──────────────────────────▼───────────┐
-│ zhww デバイス（エアギャップ）                                   │
-│                                                                 │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │ UI 層  画面(240x240) / ジョイスティック / 3ボタン / カメラ  │ │
-│  └───────────────────────────────────────────────────────────┘ │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │ apps/  チェーン固有ロジック（コアから隔離）                 │ │
-│  │   btc/   PSBT解析・BIP32パス・アドレス・手数料・お釣り判定   │ │
-│  │   evm/   RLP/EIP-1559・EIP-191/712・ERC-20・ERC-7730表示    │ │
-│  └───────────────────────────────────────────────────────────┘ │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │ core/  チェーン非依存（鍵と表示の最終責任者）               │ │
-│  │   seed      BIP39 / パスフレーズ / ダイス・カメラentropy    │ │
-│  │   derive    BIP32 (secp256k1)                              │ │
-│  │   sign      libsecp256k1 / RFC6979 決定論的 nonce           │ │
-│  │   verify    表示対象ハッシュの独立再計算（二重計算の原則）   │ │
-│  │   render    clear signing 記述子 → 画面項目                │ │
-│  │   wipe      セッション秘密の消去                            │ │
-│  └───────────────────────────────────────────────────────────┘ │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │ fs/（microSD / FAT32）
-transport/  QR(BC-UR, animated) / USB-CDC（任意） / SD      │ │
-│  └───────────────────────────────────────────────────────────┘ │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │ OS: Raspberry Pi OS Lite / read-only rootfs / tmpfs のみ    │ │
-│  └───────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
+                 ┌────────────────────────────────────────────────────────────────┐
+                 │  Host (untrusted)                                              │
+                 │  Sparrow / Electrum / MetaMask / any dApp                      │
+                 └───────┬──────────────────────────┬─────────────────────────────┘
+                         │ PSBT / tx JSON           │ signed data
+                         │ (QR or SD)               │
+┌────────────────────────▼──────────────────────────▼──────────────────────────────┐
+│ zhww device (air-gapped)                                                         │
+│                                                                                  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │ UI layer   screen (240x240) / joystick / 3 buttons / camera                │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │ apps/  chain-specific logic (isolated from the core)                       │  │
+│  │   btc/   PSBT parsing, BIP32 paths, addresses, fees, change detection      │  │
+│  │   evm/   RLP/EIP-1559, EIP-191/712, ERC-20, ERC-7730 display               │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │ core/  chain-agnostic (final authority over keys and display)              │  │
+│  │   seed      BIP39 / passphrase / dice and camera entropy                   │  │
+│  │   derive    BIP32 (secp256k1)                                              │  │
+│  │   sign      libsecp256k1 / RFC6979 deterministic nonce                     │  │
+│  │   verify    independent recomputation of displayed hash (dual computation) │  │
+│  │   render    clear signing descriptor → screen items                        │  │
+│  │   wipe      erasure of session secrets                                     │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │ fs/  (microSD / FAT32)                                                     │  │
+│  │ transport/  QR (BC-UR, animated) / USB-CDC (optional) / SD                 │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+│  ┌────────────────────────────────────────────────────────────────────────────┐  │
+│  │ OS: Raspberry Pi OS Lite / read-only rootfs / tmpfs only                   │  │
+│  └────────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## 2. 層の責務と禁止事項
+> Note: the `OS` row describes the v0.1 Linux build. The main v0.2 target, the RP2350-PiZero, is a microcontroller board that does not run Linux ([08-rp2350-pizero.md](08-rp2350-pizero.md)); there the firmware runs directly on the MCU, with no OS layer. The firmware has not yet run on any hardware.
 
-| 層 | 責務 | 禁止事項 |
+## 2. Layer responsibilities and prohibited actions
+
+| Layer | Responsibility | Prohibited |
 |---|---|---|
-| `transport/` | 生バイトの入出力、QR 分割・再構成、SD 読み書き | ペイロードの解釈（解釈は apps 以降で行う） |
-| `apps/` | チェーン固有の解析、表示項目の生成、署名対象ハッシュの算出 | seed・拡張秘密鍵への直接アクセス |
-| `core/` | 鍵導出、署名、表示の最終確定、秘密の消去 | チェーン固有の解釈（`apps/` から受け取ったハッシュのみを扱う） |
+| `transport/` | Raw byte input/output, QR splitting and reassembly, SD reads and writes | Interpreting payloads (interpretation happens in apps and above) |
+| `apps/` | Chain-specific parsing, generating display items, computing the hash to be signed | Direct access to the seed and extended private keys |
+| `core/` | Key derivation, signing, final confirmation of what is displayed, erasure of secrets | Chain-specific interpretation (handles only the hash received from `apps/`) |
 
-**不変条件 I-1**: `core` は「どのチェーンか」を知らない。
-**不変条件 I-2**: `apps` は鍵素材を保持しない。署名は `core` の API に「このパスで、この 32 バイトを」と渡す形に限定する。
-**不変条件 I-3**: 署名対象ハッシュは `apps` と `core` が**独立に計算**し、一致しなければ署名しない（二重計算の原則）。これにより apps 側のバグが「表示と実際の署名内容の食い違い」に化けることを防ぐ。
+**Invariant I-1**: `core` does not know "which chain" it is dealing with.
+**Invariant I-2**: `apps` holds no key material. Signing is limited to calling the `core` API with "this path, these 32 bytes".
+**Invariant I-3**: The hash to be signed is computed **independently** by `apps` and `core`, and signing does not proceed unless the two match (the dual-computation principle). This prevents a bug on the `apps` side from turning into a "mismatch between what is displayed and what is actually signed".
 
-## 3. 鍵管理
+## 3. Key management
 
-### 3.1 生成
+### 3.1 Generation
 
 ```
 entropy = HKDF( dice_entropy || camera_entropy || soc_trng )
@@ -66,100 +68,100 @@ mnemonic = BIP39( entropy, word_count )
 seed64   = PBKDF2-HMAC-SHA512( mnemonic, "mnemonic" || passphrase, 2048 )
 ```
 
-- ダイスは必須入力（12語: 50回、24語: 99回）。カメラ画像エントロピーと SoC の TRNG は**追加**の寄与であり、置き換えではない。
-- 生成直後に BIP39 チェックサムを検証し、画面表示と SeedQR 出力の両方を提供する。
-- 乱数品質は起動時に簡易健全性テスト（重複パターン検出・ビット分布）を行い、異常時は生成を中止する。
+- Dice are a mandatory input (12 words: 50 rolls, 24 words: 99 rolls). Camera-image entropy and the SoC TRNG are **additional** contributions, not replacements.
+- The BIP39 checksum is verified immediately after generation, and both an on-screen display and SeedQR output are provided.
+- For random-number quality, a simple health test (repeated-pattern detection, bit distribution) runs at boot, and generation is aborted if it fails.
 
-### 3.2 導出（v0.1 の対応範囲）
+### 3.2 Derivation (scope supported in v0.1)
 
-| 用途 | パス |
+| Purpose | Path |
 |---|---|
 | Bitcoin P2PKH (BIP44) | `m/44'/0'/0'/0/i` |
 | Bitcoin P2SH-P2WPKH (BIP49) | `m/49'/0'/0'/0/i` |
 | Bitcoin P2WPKH (BIP84) | `m/84'/0'/0'/0/i` |
 | Bitcoin P2TR (BIP86) | `m/86'/0'/0'/0/i` |
-| Bitcoin マルチシグ (P2WSH) | `m/48'/0'/0'/2'` |
-| EVM (全 EVM チェーン共通) | `m/44'/60'/0'/0/i` |
+| Bitcoin multisig (P2WSH) | `m/48'/0'/0'/2'` |
+| EVM (common to all EVM chains) | `m/44'/60'/0'/0/i` |
 
-EVM は相互運用性を優先し `60'` を既定とする。Polygon (966)・Optimism (614) のように固有の SLIP-44 番号を持つチェーンもあるが、主要ウォレットは 60 を共通使用している。設定で切り替え可能にするが既定は 60。
+EVM gives priority to interoperability and defaults to `60'`. Some chains have their own SLIP-44 numbers, such as Polygon (966) and Optimism (614), but the major wallets use 60 in common. This can be switched in settings, but the default is 60.
 
-### 3.3 保護方針
+### 3.3 Protection policy
 
-- seed は RAM 上にのみ展開し、**終了時にゼロ埋め**する。
-- 設定値（表示単位・chainId など）以外は永続化しない。永続化領域に秘密を書かない。
-- SD カードは起動完了後にアンマウントまたは読み取り専用で再マウントする。
+- The seed is expanded only in RAM and is **zeroed on exit**.
+- Nothing is persisted except settings (display unit, chainId, etc.). No secrets are written to persistent storage.
+- The SD card is unmounted after boot completes, or remounted read-only.
 
-## 4. 署名フロー
+## 4. Signing flow
 
 ```
-ホスト                 transport        apps                 core                画面
-  │                       │              │                    │                  │
-  │ PSBT / tx JSON        │              │                    │                  │
-  ├──────────────────────►│  生バイト     │                    │                  │
-  │                       ├─────────────►│ 解析               │                  │
-  │                       │              │ 表示項目＋ハッシュ   │                  │
-  │                       │              ├───────────────────►│ ハッシュ再計算    │
-  │                       │              │                    │ 一致確認          │
-  │                       │              │                    ├─────────────────►│
-  │                       │              │                    │                  │ 送金先・金額
-  │                       │              │                    │◄─────────────────┤ 手数料・chainId
-  │                       │              │                    │   ユーザー承認    │
-  │                       │              │                    │ seed 展開→派生→署名
-  │                       │◄─────────────┴────────────────────┤                  │
-  │  署名済み PSBT / tx    │◄───────────────────────────────────┘                  │
-  │◄──────────────────────┤                                                        │
-  │                       │                                    メモリワイプ       │
+Host                  transport      apps                   core               screen
+  │                       │            │                      │                   │
+  │ PSBT / tx JSON        │            │                      │                   │
+  ├──────────────────────►│ raw bytes  │                      │                   │
+  │                       ├───────────►│ parse                │                   │
+  │                       │            │ display items + hash │                   │
+  │                       │            ├─────────────────────►│ hash recomputation│
+  │                       │            │                      │ match check       │
+  │                       │            │                      ├──────────────────►│
+  │                       │            │                      │                   │ destination, amount
+  │                       │            │                      │◄──────────────────┤ fee, chainId
+  │                       │            │                      │ user approval     │
+  │                       │            │                      │ expand seed → derive → sign
+  │                       │◄───────────┴──────────────────────┤                   │
+  │ signed PSBT / tx      │◄──────────────────────────────────┘                   │
+  │◄──────────────────────┤                                                       │
+  │                       │                                     memory wipe       │
 ```
 
-### 4.1 承認 UI の必須要件
+### 4.1 Mandatory requirements for the approval UI
 
-1. 送金先アドレスは**全体を表示**（ページ送り可、省略記号による中略は禁止）
-2. 金額は最小単位ではなく人間単位（BTC / ETH / トークン量）で表示。トークンは decimals を記述子から取得
-3. 手数料は絶対額と、可能なら推定レート
-4. EVM は chainId を必ず表示（同じアドレスが複数チェーンに存在するため）
-5. 未知のコントラクト・未知の関数セレクタは赤色の警告表示と明示的な追加承認
-6. 承認前に「署名対象ハッシュ」を表示（ホストと突き合わせ可能にする）
+1. The destination address must be **displayed in full** (paging is allowed; truncation with an ellipsis in the middle is forbidden)
+2. Amounts are displayed in human units (BTC / ETH / token amount), not in the smallest unit. For tokens, decimals are taken from the descriptor
+3. Fees are shown as an absolute amount and, where possible, as an estimated rate
+4. EVM must always display the chainId (the same address exists on multiple chains)
+5. Unknown contracts and unknown function selectors get a red warning and an explicit extra approval
+6. Before approval, display the "hash to be signed" (so that it can be compared against the host)
 
-## 5. 通信仕様
+## 5. Communication specifications
 
-| 経路 | 形式 | 用途 |
+| Path | Format | Use |
 |---|---|---|
-| QR (BC-UR) | `ur:crypto-psbt`, `ur:bytes`, animated | BTC 署名要求/応答、EVM トランザクション |
-| QR (SeedQR) | 標準 / Compact SeedQR | seed の読み込み |
-| SD カード | PSBT ファイル、JSON | 大きいトランザクション、ファーム更新 |
-| USB-CDC（任意） | 生バイト | 開発・デバッグ用途。既定で無効、リリースビルドでは無効化 |
+| QR (BC-UR) | `ur:crypto-psbt`, `ur:bytes`, animated | BTC signing requests/responses, EVM transactions |
+| QR (SeedQR) | standard / Compact SeedQR | Loading the seed |
+| SD card | PSBT file, JSON | Large transactions, firmware updates |
+| USB-CDC (optional) | Raw bytes | Development and debugging. Disabled by default, and disabled in release builds |
 
-USB を有効にするとエアギャップが崩れるため、**リリースビルドでは USB データ通信を無効化**し、給電専用として扱う。
+Enabling USB breaks the air gap, so **USB data communication is disabled in release builds**, which are treated as power-only.
 
-## 6. 依存ライブラリ方針
+## 6. Dependency policy
 
-実装言語は **Zig**（[firmware/README.md](../firmware/README.md)）。
+The implementation language is **Zig** ([firmware/README.md](../firmware/README.md)).
 
-| 用途 | 方針 |
+| Use | Policy |
 |---|---|
-| 楕円曲線 | **libsecp256k1** のみ。純粋な自前実装はタイミング攻撃に耐えないため、秘密鍵を扱う演算には使わない |
-| SHA-256 / SHA-512 / HMAC / PBKDF2 | Zig 標準ライブラリ（`std.crypto`） |
-| RIPEMD-160 | Zig 標準にも OpenSSL にも依存できない環境があるため**自前実装**（公式ベクタで検証済み） |
-| Keccak-256 | Zig 標準ライブラリ（`std.crypto.hash.sha3.Keccak256`）。SHA3-256 と混同しないこと |
-| RLP | 自前実装。公式テストベクタとの完全一致を必須とする |
-| QR | BC-UR の参照実装を移植する（未実装） |
+| Elliptic curve | **libsecp256k1** only. A pure home-grown implementation does not resist timing attacks, so it is not used for operations that handle private keys |
+| SHA-256 / SHA-512 / HMAC / PBKDF2 | Zig standard library (`std.crypto`) |
+| RIPEMD-160 | **Implemented in-house**, because some environments can depend on neither the Zig standard library nor OpenSSL (verified against the official vectors) |
+| Keccak-256 | Zig standard library (`std.crypto.hash.sha3.Keccak256`). Do not confuse it with SHA3-256 |
+| RLP | Implemented in-house. Exact agreement with the official test vectors is mandatory |
+| QR | Port the BC-UR reference implementation: done (Bytewords / CBOR / single- and multi-part). On-device QR input/output is not implemented yet — the UI is a host-side preview |
 
-**メモリ方針**: コアは動的メモリを使わない（固定長バッファとスライス）。確保失敗・解放漏れ・
-断片化を構造的に排除し、組み込みでの挙動を予測可能にする。
+**Memory policy**: the core uses no dynamic memory (fixed-size buffers and slices). This structurally rules out
+allocation failure, leaks and fragmentation, and makes embedded behaviour predictable.
 
-## 7. エラー処理
+## 7. Error handling
 
-- 解析失敗・チェックサム不一致・記述子の chainId 不一致は**すべて署名拒否**とし、画面に理由を表示する。
-- 署名対象ハッシュの二重計算が一致しない場合、直ちにセッションを破棄し再起動を促す（改ざんまたはバグの可能性）。
-- 予期しない例外時は seed をワイプし、電源断相当の状態に戻す。
+- Parse failures, checksum mismatches and descriptor chainId mismatches **all reject signing**, and the reason is displayed on screen.
+- If the two independent computations of the hash to be signed do not match, the session is destroyed immediately and a restart is prompted (possible tampering or a bug).
+- On an unexpected exception, the seed is wiped and the device returns to the equivalent of a power-off state.
 
-## 8. テスト方針
+## 8. Testing policy
 
-| 対象 | 方法 |
+| Target | Method |
 |---|---|
-| BIP39/32/84/86 | 仕様記載のテストベクタとの一致 |
-| PSBT | Bitcoin Core で生成した PSBT を署名し、Core で検証 |
-| EIP-155 / 1559 | EIP 記載のテストベクタ、および viem / ethers.js の署名とバイト一致 |
-| EIP-712 | 既知の typed data サンプルで domainSeparator / hashStruct を突合 |
-| ERC-7730 表示 | 記述子サンプルを与え、表示項目のスナップショットテスト |
-| seed 残留 | 電源断後に SD・フラッシュをダンプし、mnemonic・seed・拡張秘密鍵のバイト列が存在しないことを確認 |
+| BIP39/32/84/86 | Match the test vectors given in the specifications |
+| PSBT | Sign PSBTs generated by Bitcoin Core and verify them with Core (the current implementation's single-signature, 2-of-3 multisig and Taproot signatures are accepted by Core) |
+| EIP-155 / 1559 | Test vectors from the EIPs, and byte-for-byte agreement with signatures from viem / ethers.js |
+| EIP-712 | Compare domainSeparator / hashStruct against known typed-data samples |
+| ERC-7730 display | Snapshot tests of the display items given descriptor samples |
+| Seed residue | After power loss, dump the SD card and flash and confirm that no mnemonic, seed or extended private key byte sequences are present |

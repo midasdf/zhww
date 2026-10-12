@@ -1,46 +1,44 @@
-# 07. Raspberry Pi Zero 2 W のセットアップ（手元の実機を使う）
+# 07. Raspberry Pi Zero 2 W setup (using the hardware you already have)
 
-- **最終更新**: 2026-10-12
-- **対象ハード**: Raspberry Pi Zero 2 WH（ヘッダ実装済み。標準構成）。手順は Zero 2 W でも同じ
-- **対象**: 手元にある Raspberry Pi Zero 2 W を **開発機** として使い、同時に **無線を無効化** して
-  エアギャップ運用に近づけるための手順
+- **Last updated**: 2026-10-12
+- **Target hardware**: Raspberry Pi Zero 2 WH (header pre-installed; the standard configuration). The procedure is the same for the Zero 2 W
+- **Purpose**: procedure for using the Raspberry Pi Zero 2 W you already have as a **development machine** while at the same time **disabling wireless**, to get as close as possible to air-gapped operation
 
 ---
 
-## 0. 結論（先に要点）
+## 0. Conclusion (the short version)
 
-| 質問 | 答え |
+| Question | Answer |
 |---|---|
-| 手元の Zero 2 W をそのまま使えるか | **使える。ただし無線を潰すこと** |
-| 最終構成も Zero 2 W でよいか | 可能だが、無線チップが物理的に存在するため**残存リスクとして文書化が必要**。最終構成は無線なしの Zero 1.3 が望ましい |
-| なぜ Zero 2 W でも進めてよいか | 開発速度が圧倒的に違う（起動とビルドが速い）。ファームウェアは両者で同一バイナリ（同じ BCM2710A1 系、命令セットは同一） |
-| 何から始めるか | ① OS を焼く → ② 無線を無効化 → ③ 無線が消えたことを確認 → ④ 画面とカメラを有効化 |
+| Can I use the Zero 2 W I already have? | **Yes. But kill the wireless** |
+| Is the Zero 2 W acceptable as the final configuration? | It is possible, but the wireless chip physically exists, so **it must be documented as a residual risk**. The wireless-free Zero 1.3 is preferable for the final configuration |
+| Why is it acceptable to proceed with the Zero 2 W? | The development speed is dramatically better (boot and builds are fast). The firmware is the same binary on both (same BCM2710A1 family, same instruction set) |
+| Where do I start? | (1) Flash the OS → (2) disable wireless → (3) confirm that wireless is gone → (4) enable the screen and camera |
 
-**原則**: 「無線ドライバを入れない」「無線を無効化する」「無線が無いことを起動時に確認する」の 3 段で運用する。
-無効化していてもチップは基板上に存在するため、`docs/05-threat-model.md` の残存リスクに記載すること。
+**Principle**: operate in three stages — "do not install wireless drivers", "disable wireless", and "confirm at boot that there is no wireless".
+Even when disabled, the chip still exists on the board, so this must be recorded in the residual risks of `docs/05-threat-model.md`.
 
 ---
 
-## 1. OS イメージの作成
+## 1. Creating the OS image
 
-1. [Raspberry Pi Imager](https://www.raspberrypi.com/software/) で **Raspberry Pi OS Lite (64-bit, Bookworm 以降)**
-   を microSD に書き込む
-2. Imager の詳細設定では **Wi-Fi を設定しない**（SSH も必要なときだけ有効にする）
-3. 書き込み後、`/boot/firmware/config.txt` を編集して無線を無効化する
+1. Use [Raspberry Pi Imager](https://www.raspberrypi.com/software/) to write **Raspberry Pi OS Lite (64-bit, Bookworm or later)** to a microSD card
+2. In Imager's advanced settings, **do not configure Wi-Fi** (enable SSH only when you need it)
+3. After writing, edit `/boot/firmware/config.txt` to disable wireless
 
 ```
-# ---- 無線の無効化 ----
+# ---- Disabling wireless ----
 dtoverlay=disable-wifi
 dtoverlay=disable-bt
 
-# ---- 画面（Waveshare 1.3inch LCD HAT: ST7789 240x240, SPI）----
+# ---- Screen (Waveshare 1.3inch LCD HAT: ST7789 240x240, SPI) ----
 dtparam=spi=on
 
-# ---- カメラ（Bookworm 以降は libcamera スタック）----
+# ---- Camera (Bookworm and later use the libcamera stack) ----
 camera_auto_detect=1
 ```
 
-4. 起動後、サービスも止める（Bookworm）
+4. After boot, stop the services too (Bookworm)
 
 ```bash
 sudo systemctl disable --now wpa_supplicant bluetooth hciuart 2>/dev/null || true
@@ -50,86 +48,85 @@ sudo rfkill block all 2>/dev/null || true
 
 ---
 
-## 2. 無線が消えたことの確認（必須）
+## 2. Confirming that wireless is gone (mandatory)
 
-**「設定したつもり」を防ぐため、必ず実機で確認する。**
+**Always verify on the real device** so that "I thought I had disabled it" cannot happen.
 
 ```bash
-# 1) 無線インタフェースが存在しないこと
-ip link show | grep -E "wlan|wlp" && echo "NG: 無線が残っている" || echo "OK: 無線インタフェースなし"
+# 1) No wireless interface exists
+ip link show | grep -E "wlan|wlp" && echo "NG: wireless still present" || echo "OK: no wireless interface"
 
-# 2) rfkill で blocked になっていること
+# 2) rfkill reports it as blocked
 rfkill list
 
-# 3) 無線ドライバが読み込まれていないこと
-lsmod | grep -E "brcmfmac|bluetooth" && echo "NG: ドライバがロードされている" || echo "OK: ドライバなし"
+# 3) The wireless driver is not loaded
+lsmod | grep -E "brcmfmac|bluetooth" && echo "NG: driver is loaded" || echo "OK: no driver"
 
-# 4) Bluetooth サービスが動いていないこと
-systemctl is-active bluetooth 2>/dev/null || echo "OK: bluetooth 停止"
+# 4) The Bluetooth service is not running
+systemctl is-active bluetooth 2>/dev/null || echo "OK: bluetooth stopped"
 ```
 
-**さらに徹底する場合（任意・非可逆）**: 基板上の無線モジュール周辺のアンテナパターンを物理的に切除する。
-ただし基板を破損するリスクがあるため、まずは上記 4 点の確認で運用し、
-「物理的に無線チップが載っている」事実を残存リスクとして明記する方を推奨する。
+**To go further (optional, irreversible)**: physically cut away the antenna pattern around the wireless module on the board.
+However, this risks damaging the board, so it is recommended to operate with the four checks above and to state explicitly, as a residual risk, the fact that "the wireless chip is physically present".
 
 ---
 
-## 3. 開発の流れ
+## 3. Development workflow
 
-### 3.1 Mac 側（テストと実装）
+### 3.1 On the Mac (tests and implementation)
 
 ```bash
 cd firmware
-zig build test          # 公式テストベクタを含む全テスト
+zig build test          # all tests, including the official test vectors
 ```
 
-Zig は **クロスコンパイル** が可能なので、aarch64 用のバイナリも Mac 上で作れる。
-ただし libsecp256k1 はターゲット用のライブラリが必要なため、現実的には次のどちらか。
+Zig can **cross-compile**, so aarch64 binaries can also be produced on the Mac.
+However, libsecp256k1 needs a library built for the target, so in practice it is one of the following two.
 
-| 方法 | 長所 | 短所 |
+| Method | Pros | Cons |
 |---|---|---|
-| **Pi 上でネイティブビルド**（推奨） | 依存の解決が単純（`apt install libsecp256k1-dev`） | Zero 2 W でもビルドに時間がかかる |
-| Mac からクロスコンパイル | 速い | aarch64 用 libsecp256k1 を別途ビルドして `linkSystemLibrary` に渡す必要がある |
+| **Native build on the Pi** (recommended) | Dependencies are simple to resolve (`apt install libsecp256k1-dev`) | Builds take a long time even on the Zero 2 W |
+| Cross-compile from the Mac | Fast | An aarch64 libsecp256k1 must be built separately and passed to `linkSystemLibrary` |
 
-### 3.2 Pi 側
+### 3.2 On the Pi
 
 ```bash
-# Zig（aarch64-linux）— 公式サイトの tarball を展開して PATH を通す
+# Zig (aarch64-linux) — unpack the tarball from the official site and add it to PATH
 curl -fsSLO https://ziglang.org/download/0.17.0/zig-linux-aarch64-0.17.0.tar.xz
 tar -xf zig-linux-aarch64-0.17.0.tar.xz
 export PATH="$PWD/zig-linux-aarch64-0.17.0:$PATH"
 
-# libsecp256k1（Debian/Ubuntu 系）
+# libsecp256k1 (Debian/Ubuntu family)
 sudo apt update && sudo apt install -y libsecp256k1-dev pkg-config build-essential
 
-# ビルドとテスト
+# Build and test
 cd firmware && zig build test
 ```
 
-> `pkg-config` が見つからない場合は `PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig` を設定する。
+> If `pkg-config` cannot be found, set `PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig`.
 
 ---
 
-## 4. 画面とカメラの確認
+## 4. Checking the screen and camera
 
-| 項目 | 確認方法 |
+| Item | How to check |
 |---|---|
-| SPI 有効化 | `ls /dev/spidev*` にデバイスがあること |
-| LCD 表示 | テストパターンを描画し、240×240 で表示されること |
-| ジョイスティック / 3 ボタン | GPIO 入力の変化を確認（Waveshare LCD HAT は GPIO に接続） |
-| カメラ | `libcamera-still -o test.jpg` で撮影できること |
-| カメラで QR 読取 | SeedQR（`docs/04-chain-support.md` §2.3）を読み取れること |
+| SPI enabled | A device exists under `ls /dev/spidev*` |
+| LCD display | Draw a test pattern and confirm that it appears at 240×240 |
+| Joystick / 3 buttons | Confirm that GPIO inputs change (the Waveshare LCD HAT is connected to GPIO) |
+| Camera | `libcamera-still -o test.jpg` can take a picture |
+| QR reading with the camera | A SeedQR (`docs/04-chain-support.md` §2.3) can be read |
 
-> LCD HAT の ST7789 用 device tree overlay は **未整備**。v0.1 の実装課題として
-> `docs/06-roadmap.md` の M0 に含める（SeedSigner OS の overlay 実装が参考になる）。
+> The device tree overlay for the LCD HAT's ST7789 is **not yet prepared**. It is included in M0 of
+> `docs/06-roadmap.md` as a v0.1 implementation task (the overlay implementation in SeedSigner OS is a useful reference).
 
 ---
 
-## 5. 運用チェックリスト（実機を使う前に）
+## 5. Operational checklist (before using the device)
 
-- [ ] `ip link` に無線インタフェースが無い
-- [ ] `lsmod` に `brcmfmac` / `bluetooth` が無い
-- [ ] microSD は起動後に抜く（署名フローが SD なしで完結すること）
-- [ ] 使い終わったら電源を切る（RAM 上の seed を消す）
-- [ ] テストネット（Signet / Sepolia）で一度フルに送金を試す
-- [ ] 実資金は少額から。マルチシグ構成を基本にする
+- [ ] There is no wireless interface in `ip link`
+- [ ] There is no `brcmfmac` / `bluetooth` in `lsmod`
+- [ ] Remove the microSD card after boot (the signing flow must complete without an SD card)
+- [ ] Power off when finished (to erase the seed from RAM)
+- [ ] Try a full send on a test network (Signet / Sepolia) once
+- [ ] Start with small amounts of real funds. Make multisig the default configuration

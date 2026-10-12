@@ -1,217 +1,218 @@
-# 03. ハードウェア BOM と組立
+# 03. Hardware BOM and Assembly
 
-- **対象バージョン**: v0.1
-- **最終更新**: 2026-10-12
-- **方針**: 半田付け不要。既成部品を載せるだけ。
+- **Target version**: v0.1
+- **Last updated**: 2026-10-12
+- **Policy**: No soldering. Just seat off-the-shelf parts.
 
 ---
 
-## 1. BOM（標準構成）
+## 1. BOM (standard configuration)
 
-| # | 部品 | 仕様・型番 | 概算 | 調達先の例 |
+| # | Part | Spec / model number | Approx. cost | Example source |
 |---|---|---|---|---|
-| 1 | SBC | **Raspberry Pi Zero 2 WH（ヘッダ実装済み）** | ¥3,500〜4,400 | スイッチサイエンス、千石電商、Amazon |
-| 2 | ディスプレイ HAT | **Waveshare 1.3inch LCD HAT**（240×240, ST7789, ジョイスティック＋3ボタン, SKU:14972） | $13.99 | Waveshare 直販、Amazon |
-| 3 | カメラ | OV5647 5MP（**Pi Zero 用 22pin FPC 付き**のもの。Aokin / AuviPal 等） | ¥1,000〜1,800 | Amazon |
-| 4 | microSD | 8〜32GB（A1 以上、相性あり） | ¥800 | 家電量販店 |
-| 5 | 電源 | **搭載しない（外部給電）**。USB 給電ケーブル＋手持ちの電源（PC / モバイルバッテリー / 乾電池ボックス） | ¥0〜3,000 | — |
-| 6 | GPIO ハンマーヘッダ | 2×20（半田付け不要でピンを立てる） | ¥800 | 秋月、Amazon |
-| 7 | 筐体 | 3D プリント（**自前の OpenSCAD**。[hardware/enclosure](../hardware/enclosure/README.md)。SeedSigner のケースは寸法の参考） | ¥0〜1,500 | 自前 or プリントサービス |
-| 8 | microSD ライタ | USB カードリーダ（PC 側） | ¥800 | — |
+| 1 | SBC | **Raspberry Pi Zero 2 WH (header pre-installed)** | ¥3,500–4,400 | スイッチサイエンス (Switch Science), 千石電商 (Sengoku Denshi), Amazon |
+| 2 | Display HAT | **Waveshare 1.3inch LCD HAT** (240×240, ST7789, joystick + 3 buttons, SKU:14972) | $13.99 | Waveshare direct, Amazon |
+| 3 | Camera | OV5647 5MP (**the version with the 22-pin FPC for Pi Zero**; Aokin / AuviPal, etc.) | ¥1,000–1,800 | Amazon |
+| 4 | microSD | 8–32GB (A1 or better; compatibility varies) | ¥800 | Consumer electronics retailer |
+| 5 | Power | **Not onboard (external power)**. USB power cable + a power source you already own (PC / mobile battery pack / dry-cell box) | ¥0–3,000 | — |
+| 6 | GPIO hammer header | 2×20 (pushes pins into place without soldering) | ¥800 | 秋月電子 (Akizuki Denshi), Amazon |
+| 7 | Enclosure | 3D printed (**our own OpenSCAD**; see [hardware/enclosure](../hardware/enclosure/README.md). The SeedSigner case is a dimensional reference) | ¥0–1,500 | Self-made or a print service |
+| 8 | microSD writer | USB card reader (on the PC side) | ¥800 | — |
 
-**合計目安: ¥8,000〜13,000（筐体を外注する場合は +¥3,000 程度）**
+**Estimated total: ¥8,000–13,000 (about USD 55–90); add roughly ¥3,000 if the enclosure is outsourced**
 
-## 2. 選定理由と注意点
+## 2. Selection rationale and caveats
 
-### 2.1 どの SBC を選ぶか（2026-10 時点の判断）
+### 2.1 Which SBC to choose (as of 2026-10)
 
-**結論: Raspberry Pi Zero 2 WH（ヘッダ実装済み）を標準構成とする。**
+**Conclusion: the standard configuration is the Raspberry Pi Zero 2 WH (header pre-installed).**
 
-当初は「無線を持たない Pi Zero 1.3」を第一候補としていたが、実際に組む立場から 2 つの障害が出た。
+The first candidate was originally the wireless-free Pi Zero 1.3, but two obstacles appeared from the standpoint of actually building the device.
 
-1. **Pi Zero 1.3 は在庫が少ない**（無線なしモデルは流通量が少なく、日本では入手が不安定）
-2. **40pin ピンヘッダの取り付けが必要**（ハンマーヘッダで半田付けは避けられるが、圧入の確実性に不安が残る）
+1. **The Pi Zero 1.3 is rarely in stock** (the model without wireless ships in small volumes and is hard to obtain reliably in Japan)
+2. **The 40-pin pin header has to be attached** (a hammer header avoids soldering, but doubts remain about how reliable the press-fit is)
 
-Pi Zero 2 WH は**工場でヘッダが実装済み**のモデルで、この 2 つを同時に解決する。国内の正規代理店・量販店で入手でき、Waveshare の LCD HAT をそのまま差し込める。カメラも Zero 共通の 22pin ケーブルで繋がるため、**半田付けも配線も不要**である（SeedSigner の筐体 STL もこの構成を前提にしている）。
+The Pi Zero 2 WH is a model whose **header is installed at the factory**, which solves both problems at once. It is available from authorized domestic distributors and mass-market retailers, and the Waveshare LCD HAT plugs straight in. The camera also connects with the 22-pin cable shared by the Zero family, so **neither soldering nor wiring is required** (the SeedSigner enclosure STL also assumes this configuration).
 
-代償は「無線チップが物理的に存在すること」。運用上は (a) OS イメージから無線ドライバを外す、(b) device tree で無効化、(c) rfkill で確認、の 3 点で無効化し（手順は [07-zero2w-setup.md](07-zero2w-setup.md)）、**ハードウェアとしては存在する**ことを脅威モデルの残存リスクとして明記する（[05-threat-model.md](05-threat-model.md)）。
+The price is that **the wireless chip physically exists**. In operation it is disabled in three ways — (a) remove the wireless drivers from the OS image, (b) disable it in the device tree, (c) verify with rfkill (procedure in [07-zero2w-setup.md](07-zero2w-setup.md)) — and the fact that it **exists as hardware** is stated explicitly as a residual risk in the threat model ([05-threat-model.md](05-threat-model.md)).
 
-無線を物理的にも排除したい場合だけ、次の順で検討する。
+Only if you want to eliminate wireless physically as well should you consider the following, in order.
 
-1. **Pi Zero 1.3**（無線なし）が入手できたとき
-2. **Pi Zero 2 W + ハンマーヘッダ**（圧入。半田付けは不要だが、確実性は自己責任）
-3. それでも無線を避けたい場合は下の代替候補（ただし移植の手間が増える）
+1. When a **Pi Zero 1.3** (no wireless) can be obtained
+2. **Pi Zero 2 W + hammer header** (press-fit. No soldering, but the reliability is your own responsibility)
+3. If you still want to avoid wireless, the alternatives below (at the cost of more porting work)
 
-| | Pi Zero 2 WH（推奨） | Pi Zero 1.3 | Pi Zero 2 W |
+| | Pi Zero 2 WH (recommended) | Pi Zero 1.3 | Pi Zero 2 W |
 |---|---|---|---|
-| ヘッダ | **実装済み** | 自分で取り付け | 自分で取り付け |
-| 無線 | あり（無効化手順あり） | **なし** | あり（無効化手順あり） |
-| 入手性 | 良い（国内代理店・量販店） | **悪い** | 良い |
-| 起動時間 | 短い | 最大 60 秒程度 | 短い |
-| 価格 | ¥3,500〜4,400 | ¥2,500〜3,500 | ¥3,000〜3,800 |
+| Header | **Pre-installed** | You install it | You install it |
+| Wireless | Yes (procedure to disable it) | **None** | Yes (procedure to disable it) |
+| Availability | Good (domestic distributors, retailers) | **Poor** | Good |
+| Boot time | Short | Up to about 60 seconds | Short |
+| Price | ¥3,500–4,400 | ¥2,500–3,500 | ¥3,000–3,800 |
 
-### 2.2 代替候補（ゼロ 1.3 が入手できない場合の選択肢）
+### 2.2 Alternative candidates (options if the Zero 1.3 cannot be obtained)
 
-「半田付けなし」を絶対条件に、Linux が動く小型ボードを比較した結果が次表である。
-**現時点で本プロジェクトのファームウェア（Zig + libsecp256k1 + Linux の `std.Io`）がそのまま動くのは Raspberry Pi Zero 系だけ**である点に注意。
+With "no soldering" as an absolute requirement, the table below compares small boards that run Linux.
+Note that **at present, the only boards on which this project's firmware (Zig + libsecp256k1 + Linux `std.Io`) runs as-is are the Raspberry Pi Zero family**.
 
-| 候補 | 半田付け | 無線 | カメラ | 入手性 | 本ファームの適用 |
+| Candidate | Soldering | Wireless | Camera | Availability | Fit for this firmware |
 |---|---|---|---|---|---|
-| **Pi Zero 2 WH** | 不要 | あり（無効化可） | Pi カメラ（22pin） | 良い | **そのまま動く** |
-| Pi Zero 2 W + ハンマーヘッダ | 不要（圧入） | あり（無効化可） | 同上 | 良い | そのまま動く |
-| Pi Zero 1.3 | 必要（圧入で回避可） | なし | 同上 | 悪い | そのまま動く |
-| Banana Pi M2 Zero 等の互換ボード | SKU による | 機種による | コネクタが非互換の可能性 | 個人輸入が中心 | **要検証**（Linux イメージが非公式・コミュニティ製） |
-| **RP2350-PiZero + 1.3" LCD HAT**（v0.2 本命） | **不要**（40pin 実装済み） | **なし**（RP2350 は無線なし） | なし（microSD で受け渡し） | 良い（スイッチサイエンス等） | **移植が必要**（コアのコンパイルは実測済み）→ [08-rp2350-pizero.md](08-rp2350-pizero.md) |
-| Pico 2 H + Pico-LCD-1.3 | **不要**（H 型番はヘッダ実装済み） | **なし**（Pico 2 は無線なし） | SPI カメラが必要（後述の弱点） | 良い（国内代理店） | **移植が必要**（ただしコアのコンパイルは実測済み） |
-| Luckfox Pico（RV1106） | ヘッダ未実装の型番あり | なし | 専用モジュール（同梱の型番あり） | 秋葉原等で入手可 | **移植が必要**（別 SoC・LCD 配線も必要） |
-| 一体型（M5Stack 等の Krux 系ハード） | 不要 | 機種による | 内蔵の機種あり | 良い | **動かない**（Linux ではないため、ファームを別物にする必要） |
+| **Pi Zero 2 WH** | Not needed | Yes (can be disabled) | Pi camera (22-pin) | Good | **Runs as-is** |
+| Pi Zero 2 W + hammer header | Not needed (press-fit) | Yes (can be disabled) | Same as above | Good | Runs as-is |
+| Pi Zero 1.3 | Needed (can be avoided with press-fit) | None | Same as above | Poor | Runs as-is |
+| Compatible boards such as the Banana Pi M2 Zero | Depends on SKU | Depends on model | Connector may be incompatible | Mostly personal imports | **Needs verification** (Linux images are unofficial / community-built) |
+| **RP2350-PiZero + 1.3" LCD HAT** (main v0.2 target) | **Not needed** (40-pin header pre-installed) | **None** (the RP2350 has no wireless) | None (exchange via microSD) | Good (Switch Science, etc.) | **Port required** (core compilation already measured) → [08-rp2350-pizero.md](08-rp2350-pizero.md) |
+| Pico 2 H + Pico-LCD-1.3 | **Not needed** ("H" models ship with the header installed) | **None** (the Pico 2 has no wireless) | SPI camera required (weakness described below) | Good (domestic distributors) | **Port required** (though core compilation has already been measured) |
+| Luckfox Pico (RV1106) | Some SKUs ship without a header | None | Dedicated module (some SKUs include one) | Available in Akihabara and elsewhere | **Port required** (different SoC; LCD wiring also needed) |
+| All-in-one units (Krux-family hardware such as M5Stack) | Not needed | Depends on model | Some models have one built in | Good | **Will not run** (not Linux, so the firmware would have to be a separate implementation) |
 
-**筐体について**: SeedSigner のケースは**画面と基板の寸法は同じ**だが、**ポートの穴が合わない**
-（RP2350-PiZero は手前の長辺に mini HDMI ＋ USB-C ×2、microSD は左の短辺、右の短辺に BAT、四隅に Φ3.00 の取付穴、BOOT/RUN ボタンあり、カメラは積まない）。
-そのため自前のパラメトリックな OpenSCAD を用意し、**レンダリングで外形と構造を確認済み**
-（穴の位置だけ実機で実測して確定する。[hardware/enclosure](../hardware/enclosure/README.md)）。
+**About the enclosure**: the SeedSigner case has **the same screen and board dimensions**, but **the port cut-outs do not line up**
+(on the RP2350-PiZero: mini HDMI + 2× USB-C on the front long edge, microSD on the left short edge, BAT on the right short edge, Φ3.00 mounting holes in the four corners, BOOT/RUN buttons, and no camera is fitted).
+We therefore provide our own parametric OpenSCAD, and **have verified the external shape and structure by rendering**
+(only the hole positions remain to be fixed by measuring the real hardware; [hardware/enclosure](../hardware/enclosure/README.md)).
 
-![筐体のプレビュー](images/case-preview.png)
+![Enclosure preview](images/case-preview.png)
 
-**一体型（画面・ボタン・カメラが最初から入った機器）は「普及」の観点では最有力**だが、
-Linux が動かないため本リポジトリの Zig ファームウェアはそのままでは動かない
-（ESP32-S3 などは現行の Zig が公式に対応していない）。採用するなら**別系統のファームウェア**として
-設計し直すことになり、既存の実装（PSBT・署名・UR 転送）はライブラリとして流用できるが、
-HAL・画面・カメラはすべて書き直しになる。この判断は「v0.2 の検討課題」として
-[06-roadmap.md](06-roadmap.md) に置いてある。
+**All-in-one units (devices with the screen, buttons and camera built in from the start) are the strongest option from the standpoint of "widespread adoption"**, but
+because they do not run Linux, this repository's Zig firmware will not run on them as-is
+(current Zig has no official support for the ESP32-S3 and similar parts). Adopting one would mean
+redesigning the firmware as a **separate line**; the existing implementation (PSBT, signing, UR transport)
+could be reused as a library, but the HAL, display and camera would all have to be rewritten.
+This decision is recorded in [06-roadmap.md](06-roadmap.md) as an open question for v0.2.
 
-出典（2026-10 時点で確認）:
-- Raspberry Pi Zero 2 WH の国内取り扱い: [スイッチサイエンス](https://www.switch-science.com/products/9812)、[千石電商](https://www.sengoku.co.jp/mod/sgk_cart/detail.php?code=EEHD-6JRZ)、[Amazon.co.jp](https://www.amazon.co.jp/dp/B0DB2JBD9C)（「はんだ付け済みヘッダー付き」）
-- Banana Pi BPI-ZERO の Linux イメージが非公式である例: [bananapi-zero-ubuntu-base-minimal（コミュニティ製）](https://github.com/avafinger/bananapi-zero-ubuntu-base-minimal)
-- Luckfox Pico の国内入荷と「ヘッダなし」型番の例: [エルミタージュ秋葉原](https://www.gdm.or.jp/crew/2024/0729/548831)、[千石電商（Luckfox Pico Ultra）](https://www.sengoku.co.jp/mod/sgk_cart/detail.php?code=EEHD-6ERY)
+Sources (checked as of 2026-10):
+- Domestic availability of the Raspberry Pi Zero 2 WH: [スイッチサイエンス (Switch Science)](https://www.switch-science.com/products/9812), [千石電商 (Sengoku Denshi)](https://www.sengoku.co.jp/mod/sgk_cart/detail.php?code=EEHD-6JRZ), [Amazon.co.jp](https://www.amazon.co.jp/dp/B0DB2JBD9C) ("header already soldered on")
+- Example of an unofficial Linux image for the Banana Pi BPI-ZERO: [bananapi-zero-ubuntu-base-minimal (community-built)](https://github.com/avafinger/bananapi-zero-ubuntu-base-minimal)
+- Domestic stock of the Luckfox Pico and an example of a "no header" SKU: [エルミタージュ秋葉原 (Hermitage Akihabara)](https://www.gdm.or.jp/crew/2024/0729/548831), [千石電商 (Sengoku Denshi; Luckfox Pico Ultra)](https://www.sengoku.co.jp/mod/sgk_cart/detail.php?code=EEHD-6ERY)
 
-### 2.3 Pico 系（RP2040 / RP2350）の検討結果
+### 2.3 Findings for the Pico family (RP2040 / RP2350)
 
-**魅力的な点**: Pico 系は「普及」の条件を最もよく満たす。
+**Attractive points**: the Pico family best satisfies the conditions for "widespread adoption".
 
-- **半田付け不要** — Pico H / **Pico 2 H** はヘッダ実装済みの型番がある（[スイッチサイエンス](https://www.switch-science.com/products/10257)）
-- **無線なしモデルが標準** — Pico 2（W なし）は Wi-Fi/BT を搭載しない。Zero 2 WH の「無線チップが存在する」という残存リスクが消える
-- **即起動・低消費電力** — Linux ではないため起動が一瞬。電池持ちも良い
-- **安価** — Pico 2 H（¥1,000 前後）+ [Waveshare Pico-LCD-1.3](https://www.waveshare.com/pico-lcd-1.3.htm)（$7.99, 240×240, SPI, ジョイスティック/ボタン付き）
-- **Zig が公式対応** — Cortex-M0+（RP2040）と Cortex-M33（RP2350）はどちらも現行の Zig が対象にできる（ESP32-S3 の Xtensa は非対応）
+- **No soldering** — the Pico H / **Pico 2 H** come in versions with the header pre-installed ([スイッチサイエンス (Switch Science)](https://www.switch-science.com/products/10257))
+- **A wireless-free model is standard** — the Pico 2 (non-W) has no Wi-Fi/BT. The residual risk that the Zero 2 WH carries — "the wireless chip exists" — disappears
+- **Instant boot, low power consumption** — it is not Linux, so it boots in an instant. Battery life is good too
+- **Inexpensive** — Pico 2 H (around ¥1,000) + [Waveshare Pico-LCD-1.3](https://www.waveshare.com/pico-lcd-1.3.htm) ($7.99, 240×240, SPI, with joystick/buttons)
+- **Officially supported by Zig** — current Zig can target both Cortex-M0+ (RP2040) and Cortex-M33 (RP2350) (the ESP32-S3's Xtensa is not supported)
 
-**制約**:
+**Constraints**:
 
-- **Linux ではない** — HAL（LCD・ボタン・SD・乱数）を書き直す必要がある。ロジック（BIP39/32・PSBT・署名・EVM・UR）はそのまま使える
-- **カメラが最大の弱点** — RP2040/RP2350 に CSI は無い。SPI カメラ（ArduCAM 等）を PIO で読む事例はあるが、**QR のデコードはマイコンでは重い**。現実的な回避策は (a) QR は表示のみ、(b) PSBT の受け渡しを microSD 経由にする、の 2 つ
+- **It is not Linux** — the HAL (LCD, buttons, SD, randomness) has to be rewritten. The logic (BIP39/32, PSBT, signing, EVM, UR) can be used as-is
+- **The camera is the biggest weakness** — the RP2040/RP2350 has no CSI. There are examples of reading an SPI camera (ArduCAM, etc.) through PIO, but **QR decoding is heavy for a microcontroller**. The two realistic workarounds are (a) display-only QR, and (b) exchanging PSBTs over microSD
 
-**実測した事実**（2026-10-12、本リポジトリのコードで実行。再現手順は下記）:
+**Measured facts** (2026-10-12, run against this repository's code; reproduction steps below):
 
-| 確かめたこと | 結果 |
+| What was checked | Result |
 |---|---|
-| コア（BIP39/32・アドレス生成・PSBT 解析・署名経路・EVM 解析・UR）のコンパイル | **RP2040（Cortex-M0+）と RP2350（Cortex-M33）の両方で成功**（各約 64KB、`-OReleaseSmall`） |
-| 未定義シンボル | `secp256k1_*` と compiler-rt（`__aeabi_*`）のみ。後者は Zig が供給する |
-| **libsecp256k1 0.6.0 のビルド** | **両ターゲットで成功**（`zig cc`。最小の libc シムを使用。実移植では picolibc/newlib を使い、`-DNDEBUG` で stdio 依存を消す） |
-| 署名速度 | **未検証**。M0+ 133MHz では 1 署名に数百 ms かかる可能性があり、実測が必要 |
+| Compilation of the core (BIP39/32, address generation, PSBT parsing, signing path, EVM parsing, UR) | **Succeeds for both the RP2040 (Cortex-M0+) and the RP2350 (Cortex-M33)** (about 64KB each, `-OReleaseSmall`) |
+| Undefined symbols | Only `secp256k1_*` and compiler-rt (`__aeabi_*`). Zig supplies the latter |
+| **Building libsecp256k1 0.6.0** | **Succeeds for both targets** (`zig cc`, using a minimal libc shim. A real port would use picolibc/newlib and remove the stdio dependency with `-DNDEBUG`) |
+| Signing speed | **Not verified**. On an M0+ at 133MHz a single signature may take hundreds of ms; measurement is required |
 
 ```bash
-# コアのコンパイル確認（リポジトリのルートで）
+# Check that the core compiles (from the repository root)
 cd firmware
-zig build pico     # RP2040 と RP2350 の両方をまとめて確認する
-# 個別にやる場合:
+zig build pico     # checks both RP2040 and RP2350 together
+# To do them individually:
 zig build-obj pico_smoke.zig -target thumb-freestanding -mcpu=cortex_m0plus -OReleaseSmall
 zig build-obj pico_smoke.zig -target thumb-freestanding -mcpu=cortex_m33 -OReleaseSmall
 
-# libsecp256k1 のビルド確認（picolibc 相当の最小ヘッダを用意して）
+# Check that libsecp256k1 builds (with minimal picolibc-equivalent headers in place)
 zig cc -target thumb-freestanding -mcpu=cortex_m0plus -O2 -DHAVE_CONFIG_H -Icompat -I. -Isrc -c src/secp256k1.c
 ```
 
-**結論**: **v0.1 は Zero 2 WH（今の実装がそのまま動く）で完成させ、v0.2 の本命候補として Pico 2 H を位置づける**。
-Pico へ移る場合は「HAL の書き直し + カメラ/QR の方式決定 + 署名速度の実測」が作業の中心になる。
+**Conclusion**: **v0.1 is completed on the Zero 2 WH (the current implementation runs as-is), and the main v0.2 candidate is the RP2350-PiZero** (§2.2, [08-rp2350-pizero.md](08-rp2350-pizero.md)).
+Moving to an RP2350 board makes "rewriting the HAL + deciding how to handle camera/QR + measuring signing speed" the core of the work.
 
-### 2.4 ディスプレイの選択
+### 2.4 Display choice
 
-| 案 | サイズ | 利点 | 欠点 |
+| Option | Size | Pros | Cons |
 |---|---|---|---|
-| A: Waveshare 1.3" LCD HAT（**既定**） | 1.3" / 240×240 | Zero の 40pin に直差し。SeedSigner の実績・筐体 STL がそのまま使える | EVM の calldata 表示はページ送りが必須 |
-| B: 2.4〜3.5" SPI パネル（ILI9341 / ST7789） | 2.4〜3.5" | アドレス・金額の一覧性が高い | HAT 形状ではないためジャンパ線配線＋筐体は自作 STL |
-| C: 1.3" HAT + ホスト側での確認 | — | 実装が最小 | ホストを信頼することになるため原則 2 に反する（非推奨） |
+| A: Waveshare 1.3" LCD HAT (**default**) | 1.3" / 240×240 | Plugs directly into the Zero's 40-pin header. SeedSigner's track record and enclosure STL can be used as-is | Displaying EVM calldata requires paging |
+| B: 2.4–3.5" SPI panel (ILI9341 / ST7789) | 2.4–3.5" | Addresses and amounts are easier to take in at a glance | Not a HAT form factor, so jumper wiring is needed and the enclosure STL must be custom |
+| C: 1.3" HAT + confirmation on the host side | — | Minimal implementation | Requires trusting the host, which violates principle 2 (not recommended) |
 
-まず A で実装し、UX が苦しければ B へ移行する。配線はメス-メスジャンパで可能なため、B でも半田付けは不要。
+Implement with A first, and move to B if the UX proves painful. Female-to-female jumpers can do the wiring, so B also requires no soldering.
 
-### 2.5 カメラ
+### 2.5 Camera
 
-- QR 読み取りと画像エントロピー生成に使用する。
-- **Pi Zero シリーズは 22pin 0.5mm の CSI コネクタ**であり、一般的な 15pin リボンは使えない。購入時に「Pi Zero 用ケーブル付き」を選ぶこと。
-- カメラモジュールは基板内蔵フラッシュ等を持ち得るため、信頼できる販売元から購入し、到着後に外観を目視確認する。
+- Used for QR reading and for generating entropy from images.
+- **The Pi Zero series has a 22-pin 0.5mm CSI connector**, so the common 15-pin ribbon cannot be used. When buying, choose one that comes with "a cable for Pi Zero".
+- A camera module can contain onboard flash and similar parts, so buy from a trustworthy seller and visually inspect the board when it arrives.
 
-### 2.6 GPIO ヘッダ
+### 2.6 GPIO header
 
-**Pi Zero 2 WH はヘッダが実装済みなので、この工程自体が不要**（差し込むだけ）。
-Pi Zero 2 W / 1.3 を使う場合のみ、次のいずれかが必要になる。
+**The Pi Zero 2 WH comes with the header pre-installed, so this step itself is unnecessary** (just plug it in).
+Only when using a Pi Zero 2 W / 1.3 does one of the following become necessary.
 
-- **ハンマーヘッダ**（打ち込み式）: 半田付け不要。圧入が不安な場合は導通をテスタで確認する
-- **半田付け**: 確実だが、工具と技量が要る（本プロジェクトでは推奨しない）
+- **Hammer header** (press-in): no soldering. If the press-fit worries you, check continuity with a multimeter
+- **Soldering**: reliable, but requires tools and skill (not recommended by this project)
 
 
-### 2.7 電源の選択肢（乾電池 / LiPo / USB）
+### 2.7 Power options (dry cells / LiPo / USB)
 
-**採用（2026-10-12 決定）: 本体に電池を搭載せず、USB からの外部給電とする。**
+**Adopted (decided 2026-10-12): no battery in the device; power is supplied externally over USB.**
 
-| | **外部給電（採用）** | 乾電池（本体に持つ） | LiPo（基板のコネクタ） |
+| | **External power (adopted)** | Dry cells (carried in the device) | LiPo (board connector) |
 |---|---|---|---|
-| 本体の大きさ | **最小** | 大（単3×4 で約 70×65×20mm） | 小（薄型なら基板裏） |
-| 長期保管（数年〜十年） | **最強**（電池が無いので劣化しない） | 強い（リチウム単3で 20 年） | **弱い**（2〜3 年で劣化・膨張） |
-| 充電・交換 | **不要** | 交換のみ | 充電が必要 |
-| 液漏れ・発火 | **無い** | 液漏れ注意（リチウムならほぼ無い） | 発火・膨張リスク |
-| その場で使えるか | 電源が要る（PC / モバイルバッテリー / 乾電池ボックス） | **どこでも** | 充電があれば |
-| 残量表示 | **不要**（問題自体が消える） | 測れない（分圧抵抗が必要） | 測れる |
-| 部品点数・費用 | **最小** | 中 | 中 |
+| Device size | **Smallest** | Large (about 70×65×20mm with 4× AA cells) | Small (a thin cell fits behind the board) |
+| Long-term storage (years to a decade) | **Best** (no battery, so nothing degrades) | Good (20 years with lithium AA cells) | **Poor** (degrades and swells in 2–3 years) |
+| Charging / replacement | **Not needed** | Replacement only | Charging required |
+| Leakage / fire | **None** | Beware of leakage (almost none with lithium) | Risk of fire and swelling |
+| Usable on the spot | Needs a power source (PC / mobile battery pack / dry-cell box) | **Anywhere** | If charged |
+| Remaining-charge indicator | **Not needed** (the problem itself disappears) | Cannot be measured (needs a voltage-divider resistor) | Can be measured |
+| Part count / cost | **Smallest** | Medium | Medium |
 
-**なぜ外部給電がこの用途に向くか**: ハードウェアウォレットは**年に数回しか使わない**。
-そのために本体へ電池を積むと、使わない間に劣化・膨張・液漏れを起こす。
-「使うときだけ挿す」ほうが、**長期保管の信頼性が高い**。
+**Why external power suits this use case**: a hardware wallet is used **only a few times a year**.
+Carrying a battery in the device for that reason means it degrades, swells and leaks while sitting unused.
+"Plug it in only when you use it" gives **higher long-term storage reliability**.
 
-**注意点**:
+**Caveats**:
 
-1. **電源断が「普通の電源の切り方」になる** — 署名の原子性（最後まで通すか何も残さないか）が
-   いっそう重要になる。microSD の `OUT.TMP` → `OUT.PSBT` のリネーム方式（[08](08-rp2350-pizero.md) の 7b 節）
-   と、署名結果を書き出す前に電源が落ちても有効な署名が残らない設計で担保する
-2. **USB 給電はデータ線を繋がない形にする** — 給電専用ケーブル、またはモバイルバッテリー /
-   乾電池ボックス（データ線が無い）を使う。エアギャップを保つため（[05](05-threat-model.md) の 4-8 節）
-3. 電源が無い場所（災害時など）では使えない → **乾電池ボックスを持ち歩けば解決**（本体には載せない）
-4. 本体の LiPo コネクタは**使わない**（小型化したい人向けの任意改造として残す）
+1. **Cutting power becomes "the normal way to switch off"** — the atomicity of signing (either it goes through
+   to the end or nothing remains) becomes even more important. This is guaranteed by the microSD `OUT.TMP` → `OUT.PSBT`
+   rename scheme (section 7b of [08](08-rp2350-pizero.md)) and by a design in which no valid signature remains
+   even if power is lost before the signing result is written out
+2. **USB power should be supplied without the data lines connected** — use a power-only cable, or a mobile
+   battery pack / dry-cell box (which have no data lines). This preserves the air gap (section 4-8 of [05](05-threat-model.md))
+3. It cannot be used where there is no power source (during a disaster, for example) → **carrying a dry-cell box solves this** (do not build it into the device)
+4. The board's LiPo connector is **not used** (it is left available as an optional modification for people who want a smaller device)
 
-## 3. 組立手順（無半田・目標 45 分。Pi Zero 2 WH の場合）
+## 3. Assembly procedure (solder-free; target 45 minutes; for the Pi Zero 2 WH)
 
-1. **LCD HAT の装着** — 40pin に差し込む（1 分）
-2. **カメラの接続** — CSI コネクタのロックバーを上げ、FPC を接触面方向に注意して差し込み、ロック（5 分）
-3. **OS イメージの書込み** — リリースイメージを microSD に書き込み、ハッシュを検証（15 分）
-   （RP2350 構成では UF2 をコピーするだけ）
-4. **筐体の組立** — STL をプリントし、基板を固定（15 分）
-5. **起動確認** — 給電し、ロゴ表示とメニュー表示を確認（5 分）
-6. **自己テスト** — 画面・ジョイスティック・3 ボタン・カメラ・（任意で）QR 読取の動作確認
+1. **Fit the LCD HAT** — plug it into the 40-pin header (1 minute)
+2. **Connect the camera** — lift the lock bar on the CSI connector, insert the FPC taking care with the contact-side orientation, and lock it (5 minutes)
+3. **Write the OS image** — write the release image to the microSD card and verify the hash (15 minutes)
+   (with the RP2350 configuration you just copy a UF2)
+4. **Assemble the enclosure** — print the STL and secure the board (15 minutes)
+5. **Check that it boots** — apply power and confirm that the logo and menu appear (5 minutes)
+6. **Self-test** — check the screen, joystick, 3 buttons, camera and (optionally) QR reading
 
-（Pi Zero 2 W / 1.3 を使う場合は、最初に「ハンマーヘッダの圧入（10 分）」が加わる）
+(If you use a Pi Zero 2 W / 1.3, add "press-fitting the hammer header (10 minutes)" at the start)
 
-**重要**: 給電は必ず USB micro-B から行う。GPIO の 5V ピンと GND を逆接すると基板を破損する。
+**Important**: always supply power through USB micro-B. Reversing the GPIO 5V pin and GND will damage the board.
 
-## 4. 検証（組立後・使用前）
+## 4. Verification (after assembly, before use)
 
-| 項目 | 方法 |
+| Item | Method |
 |---|---|
-| イメージ真正性 | 配布ハッシュと PGP 署名を PC 側で検証してから SD に書く |
-| 画面・入力 | 全ボタンとジョイスティックの反応を確認 |
-| カメラ | テスト用 QR（SeedQR）を読み取れるか確認 |
-| 無線の不在 | OS に無線インタフェースが存在しないこと（`ip link`、`rfkill`）を確認 |
-| エアギャップ | 起動後に SD を抜いても署名フローが完結することを確認 |
+| Image authenticity | Verify the distributed hash and PGP signature on the PC before writing to the SD card |
+| Screen / input | Check that every button and the joystick respond |
+| Camera | Check that a test QR code (SeedQR) can be read |
+| Absence of wireless | Confirm that no wireless interface exists in the OS (`ip link`, `rfkill`) |
+| Air gap | Confirm that the signing flow completes even after removing the SD card following boot |
 
-## 5. 保守・運用
+## 5. Maintenance and operation
 
-- **ファーム更新**: SD カード経由。更新前に署名検証シーケンスを通す。
-- **バッテリー運用推奨**: 電源断＝メモリ消去であるため、モバイルバッテリーで運用すると「使い終わったら電源を切る」運用が自然に定着する。
-- **廃棄・譲渡**: seed を復元できる要素は残らない設計だが、使用済みの筐体・SD は再利用しない。
+- **Firmware updates**: via the SD card. Run the signature-verification sequence before updating.
+- **Running from a battery pack is recommended**: because cutting power means wiping memory, running from a mobile battery pack naturally establishes the habit of "switch off when you are done".
+- **Disposal / transfer**: the design leaves nothing from which the seed can be recovered, but do not reuse a used enclosure or SD card.
 
-## 6. 販売する場合の追加要件（参考）
+## 6. Additional requirements when selling (reference)
 
-本 BOM は**個人利用**を前提とする。頒布・販売する場合は以下が別途必要になる。
+This BOM assumes **personal use**. Distributing or selling the device requires the following in addition.
 
-- 無線を搭載する構成: 技適（技術基準適合証明）
-- AC アダプタを同梱する場合: PSE
-- 欧米向け: CE / FCC
-- 暗号機能の輸出管理（公開ソースであっても米国 EAR では届出要件が生じ得る）
+- A configuration with wireless: giteki certification (technical conformity certification)
+- If an AC adapter is included: PSE
+- For Europe and North America: CE / FCC
+- Export control of cryptographic functions (even with public source code, US EAR can impose notification requirements)

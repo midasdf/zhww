@@ -1,32 +1,32 @@
-# hardware/ — ハードウェア設計
+# hardware/ — hardware design
 
-## 現状
+## Current state
 
-v0.1 は **既成部品のみ**で構成するため、このディレクトリに基板設計は存在しない。部品表と組立手順は [../docs/03-hardware-bom.md](../docs/03-hardware-bom.md) を参照。
+v0.1 is built from **off-the-shelf parts only**, so there is no board design in this directory. See [../docs/03-hardware-bom.md](../docs/03-hardware-bom.md) for the parts list and assembly instructions.
 
 ```
 hardware/
-├── README.md        ← 本ファイル
-├── enclosure/       ← 筐体（OpenSCAD のパラメトリック設計。実機で穴位置を実測して確定する）
-└── pcb/             ← 独自基板（v0.2 以降。現状は空）
+├── README.md        ← this file
+├── enclosure/       ← enclosure (parametric OpenSCAD design. Hole positions to be confirmed by measuring real hardware)
+└── pcb/             ← custom PCB (v0.2 and later. Currently empty)
 ```
 
-## 方針
+## Policy
 
-| 項目 | 方針 |
+| Item | Policy |
 |---|---|
-| 基板 | v0.1 では作らない（既成部品を載せるだけ）。小型化する場合のみ KiCad で設計 |
-| 筐体 | **自前の OpenSCAD**（テキストで差分管理・再生成できる）。SeedSigner のケースは寸法の参考にとどめる（ポート穴が合わないため。詳細は [enclosure/README.md](enclosure/README.md)） |
-| EDA | KiCad（オープンソース、ファイルがテキストで差分管理可能） |
-| 公開物（基板を作る場合） | KiCad プロジェクト一式、Gerber / ドリル、BOM（LCSC / Mouser 型番）、インタラクティブ BOM、組立図 |
-| 筐体 | STL と STEP の両方を公開（STEP は改変しやすいため） |
-| 認証 | 独自基板を作る場合のみ **OSHWA 認証**（[certification.oshwa.org](https://certification.oshwa.org/)）を取得する |
-| ライセンス | 回路図・基板データ: CERN-OHL-S-2.0 / 筐体: CC-BY-SA-4.0 |
+| PCB | Not made for v0.1 (we only mount off-the-shelf parts). Design in KiCad only if we shrink it |
+| Enclosure | **Our own OpenSCAD** (text-based, so it can be version-controlled and regenerated). The SeedSigner case is only a reference for dimensions (the port cut-outs do not fit; see [enclosure/README.md](enclosure/README.md) for details) |
+| EDA | KiCad (open source; the files are text and can be version-controlled) |
+| Published artifacts (if a PCB is made) | The complete KiCad project, Gerber / drill files, BOM (LCSC / Mouser part numbers), interactive BOM, assembly drawing |
+| Enclosure | Publish both STL and STEP (STEP is easier to modify) |
+| Certification | Obtain **OSHWA certification** ([certification.oshwa.org](https://certification.oshwa.org/)) only if a custom PCB is made |
+| License | Schematics and board data: CERN-OHL-S-2.0 / enclosure: CC-BY-SA-4.0 |
 
-## 設計制約（組立容易性）
+## Design constraints (ease of assembly)
 
-1. **半田付けを要求しない。** 部品は既製モジュールを使い、接続はピンヘッダ・ハーネス・コネクタで行う
-2. **部品点数は 10 点以下**（消耗品・筐体を除く）
-3. **0.1" ピッチを維持する。** 微細ピッチや QFN の手実装を前提にしない
-4. 電源は USB 給電を基本とする（バッテリー運用は任意）
-5. 分解・再組立が可能であること（目視検査と筐体の封印運用のため）
+1. **No soldering required.** Use off-the-shelf modules and connect them with pin headers, harnesses and connectors
+2. **Ten parts or fewer** (excluding consumables and the enclosure)
+3. **Keep to 0.1" pitch.** Do not assume hand-assembly of fine-pitch or QFN parts
+4. Power is primarily over USB (battery operation is optional)
+5. It must be possible to disassemble and reassemble it (for visual inspection and for sealing the enclosure in use)

@@ -1,37 +1,38 @@
-# firmware/tests/ — テストと公式テストベクタ
+# firmware/tests/ — tests and official test vectors
 
-- **最終更新**: 2026-10-12
+- **Last updated**: 2026-10-12
 
 ```bash
 cd firmware && zig build test
 ```
 
-実装のユニットテスト（`src/` 内の `test` ブロック）と、公式テストベクタによる統合テスト
-（本ディレクトリ）を `firmware/tests.zig` がまとめて実行する。
+`firmware/tests.zig` runs both the implementation's unit tests (the `test` blocks under `src/`) and
+the integration tests based on official test vectors (this directory).
 
-**現在: 304 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
-4 モードすべてで成功することを確認済み。GitHub Actions でも Linux 上で毎回検証している）
+**Currently: all 304 tests pass.** (Verified to pass in all four modes — Debug / ReleaseSafe /
+ReleaseFast / ReleaseSmall. GitHub Actions also checks this on Linux on every run.)
 
-## 最も強い検証: Bitcoin Core が署名を受理する
+## The strongest verification: Bitcoin Core accepts our signatures
 
-`core_interop_test.zig` は、**実際の Bitcoin Core（v31.1.0）と相互運用できること**を検証する。
+`core_interop_test.zig` verifies that **this implementation interoperates with a real Bitcoin Core (v31.1.0)**.
 
-1. Core の `createpsbt` + `utxoupdatepsbt` で作った PSBT を本実装で署名する
-2. Core の `finalizepsbt` が `complete: true` を返し、その出力 hex が本実装の
-   最終トランザクションと**バイト単位で一致**する
-3. Core の `testmempoolaccept` が `allowed: true` を返す
+1. Sign, with this implementation, a PSBT created by Core's `createpsbt` + `utxoupdatepsbt`
+2. Core's `finalizepsbt` returns `complete: true`, and its output hex **matches this
+   implementation's final transaction byte for byte**
+3. Core's `testmempoolaccept` returns `allowed: true`
 
-他のテストは「仕様どおり実装できているか」を見るが、このテストは
-「**Core が我々の署名を有効と判断するか**」を見る。実装・エンコード・鍵探索・最終化の
-すべてが噛み合っていなければ通らない。検証に使った PSBT と期待値は
-`tests/vectors/core_psbt.json` に固定してある（再現手順は同ファイルの説明を参照）。
+Other tests look at "is this implemented as the specification says"; this test looks at
+"**does Core consider our signature valid**". It cannot pass unless the implementation, the
+encoding, the key search and the finalization all mesh. The PSBT used for verification and the
+expected values are pinned in `tests/vectors/core_psbt.json` (see the explanation in that file for
+the reproduction steps).
 
-## 最適化モードを変えても結果が変わらないこと
+## The result must not change when the optimization mode changes
 
-整数オーバーフローや未定義動作の検査は Debug と ReleaseSafe では有効、ReleaseFast と
-ReleaseSmall では無効になる。**モードによって結果が変わらないこと**を確認する。
+Integer-overflow and undefined-behaviour checks are enabled in Debug and ReleaseSafe and disabled in
+ReleaseFast and ReleaseSmall. We check that **the result does not change with the mode**.
 
-macOS では pkg-config からフラグが得られる（`brew install secp256k1` 済み）。
+On macOS the flags come from pkg-config (`brew install secp256k1` already done).
 
 ```bash
 cd firmware
@@ -41,124 +42,121 @@ for mode in Debug ReleaseSafe ReleaseFast ReleaseSmall; do
 done
 ```
 
-## ディレクトリ構成
+## Directory layout
 
 ```
 firmware/tests/
-├── README.md                 ← 本ファイル
+├── README.md                 ← this file
 ├── vectors/
-│   ├── bip39.json            BIP39 公式ベクタ 24 件（entropy / mnemonic / seed / xprv）
-│   ├── bip32.json            BIP32 テストベクタ 1 の派生チェーン（seed / path / xprv / xpub）
-│   ├── bip49.json            BIP49 P2SH-P2WPKH（testnet・uprv/upub・WIF・アドレス）
-│   ├── bip84.json            BIP84 P2WPKH（mainnet・zprv/zpub・WIF・公開鍵・アドレス）
-│   ├── bip86.json            BIP86 P2TR（内部鍵・出力鍵・アドレス）
-│   ├── bip143.json           BIP143 Native P2WPKH（未署名 tx / sighash / DER 署名 / 署名済み tx）
-│   ├── bip174.json           BIP174 PSBT（不正 20 件 / 妥当 27 件・Base64）
-│   ├── core_psbt.json        Bitcoin Core が作った PSBT と、Core の最終化結果（単一署名）
-│   ├── core_multisig.json    2-of-3 マルチシグ（Core が作った UTXO と、Core の最終化結果）
-│   └── core_taproot.json     Taproot 鍵パス署名（Core が作った P2TR の UTXO と、Core の最終化結果）
+│   ├── bip39.json            24 official BIP39 vectors (entropy / mnemonic / seed / xprv)
+│   ├── bip32.json            BIP32 test vector 1 derivation chain (seed / path / xprv / xpub)
+│   ├── bip49.json            BIP49 P2SH-P2WPKH (testnet, uprv/upub, WIF, address)
+│   ├── bip84.json            BIP84 P2WPKH (mainnet, zprv/zpub, WIF, public key, address)
+│   ├── bip86.json            BIP86 P2TR (internal key, output key, address)
+│   ├── bip143.json           BIP143 native P2WPKH (unsigned tx / sighash / DER signature / signed tx)
+│   ├── bip174.json           BIP174 PSBT (20 invalid / 27 valid, Base64)
+│   ├── core_psbt.json        a PSBT created by Bitcoin Core, and Core's finalization result (single-sig)
+│   ├── core_multisig.json    2-of-3 multisig (a UTXO created by Core, and Core's finalization result)
+│   └── core_taproot.json     Taproot key-path signing (a P2TR UTXO created by Core, and Core's finalization result)
 ├── bip39_vectors_test.zig
 ├── bip32_vectors_test.zig
 ├── address_vectors_test.zig
 ├── bip143_test.zig
 ├── bip174_test.zig
-├── fuzz_test.zig             壊れた入力への堅牢性（変異テスト）
-├── sign_test.zig             署名と最終化の統合テスト（外部ベクタが無い経路）
-│                             ※ 画面 UI（font / framebuffer / screen）と PNG 出力の
-│                               テストは各モジュール内にあり、root.zig 経由で実行される
-├── core_interop_test.zig     Bitcoin Core との相互運用（Core が署名を受理する）
-├── multisig_test.zig         2-of-3 マルチシグ（Core が署名を受理する）
-└── taproot_test.zig          Taproot 鍵パス署名（Core が署名を受理する）
+├── fuzz_test.zig             robustness against corrupted input (mutation tests)
+├── sign_test.zig             integration tests for signing and finalization (paths with no external vectors)
+│                             * the screen UI (font / framebuffer / screen) and PNG output tests
+│                               live inside each module and are run through root.zig
+├── core_interop_test.zig     interoperability with Bitcoin Core (Core accepts the signature)
+├── multisig_test.zig         2-of-3 multisig (Core accepts the signature)
+└── taproot_test.zig          Taproot key-path signing (Core accepts the signature)
 
-EVM のテストは実装ファイル内（`src/apps/evm/*.zig` の `test` ブロック）にあり、
-RLP 公式ベクタ・EIP-155 の公式例・EIP-55・EIP-191 を検証する。
+EVM tests live inside the implementation files (`test` blocks in `src/apps/evm/*.zig`) and
+verify the official RLP vectors, the official EIP-155 example, EIP-55 and EIP-191.
 ```
 
-## ベクタの出典（自前の期待値は使わない）
+## Vector sources (no expected values of our own)
 
-| ファイル | 出典 |
+| File | Source |
 |---|---|
-| `bip39.json` | https://github.com/trezor/python-mnemonic （公式ベクタ） |
+| `bip39.json` | https://github.com/trezor/python-mnemonic (official vectors) |
 | `bip32.json` | https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki |
 | `bip49.json` | https://github.com/bitcoin/bips/blob/master/bip-0049.mediawiki |
 | `bip84.json` | https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki |
 | `bip86.json` | https://github.com/bitcoin/bips/blob/master/bip-0086.mediawiki |
 | `bip143.json` | https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki |
 | `bip174.json` | https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki |
-| `core_psbt.json` | Bitcoin Core v31.1.0（regtest で実際に作成。`createpsbt` + `utxoupdatepsbt` の出力） |
-| `core_multisig.json` | Bitcoin Core v31.1.0（regtest。`createmultisig` のアドレスへ送金し、`createpsbt` で作ったトランザクション） |
-| `core_taproot.json` | Bitcoin Core v31.1.0（regtest。BIP86 の P2TR アドレスへ送金し、`createpsbt` で作ったトランザクション） |
+| `core_psbt.json` | Bitcoin Core v31.1.0 (actually created on regtest; the output of `createpsbt` + `utxoupdatepsbt`) |
+| `core_multisig.json` | Bitcoin Core v31.1.0 (regtest; a transaction created with `createpsbt` after sending to a `createmultisig` address) |
+| `core_taproot.json` | Bitcoin Core v31.1.0 (regtest; a transaction created with `createpsbt` after sending to a BIP86 P2TR address) |
 
-> **注意**: `bip39.json` の seed はパスフレーズ **"TREZOR"** で導出された値である
-> （空のパスフレーズでは一致しない）。
+> **Note**: the seeds in `bip39.json` are derived with the passphrase **"TREZOR"**
+> (they do not match with an empty passphrase).
 
-## 最も強いテスト: 署名のバイト単位一致
+## The strongest test: signatures match byte for byte
 
-`bip143_test.zig` は BIP143 の Native P2WPKH ベクタを使い、以下を **同時に** 検証する。
+`bip143_test.zig` uses the BIP143 native P2WPKH vectors and verifies the following **all at once**.
 
-1. トランザクションの解析と直列化
-2. Legacy sighash（input 0 は P2PK）
-3. BIP143 sighash（input 1 は P2WPKH）
-4. ECDSA 署名（RFC6979 の決定論的 nonce・low-s・DER 符号化）
-5. 署名済みトランザクションの再現（**バイト単位で完全一致**）
+1. Transaction parsing and serialization
+2. Legacy sighash (input 0 is P2PK)
+3. BIP143 sighash (input 1 is P2WPKH)
+4. ECDSA signing (RFC6979 deterministic nonce, low-s, DER encoding)
+5. Reproducing the signed transaction (**exact byte-for-byte match**)
 
-RFC6979 は決定論的なので、同じ鍵と同じメッセージからは必ず同じ署名になる。
-したがって「署名が一致する」ことは実装全体の正しさの強い証拠になる。
+RFC6979 is deterministic, so the same key and the same message always produce the same signature.
+A matching signature is therefore strong evidence that the whole implementation is correct.
 
-## テストが実際に検出したバグ（記録）
+## Bugs the tests actually detected (record)
 
-LLM が生成したコードに対して、テストが実際に誤りを検出した記録。
+A record of errors the tests actually detected in LLM-generated code.
 
-| # | 検出したバグ | 内容 |
+| # | Bug detected | Description |
 |---|---|---|
-| 1 | **エントロピーのバイト順の逆転** | BIP39 の entropy 抽出が逆順になっていた。`7f7f7f...` のような同一バイトが並ぶ公式ベクタでは露見しなかった |
-| 2 | **誤階層からの派生** | 非マスター鍵に `m/0'/1` を与えると 1 階層余分に潜っていた。API 側で「絶対パスはマスター鍵のみ」と制約して修正 |
-| 3 | **scriptCode が 1 バイト短い** | P2WPKH の scriptCode を `19 76 a9 14 … 88`（25 バイト）と誤って実装し、`88` が `ac` に上書きされていた。BIP143 の sighash 不一致として検出 |
-| 4 | **P2PK の scriptSig に push opcode が無い** | テスト側の組み立てミス。P2PK の scriptSig は「署名を push する」必要があり、`<push 72> || DER || 0x01` が正しい。署名済みトランザクションの 1 バイト不一致として検出 |
-| 5 | **P2SH-P2WPKH を witness 入力として扱っていない** | `witness_utxo` を持つ P2SH 入力を「非 witness 入力」と判定し、`non_witness_utxo` を要求して署名できなくなっていた。redeemScript が P2WPKH なら witness 入力として扱うよう修正 |
-| 6 | **ダングリングポインタ** | 最終化で `witness[1] = &key.public_key`（ループ内のローカル変数のアドレス）を保持していた。署名は正しいのに公開鍵だけ別の値になるという形で検出。**メモリ安全性のバグ**であり、統合テストが無ければ本番で初めて気づく類 |
-| 7 | **`EcdsaSignature.data` は `r‖s` ではない** | libsecp256k1 の内部表現（この環境ではリトルエンディアン）で、`r‖s` のビッグエンディアンではない。EVM 側の実装時に気づき、`core` に `signRecoverable` を追加して extern 宣言を集約した |
-| 8 | **固定長配列をハッシュしていなかった** | EIP-712 では**固定長配列も動的配列と同じく** `keccak256(要素の連結)` にする（`SomeType[5]` は 5 要素の構造体と同じ）。仕様書の該当文を確認して修正。サブケースに分割してオラクルと比較することで特定した |
-| 9 | **値渡しの構造体へのスライスを返していた** | `slice(self: ParsedScript)` が値渡しのコピー（関数フレーム内）へのスライスを返しており、呼び出し元では不正な参照になっていた。**#6 と同じクラスのメモリ安全性のバグ**で、パース結果の 2 番目以降が不定値になる形で検出。`*const` 受け取りに変更して修正 |
+| 1 | **Entropy byte order reversed** | BIP39 entropy extraction was reversed. It did not show up in the official vectors where the same byte repeats, such as `7f7f7f...` |
+| 2 | **Derivation from the wrong depth** | Passing `m/0'/1` to a non-master key descended one level too many. Fixed by constraining the API so that "absolute paths are only accepted on a master key" |
+| 3 | **scriptCode one byte short** | The P2WPKH scriptCode was implemented wrongly as `19 76 a9 14 … 88` (25 bytes), and `88` was overwritten by `ac`. Detected as a BIP143 sighash mismatch |
+| 4 | **No push opcode in the P2PK scriptSig** | A mistake on the test side. A P2PK scriptSig has to "push the signature", so `<push 72> || DER || 0x01` is correct. Detected as a one-byte mismatch in the signed transaction |
+| 5 | **P2SH-P2WPKH not treated as a witness input** | A P2SH input with a `witness_utxo` was judged to be a "non-witness input", so it demanded a `non_witness_utxo` and could not be signed. Fixed so that an input is treated as a witness input when its redeemScript is P2WPKH |
+| 6 | **Dangling pointer** | Finalization kept `witness[1] = &key.public_key` (the address of a loop-local variable). Detected because the signature was correct while only the public key became a different value. This is a **memory-safety bug**, the kind that would first be noticed in production if there were no integration tests |
+| 7 | **`EcdsaSignature.data` is not `r‖s`** | It is libsecp256k1's internal representation (little-endian in this environment), not the big-endian `r‖s`. Noticed while implementing the EVM side; added `signRecoverable` to `core` and consolidated the extern declarations |
+| 8 | **Fixed-size arrays were not hashed** | In EIP-712, **fixed-size arrays are hashed the same way as dynamic arrays**, as `keccak256(concatenation of the elements)` (`SomeType[5]` is the same as a struct with 5 members). Fixed after checking the relevant sentence in the specification. Identified by splitting it into sub-cases and comparing against the oracle |
+| 9 | **Returning a slice into a by-value struct** | `slice(self: ParsedScript)` returned a slice into the by-value copy (inside the function frame), which became an invalid reference at the call site. This is a **memory-safety bug of the same class as #6**, detected because the second and later parse results became undefined values. Fixed by changing it to take `*const` |
+| 10 | **A padding bug on the oracle side (segno 1.6.6)** (not a bug in this implementation) | In QR byte mode, when the position right after the terminator falls on a codeword boundary, it added padding the standard does not require and replaced the pad codeword `0xEC` with `0x00`. When cross-checked against an independent implementation (qrcodegen 1.8.0), **this implementation matches and only segno disagrees**. Reported upstream as the unfixed issue [heuer/segno#123](https://github.com/heuer/segno/issues/123). A concrete example that **an oracle is not always right** |
+| 11 | **A pointer to the RNG was stored in a struct and returned** (a bug on the test side) | `std.Random` holds a pointer to the RNG. `Fuzz.init` **returned by value** a struct holding "the RNG plus its `Random`", so the pointee (a local inside the function) died and the caller had a **dangling** reference. Detected by the mutation tests as a TRAP. **The same class as #6 / #9** (holding a reference to a temporary value), for the third time. Changed so that the `Random` is created each time it is used |
 
-| 10 | **オラクル（segno 1.6.6）側のパディングのバグ**（本実装のバグではない） | QR のバイトモードで、ターミネータ直後がコードワード境界のとき規格が要求しないパディングを足し、パッドコードワード `0xEC` を `0x00` に置換していた。独立実装（qrcodegen 1.8.0）と突き合わせると**本実装は一致し、segno だけが不一致**になる。上流の未修正 issue [heuer/segno#123](https://github.com/heuer/segno/issues/123) として報告されている。**オラクルが常に正しいとは限らない**ことの実例 |
+**About oracles**: cross-checking against an independent implementation is powerful, but as in #10 the **reference side can be wrong**. Compare against several implementations (qrcodegen / python-qrcode / segno), not just one, and also check against the standard's accompanying material (the example in ISO/IEC 18004 Annex I.2).
 
-| 11 | **乱数器を指すポインタを構造体に保存して返していた**（テスト側のバグ） | `std.Random` は乱数器を指すポインタを持つ。`Fuzz.init` が「乱数器＋その `Random`」を持つ構造体を**値で返して**いたため、指し先（関数内のローカル）が死に、呼び出し側では**ダングリング**していた。変異テストが TRAP で検出。**#6 / #9 と同じクラス**（一時的な値への参照を保持）で、3 回目。`Random` は使うたびに作る形に変更 |
+**About memory safety**: #6 and #9 are both bugs that "hold a reference to a temporary value".
+Zig passes by value by default, so be rigorous about two rules: **a function that returns a slice pointing inside a struct must take `*const`**, and **never put the address of a loop-local variable into a longer-lived structure**.
 
-**オラクルについて**: 独立実装との突き合わせは強力だが、#10 のように**参照側が間違っている**こともある。1 つの実装だけでなく複数（qrcodegen / python-qrcode / segno）と比較し、規格の付属資料（ISO/IEC 18004 Annex I.2 の例）でも確認する。
+**Lessons**:
+- "The official vectors passed" is not enough on its own. Vectors with repeated identical values hide ordering bugs.
+- The strongest tests compare the **final artifact byte for byte**, not partial matches (only the signature, only the sighash).
+- When a test fails, do not assume "the implementation is wrong"; **question the test's assumptions too** (#4 was an error on the test side).
+- For paths with no external vectors (P2PKH/P2SH finalization, fees, change detection), verify by **constructing self-consistent data**. #5 and #6 were in fact found this way.
 
-**メモリ安全性について**: #6 と #9 はどちらも「一時的な値への参照を保持してしまう」バグである。
-Zig は値渡しが基本なので、**構造体の内部を指すスライスを返す関数は `*const` で受ける**こと、
-**ループ内のローカル変数のアドレスを長生きする構造へ入れない**ことを徹底する。
+## Required tests (to be added)
 
-**教訓**:
-- 「公式ベクタが通った」だけでは不十分。同じ値が並ぶベクタは順序のバグを隠す。
-- 部分的な一致（署名だけ、sighash だけ）ではなく、**最終成果物をバイト単位で比較する** テストが最も強い。
-- テストが落ちたときは「実装が悪い」と決めつけず、**テスト側の前提も疑う**（#4 はテスト側の誤りだった）。
-- 外部ベクタが存在しない経路（P2PKH/P2SH の最終化、手数料、お釣り判定）は、**自己整合的なデータを組み立てて** 検証する。実際に #5 と #6 はこの方法で見つかった。
-
-## 必須テスト（今後の追加分）
-
-| 分類 | 内容 | 合格条件 |
+| Category | Content | Pass condition |
 |---|---|---|
-| PSBT 署名 | witness_utxo / non_witness_utxo からの署名 | Bitcoin Core で署名検証が通る |
-| お釣り判定 | 出力が自分の鍵に属するかの判定 | 誤判定ケースで正しく拒否する |
-| EVM 署名 | Legacy / EIP-1559 | viem / ethers.js の署名と**バイト単位一致** |
-| EIP-712 | `domainSeparator` / `hashStruct` | 既知サンプルとの一致。未知 `verifyingContract` で警告 |
-| clear signing | ERC-7730 記述子の適用 | 期待表示のスナップショット一致。chainId 不一致は拒否 |
-| 異常系 | 長大な配列・深いネスト・未知セレクタ・欠落 UTXO | すべて署名拒否し、理由を画面表示 |
-| 秘密の残存 | 電源断後の SD / フラッシュ | mnemonic / seed / xprv のバイト列が存在しない |
-| 再現性 | イメージビルド | 2 環境で同一ハッシュ |
+| PSBT signing | Signing from witness_utxo / non_witness_utxo | Signature verification passes in Bitcoin Core |
+| Change detection | Deciding whether an output belongs to our own key | Correctly rejects the misjudgement cases |
+| EVM signing | Legacy / EIP-1559 | **Byte-for-byte match** with viem / ethers.js signatures |
+| EIP-712 | `domainSeparator` / `hashStruct` | Matches known samples. Warns on an unknown `verifyingContract` |
+| Clear signing | Applying ERC-7730 descriptors | Snapshot match for the expected display. A mismatched chainId is rejected |
+| Error cases | Huge arrays, deep nesting, unknown selectors, missing UTXOs | All refuse to sign and show the reason on screen |
+| Secrets left behind | SD / flash after power loss | No byte sequence of the mnemonic / seed / xprv is present |
+| Reproducibility | Image builds | The same hash in two environments |
 
-## 表示の回帰テスト
+## Display regression tests
 
-セキュリティ上重要なのは「正しくデコードできること」より「**警告すべきものを警告し続けること**」。
-承認画面のスナップショットを固定し、以下のケースで赤警告が消えていないことを検証する。
+What matters for security is not "being able to decode correctly" but "**continuing to warn about what should be warned about**".
+The approval screens are pinned as snapshots, and we verify that the red warning has not disappeared in the following cases.
 
-- 無制限 `approve`（`2^256-1`）
+- Unlimited `approve` (`2^256-1`)
 - `setApprovalForAll`
-- `permit`（EIP-2612）
-- 未知コントラクト・未知セレクタ
-- `to` が空（コントラクト作成）
-- 過大な手数料（BTC）
-- `decimals` 不明のトークン
+- `permit` (EIP-2612)
+- Unknown contract / unknown selector
+- Empty `to` (contract creation)
+- Excessive fee (BTC)
+- Token with unknown `decimals`
