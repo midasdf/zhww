@@ -61,6 +61,7 @@ Pi Zero 2 WH は**工場でヘッダが実装済み**のモデルで、この 2 
 | Pi Zero 2 W + ハンマーヘッダ | 不要（圧入） | あり（無効化可） | 同上 | 良い | そのまま動く |
 | Pi Zero 1.3 | 必要（圧入で回避可） | なし | 同上 | 悪い | そのまま動く |
 | Banana Pi M2 Zero 等の互換ボード | SKU による | 機種による | コネクタが非互換の可能性 | 個人輸入が中心 | **要検証**（Linux イメージが非公式・コミュニティ製） |
+| **Pico 2 H + Pico-LCD-1.3** | **不要**（H 型番はヘッダ実装済み） | **なし**（Pico 2 は無線なし） | SPI カメラが必要（後述の弱点） | 良い（国内代理店） | **移植が必要**（ただしコアのコンパイルは実測済み） |
 | Luckfox Pico（RV1106） | ヘッダ未実装の型番あり | なし | 専用モジュール（同梱の型番あり） | 秋葉原等で入手可 | **移植が必要**（別 SoC・LCD 配線も必要） |
 | 一体型（M5Stack 等の Krux 系ハード） | 不要 | 機種による | 内蔵の機種あり | 良い | **動かない**（Linux ではないため、ファームを別物にする必要） |
 
@@ -76,7 +77,46 @@ HAL・画面・カメラはすべて書き直しになる。この判断は「v0
 - Banana Pi BPI-ZERO の Linux イメージが非公式である例: [bananapi-zero-ubuntu-base-minimal（コミュニティ製）](https://github.com/avafinger/bananapi-zero-ubuntu-base-minimal)
 - Luckfox Pico の国内入荷と「ヘッダなし」型番の例: [エルミタージュ秋葉原](https://www.gdm.or.jp/crew/2024/0729/548831)、[千石電商（Luckfox Pico Ultra）](https://www.sengoku.co.jp/mod/sgk_cart/detail.php?code=EEHD-6ERY)
 
-### 2.3 ディスプレイの選択
+### 2.3 Pico 系（RP2040 / RP2350）の検討結果
+
+**魅力的な点**: Pico 系は「普及」の条件を最もよく満たす。
+
+- **半田付け不要** — Pico H / **Pico 2 H** はヘッダ実装済みの型番がある（[スイッチサイエンス](https://www.switch-science.com/products/10257)）
+- **無線なしモデルが標準** — Pico 2（W なし）は Wi-Fi/BT を搭載しない。Zero 2 WH の「無線チップが存在する」という残存リスクが消える
+- **即起動・低消費電力** — Linux ではないため起動が一瞬。電池持ちも良い
+- **安価** — Pico 2 H（¥1,000 前後）+ [Waveshare Pico-LCD-1.3](https://www.waveshare.com/pico-lcd-1.3.htm)（$7.99, 240×240, SPI, ジョイスティック/ボタン付き）
+- **Zig が公式対応** — Cortex-M0+（RP2040）と Cortex-M33（RP2350）はどちらも現行の Zig が対象にできる（ESP32-S3 の Xtensa は非対応）
+
+**制約**:
+
+- **Linux ではない** — HAL（LCD・ボタン・SD・乱数）を書き直す必要がある。ロジック（BIP39/32・PSBT・署名・EVM・UR）はそのまま使える
+- **カメラが最大の弱点** — RP2040/RP2350 に CSI は無い。SPI カメラ（ArduCAM 等）を PIO で読む事例はあるが、**QR のデコードはマイコンでは重い**。現実的な回避策は (a) QR は表示のみ、(b) PSBT の受け渡しを microSD 経由にする、の 2 つ
+
+**実測した事実**（2026-10-12、本リポジトリのコードで実行。再現手順は下記）:
+
+| 確かめたこと | 結果 |
+|---|---|
+| コア（BIP39/32・アドレス生成・PSBT 解析・署名経路・EVM 解析・UR）のコンパイル | **RP2040（Cortex-M0+）と RP2350（Cortex-M33）の両方で成功**（各約 64KB、`-OReleaseSmall`） |
+| 未定義シンボル | `secp256k1_*` と compiler-rt（`__aeabi_*`）のみ。後者は Zig が供給する |
+| **libsecp256k1 0.6.0 のビルド** | **両ターゲットで成功**（`zig cc`。最小の libc シムを使用。実移植では picolibc/newlib を使い、`-DNDEBUG` で stdio 依存を消す） |
+| 署名速度 | **未検証**。M0+ 133MHz では 1 署名に数百 ms かかる可能性があり、実測が必要 |
+
+```bash
+# コアのコンパイル確認（リポジトリのルートで）
+cd firmware
+zig build pico     # RP2040 と RP2350 の両方をまとめて確認する
+# 個別にやる場合:
+zig build-obj pico_smoke.zig -target thumb-freestanding -mcpu=cortex_m0plus -OReleaseSmall
+zig build-obj pico_smoke.zig -target thumb-freestanding -mcpu=cortex_m33 -OReleaseSmall
+
+# libsecp256k1 のビルド確認（picolibc 相当の最小ヘッダを用意して）
+zig cc -target thumb-freestanding -mcpu=cortex_m0plus -O2 -DHAVE_CONFIG_H -Icompat -I. -Isrc -c src/secp256k1.c
+```
+
+**結論**: **v0.1 は Zero 2 WH（今の実装がそのまま動く）で完成させ、v0.2 の本命候補として Pico 2 H を位置づける**。
+Pico へ移る場合は「HAL の書き直し + カメラ/QR の方式決定 + 署名速度の実測」が作業の中心になる。
+
+### 2.4 ディスプレイの選択
 
 | 案 | サイズ | 利点 | 欠点 |
 |---|---|---|---|
@@ -86,13 +126,13 @@ HAL・画面・カメラはすべて書き直しになる。この判断は「v0
 
 まず A で実装し、UX が苦しければ B へ移行する。配線はメス-メスジャンパで可能なため、B でも半田付けは不要。
 
-### 2.4 カメラ
+### 2.5 カメラ
 
 - QR 読み取りと画像エントロピー生成に使用する。
 - **Pi Zero シリーズは 22pin 0.5mm の CSI コネクタ**であり、一般的な 15pin リボンは使えない。購入時に「Pi Zero 用ケーブル付き」を選ぶこと。
 - カメラモジュールは基板内蔵フラッシュ等を持ち得るため、信頼できる販売元から購入し、到着後に外観を目視確認する。
 
-### 2.5 GPIO ヘッダ
+### 2.6 GPIO ヘッダ
 
 **Pi Zero 2 WH はヘッダが実装済みなので、この工程自体が不要**（差し込むだけ）。
 Pi Zero 2 W / 1.3 を使う場合のみ、次のいずれかが必要になる。

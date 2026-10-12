@@ -42,6 +42,12 @@ jobs:
         run: |
           zig test tests.zig -OReleaseSafe $(pkg-config --cflags --libs libsecp256k1) -lc
 
+      - name: Pico 系（RP2040 / RP2350）向けのコンパイル確認
+        working-directory: firmware
+        run: |
+          # Linux を前提にしない Pico 系へ移植できるかを毎回確認する
+          zig build pico --summary all
+
       - name: CLI のビルドと動作確認
         working-directory: firmware
         run: |

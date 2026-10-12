@@ -23,6 +23,8 @@ pub fn build(b: *std.Build) void {
     });
     linkSecp256k1(lib);
 
+    const pico_step = b.step("pico", "Pico 系（RP2040 / RP2350）向けにコアをコンパイルできるか確認する");
+
     // 開発用 CLI（実機に画面 UI を作る前の確認手段）
     const cli_module = b.createModule(.{
         .root_source_file = b.path("src/cli/main.zig"),
@@ -45,6 +47,28 @@ pub fn build(b: *std.Build) void {
     //   ./zig-out/bin/zhww address --mnemonic "..." --path "m/84'/0'/0'/0/0"
     const run_step = b.step("run", "開発用 CLI を実行する（引数は生成物に直接渡すこと）");
     run_step.dependOn(&run_cmd.step);
+
+    // Pico 系（ベアメタル）でコアがコンパイルできるかの確認
+    //
+    // Linux を前提にしない RP2040 / RP2350 へ移植できるかを見るためのステップ。
+    // 実行はしない（オブジェクトができることだけを確認する）。
+    inline for (.{
+        .{ "pico_rp2040", &std.Target.arm.cpu.cortex_m0plus },
+        .{ "pico_rp2350", &std.Target.arm.cpu.cortex_m33 },
+    }) |config| {
+        const pico_module = b.createModule(.{
+            .root_source_file = b.path("pico_smoke.zig"),
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .thumb,
+                .os_tag = .freestanding,
+                .cpu_model = .{ .explicit = config[1] },
+            }),
+            .optimize = .ReleaseSmall,
+        });
+        pico_module.addImport("zhww", lib);
+        const pico_object = b.addObject(.{ .name = config[0], .root_module = pico_module });
+        pico_step.dependOn(&pico_object.step);
+    }
 
     // テスト（tests.zig がコアと公式テストベクタの両方をまとめる）
     const test_module = b.createModule(.{
