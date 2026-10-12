@@ -9,7 +9,23 @@ cd firmware && zig build test
 実装のユニットテスト（`src/` 内の `test` ブロック）と、公式テストベクタによる統合テスト
 （本ディレクトリ）を `firmware/tests.zig` がまとめて実行する。
 
-**現在: 115 件すべて成功。**
+**現在: 115 件すべて成功。**（Debug / ReleaseSafe / ReleaseFast / ReleaseSmall の
+4 モードすべてで成功することを確認済み）
+
+## 最適化モードを変えても結果が変わらないこと
+
+整数オーバーフローや未定義動作の検査は Debug と ReleaseSafe では有効、ReleaseFast と
+ReleaseSmall では無効になる。**モードによって結果が変わらないこと**を確認する。
+
+macOS では pkg-config からフラグが得られる（`brew install secp256k1` 済み）。
+
+```bash
+cd firmware
+for mode in Debug ReleaseSafe ReleaseFast ReleaseSmall; do
+  echo "== $mode =="
+  zig test tests.zig -O$mode $(pkg-config --cflags --libs libsecp256k1) -lc | tail -1
+done
+```
 
 ## ディレクトリ構成
 
