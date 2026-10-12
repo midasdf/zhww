@@ -18,7 +18,7 @@ const usage =
     \\
     \\コマンド:
     \\  address    アドレスを表示する
-    \\  evm-show   署名済み/未署名の EVM トランザクションを表示する（raw hex）
+    \\  card       FAT32 イメージ（microSD の代わり）を操作する\n    \\  evm-show   署名済み/未署名の EVM トランザクションを表示する（raw hex）
     \\  evm-sign   EVM のトランザクション（JSON）に署名する
     \\  screen     実機の画面（240×240）を PNG で出力する（PC での確認用）
     \\  show       PSBT の中身を人間可読で表示する（画面の代わり）
@@ -35,6 +35,7 @@ const usage =
     \\  --network mainnet|testnet|signet|regtest （既定: mainnet）
     \\  --kind p2wpkh|p2pkh|p2sh-p2wpkh|p2tr （既定: p2wpkh）
     \\
+    \\card の使い方（--image <ファイル> が必須。カードの実物が無くても試せる）:\n    \\  card list                    ファイル一覧\n    \\  card read  --name /IN.PSBT   内容を標準出力へ\n    \\  card write --name /OUT.PSBT  標準入力から書く\n    \\  card rm    --name /OUT.PSBT  削除\n    \\  card mv    --name /OUT.TMP --to /OUT.PSBT   リネーム\n    \\  card sign  --mnemonic "..."  /IN.PSBT に署名して /OUT.PSBT を作る\n    \\                               （/OUT.TMP に書いてからリネームする）\n    \\
     \\evm-show のオプション:
     \\  入力は raw トランザクションの 16 進数（0x の有無は問わない）
     \\
@@ -86,7 +87,7 @@ pub fn main(init: std.process.Init.Minimal) void {
     var stdout_buffer: [8192]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(io, &stdout_buffer);
 
-    run(init, &stdout) catch |err| {
+    run(init, &stdout, io) catch |err| {
         switch (err) {
             error.Usage => {
                 stderrPrint("{s}", .{usage});
@@ -106,7 +107,7 @@ fn stderrPrint(comptime format: []const u8, args: anytype) void {
     std.debug.print(format, args);
 }
 
-fn run(init: std.process.Init.Minimal, stdout: anytype) !void {
+fn run(init: std.process.Init.Minimal, stdout: anytype, io: std.Io) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -133,6 +134,10 @@ fn run(init: std.process.Init.Minimal, stdout: anytype) !void {
     }
     if (std.mem.eql(u8, command, "evm-show")) {
         try commandEvmShow(allocator, args.items[1..], stdout);
+        return;
+    }
+    if (std.mem.eql(u8, command, "card")) {
+        try commandCard(allocator, args.items[1..], stdout, io);
         return;
     }
     if (std.mem.eql(u8, command, "evm-sign")) {
@@ -502,6 +507,184 @@ fn jsonHex(allocator: std.mem.Allocator, root: std.json.ObjectMap, name: []const
     const out = try allocator.alloc(u8, hex_text.len / 2);
     _ = std.fmt.hexToBytes(out, hex_text) catch return error.InvalidArgument;
     return out;
+}
+
+// ---------------------------------------------------------------- card（FAT32 イメージ）
+
+const file_device = @import("file_device.zig");
+
+/// FAT32 のイメージファイルを microSD の代わりに操作する。
+///
+/// 実機が無くても、カードでの受け渡し（docs/08 の 7b 節）を端から端まで再現できる。
+fn commandCard(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdout: anytype,
+    io: std.Io,
+) !void {
+    if (args.len == 0) {
+        stderrPrint("使い方: zhww card <list|read|write|rm|mv|sign> --image <ファイル>\n", .{});
+        return error.Usage;
+    }
+    const verb = args[0];
+    const image_path = try requiredOption(args, "--image");
+
+    const file = std.Io.Dir.cwd().openFile(io, image_path, .{ .mode = .read_write }) catch {
+        stderrPrint("イメージを開けません: {s}\n", .{image_path});
+        return error.InvalidArgument;
+    };
+    defer file.close(io);
+    const stat = std.Io.File.stat(file, io) catch {
+        stderrPrint("イメージの大きさを取得できません\n", .{});
+        return error.InvalidArgument;
+    };
+
+    var device = file_device.FileDevice.init(file, io, stat.size);
+    var fs = try zhww.fs_fat32.Fat32.mount(device.device(), allocator);
+    defer fs.deinit();
+
+    if (std.mem.eql(u8, verb, "list")) {
+        var iterator = try fs.openDir("/");
+        var entry: zhww.fs_fat32.Entry = .{};
+        while (try iterator.next(&entry)) {
+            if (entry.isDot()) continue;
+            try stdout.interface.print("{s: <40} {d: >10} バイト{s}\n", .{
+                entry.nameSlice(),
+                entry.size,
+                if (entry.isDirectory()) "  (ディレクトリ)" else "",
+            });
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, verb, "read")) {
+        const name = try requiredOption(args, "--name");
+        const data = fs.readFileAlloc(allocator, name, 1024 * 1024) catch {
+            stderrPrint("読めません: {s}\n", .{name});
+            return error.InvalidArgument;
+        };
+        try stdout.interface.writeAll(data);
+        try stdout.interface.flush();
+        return;
+    }
+
+    if (std.mem.eql(u8, verb, "write")) {
+        const name = try requiredOption(args, "--name");
+        const input = try readAllStdin(allocator);
+        try fs.writeFile(name, input);
+        stderrPrint("{s} に {d} バイト書きました\n", .{ name, input.len });
+        return;
+    }
+
+    if (std.mem.eql(u8, verb, "rm")) {
+        const name = try requiredOption(args, "--name");
+        try fs.deleteFile(name);
+        stderrPrint("{s} を削除しました\n", .{name});
+        return;
+    }
+
+    if (std.mem.eql(u8, verb, "mv")) {
+        const from = try requiredOption(args, "--name");
+        const to = try requiredOption(args, "--to");
+        if (try fs.exists(to)) try fs.deleteFile(to);
+        try fs.rename(from, to);
+        stderrPrint("{s} → {s}\n", .{ from, to });
+        return;
+    }
+
+    if (std.mem.eql(u8, verb, "sign")) {
+        try cardSign(allocator, args, &fs, stdout);
+        return;
+    }
+
+    stderrPrint("知らない操作です: {s}\n", .{verb});
+    return error.Usage;
+}
+
+/// 受け渡しプロトコル（docs/08 の 7b 節）を実行する。
+fn cardSign(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    fs: *zhww.fs_fat32.Fat32,
+    stdout: anytype,
+) !void {
+    _ = stdout;
+    const mnemonic = try requiredOption(args, "--mnemonic");
+    const passphrase = option(args, "--passphrase") orelse "";
+    const in_name = option(args, "--in") orelse "/IN.PSBT";
+    const out_name = option(args, "--out") orelse "/OUT.PSBT";
+    const tmp_name = option(args, "--tmp") orelse "/OUT.TMP";
+
+    // 1. IN.PSBT を読む（バイナリでも base64 でも受け付ける）
+    const raw = fs.readFileAlloc(allocator, in_name, 64 * 1024) catch {
+        stderrPrint("{s} を読めません（64KB 上限）\n", .{in_name});
+        return error.InvalidArgument;
+    };
+    stderrPrint("{s}: {d} バイト\n", .{ in_name, raw.len });
+
+    var psbt_bytes: []const u8 = raw;
+    if (!std.mem.startsWith(u8, raw, "psbt\xff")) {
+        // base64 として解釈する（改行・空白を除く）
+        var cleaned = std.ArrayList(u8).empty;
+        defer cleaned.deinit(allocator);
+        for (raw) |c| {
+            if (c == '\n' or c == '\r' or c == ' ' or c == '\t') continue;
+            try cleaned.append(allocator, c);
+        }
+        const decoder = std.base64.standard.Decoder;
+        const needed = decoder.calcSizeForSlice(cleaned.items) catch {
+            stderrPrint("PSBT として解釈できません\n", .{});
+            return error.InvalidArgument;
+        };
+        const decoded = try allocator.alloc(u8, needed);
+        decoder.decode(decoded, cleaned.items) catch {
+            stderrPrint("PSBT の base64 を解釈できません\n", .{});
+            return error.InvalidArgument;
+        };
+        psbt_bytes = decoded;
+        stderrPrint("base64 として解釈しました（{d} バイト）\n", .{psbt_bytes.len});
+    }
+
+    // 2. 解析して署名する（署名したら検証まで行う既存の経路を使う）
+    const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, passphrase);
+    const outcome = zhww.btc_sign.signPsbtBytes(allocator, psbt_bytes, keys) catch |err| {
+        stderrPrint("署名できません: {s}\n", .{@errorName(err)});
+        return error.InvalidArgument;
+    };
+
+    // 3. OUT.TMP に書いてから OUT.PSBT にリネームする（電源断で中途半端な結果を残さない）
+    try fs.writeFile(tmp_name, outcome.signed_psbt);
+    if (try fs.exists(out_name)) try fs.deleteFile(out_name);
+    try fs.rename(tmp_name, out_name);
+
+    // 4. 人間が読む記録
+    const fee_text = if (outcome.result.fee) |fee|
+        try std.fmt.allocPrint(allocator, "{d}", .{fee})
+    else
+        try allocator.dupe(u8, "unknown");
+    const log = try std.fmt.allocPrint(
+        allocator,
+        "zhww sign log\n" ++
+            "signed inputs: {d}\n" ++
+            "unsigned inputs: {d}\n" ++
+            "fee (sats): {s}\n" ++
+            "final tx: {s}\n" ++
+            "signed psbt bytes: {d}\n",
+        .{
+            outcome.result.partial_sigs.len,
+            outcome.result.unsigned_inputs.len,
+            fee_text,
+            if (outcome.result.final_tx != null) "yes" else "no",
+            outcome.signed_psbt.len,
+        },
+    );
+    try fs.writeFile("/OUT.LOG", log);
+
+    stderrPrint(
+        "署名しました: 入力 {d} 件（未署名 {d} 件）→ {s}（{d} バイト）\n",
+        .{ outcome.result.partial_sigs.len, outcome.result.unsigned_inputs.len, out_name, outcome.signed_psbt.len },
+    );
+    if (outcome.result.fee) |fee| stderrPrint("手数料: {d} sats\n", .{fee});
 }
 
 // ---------------------------------------------------------------- EVM 表示

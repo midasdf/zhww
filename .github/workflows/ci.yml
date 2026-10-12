@@ -69,6 +69,25 @@ jobs:
           test "$MINE" = "$EXPECTED"
           echo "署名 OK（Bitcoin Core の出力と一致）"
 
+      - name: microSD（FAT32）での受け渡し
+        working-directory: firmware
+        run: |
+          sudo apt-get install -y mtools dosfstools
+          IMG="$RUNNER_TEMP/card.img"
+          mkfs.fat -F 32 -C "$IMG" 40000 >/dev/null
+          jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json > in.txt
+          mcopy -i "$IMG" in.txt ::/IN.PSBT
+          ./zig-out/bin/zhww card list --image "$IMG"
+          ./zig-out/bin/zhww card sign --image "$IMG" \
+            --mnemonic "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+          ./zig-out/bin/zhww card list --image "$IMG"
+          # 署名済み PSBT が固定した期待値と一致すること
+          GOT=$(mtype -i "$IMG" ::/OUT.PSBT | sha256sum | cut -d' ' -f1)
+          WANT=$(jq -r .signed_psbt_sha256 tests/vectors/core_psbt.json)
+          test "$GOT" = "$WANT"
+          fsck.fat -n "$IMG"
+          echo "FAT32 OK（受け渡しと署名が期待値と一致、fsck も異常なし）"
+
       - name: EVM 署名（独立実装 eth-account の値と一致）
         working-directory: firmware
         run: |

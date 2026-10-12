@@ -9,5 +9,8 @@
   "input_amount_sats": 100000000,
   "fee_sats": 10000,
   "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-  "derivation": "m/84'/0'/0'/0/0 (regtest のアドレス bcrt1qcr8te4kr609gcawutmrza0j4xv80jy8zeqchgx)"
+  "derivation": "m/84'/0'/0'/0/0 (regtest のアドレス bcrt1qcr8te4kr609gcawutmrza0j4xv80jy8zeqchgx)",
+  "signed_psbt_sha256": "afb511882d4f36b2b526ad52561c3875401cb82368a8148c846098a2f6e49117",
+  "signed_psbt_base64": "cHNidP8BAFICAAAAAcaToUmSTBl2LHrDleV31T08i+4AzSg/bz6xQqPsNDyIAAAAAAD9////AfC59QUAAAAAFgAUTQse96/xNAMZWwaTAhNNLrncJugAAAAAAAEBHwDh9QUAAAAAFgAUwM681sPTyox13F7GLr5VMw75EOIiAgMw1U/Q3UIKbl+NNiT180gsrjUPedXwdTv1vu+cLZGvPEcwRAIgb2/lNyEgewrL4E5P/DPjRGBXTDTQQsaDP36cMJ6P0LACIGCFkq4l/H5QgFu62Dt1tDpRBg8DICQ9HiF5ft3o0PXZAQAA",
+  "card_flow_note": "microSD（FAT32 イメージ）経由で署名した結果。mtools で IN.PSBT を置き、zhww card sign で OUT.PSBT を作り、mtype で取り出したものを sha256 で固定している。"
 }
