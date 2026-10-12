@@ -55,6 +55,10 @@ export fn zhww_smoke_ui(pixels_ptr: [*]u16, count: usize, out: [*]u8, out_len: u
         .footer_right = "CANCEL",
     };
     screen.render(&fb);
+    const indicator = @import("src/ui/indicator.zig");
+    if (indicator.backlightOn(.idle)) return 0;
+    if (!indicator.patternFor(.busy).isOnAt(0)) return 0;
+
     const lcd = @import("src/ui/st7789.zig");
     var driver = lcd.Driver(@import("src/ui/st7789.zig").MockTransport){ .transport = .{} };
     driver.setWindow(0, 0, 239, 239) catch return 0;
