@@ -1,0 +1,61 @@
+name: CI
+
+# 目的: 開発機（macOS）だけでなく、実機と同じ Linux でもビルドとテストが通ることを
+# 継続的に確認する。Raspberry Pi は Linux なので、ここが通ることは実機の前提条件になる。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.17.0
+
+      - name: Install libsecp256k1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecp256k1-dev pkg-config
+
+      - name: 依存の確認
+        run: |
+          pkg-config --modversion libsecp256k1
+          zig version
+
+      - name: テスト（公式テストベクタ + 統合テスト + Core 相互運用）
+        working-directory: firmware
+        run: zig build test
+
+      - name: ReleaseSafe でもテスト
+        working-directory: firmware
+        run: |
+          zig test tests.zig -OReleaseSafe $(pkg-config --cflags --libs libsecp256k1) -lc
+
+      - name: CLI のビルドと動作確認
+        working-directory: firmware
+        run: |
+          zig build
+          ./zig-out/bin/zhww version
+          # BIP84 の公式テストベクタと同じアドレスが出ること
+          OUT=$(./zig-out/bin/zhww address --mnemonic "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+          test "$OUT" = "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu"
+          echo "CLI OK: $OUT"
+
+      - name: 署名が Core 検証済みのベクタと一致すること
+        working-directory: firmware
+        run: |
+          PSBT=$(jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json)
+          EXPECTED=$(jq -r .expected_final_tx tests/vectors/core_psbt.json)
+          MINE=$(printf '%s' "$PSBT" | ./zig-out/bin/zhww sign \
+            --mnemonic "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
+            2>/dev/null | grep '^FINAL_TX=' | cut -d= -f2-)
+          test "$MINE" = "$EXPECTED"
+          echo "署名 OK（Bitcoin Core の出力と一致）"
