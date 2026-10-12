@@ -12,6 +12,7 @@
 |---|---|---|---|---|
 | 1 | SBC | **Raspberry Pi Zero 2 WH (header pre-installed)** | ¥3,500–4,400 | スイッチサイエンス (Switch Science), 千石電商 (Sengoku Denshi), Amazon |
 | 2 | Display | **Adafruit Mini PiTFT 135×240** (product 4393, 1.14", ST7789, **two tactile buttons on the board**, **Qwiic/STEMMA QT port**, 38.6×24.5 mm, pre-assembled) | $9.95 | Adafruit (US) |
+| 3 | Light receiver (**the input path**) | **LM393 light-sensor module with a photodiode/phototransistor and both an analog and a digital output** (the common 4-pin "LM393 light sensor" boards) | ¥300–600 | Akizuki Denshi, aitendo, Amazon.co.jp, Yahoo Shopping |
 | 3 | Camera | OV5647 5MP (**the version with the 22-pin FPC for Pi Zero**; Aokin / AuviPal, etc.) | ¥1,000–1,800 | Amazon |
 | 4 | microSD | 8–32GB (A1 or better; compatibility varies) | ¥800 | Consumer electronics retailer |
 | 5 | Power | **Not onboard (external power)**. USB power cable + a power source you already own (PC / mobile battery pack / dry-cell box) | ¥0–3,000 | — |
@@ -157,9 +158,13 @@ module (240×240, SPI, the same panel as the HAT) and connectorised buttons such
 Exact pinouts and stock have to be confirmed against the vendor's wiki when ordering; nothing here has
 been bought or measured yet.
 
-### 2.5 Camera
+### 2.5 Camera (deferred — the light receiver was chosen instead)
 
-The camera is the **input** path (reading a UR QR displayed by the host). On the RP2350 there is **no CSI**,
+The camera was the alternative **input** path. It is **not** being bought: it costs about $25 against
+¥300–600 for the light receiver, and the light path reuses the same payload (UR strings) and the same
+assembler. The research is kept here in case a camera becomes attractive later.
+
+The camera would be the **input** path (reading a UR QR displayed by the host). On the RP2350 there is **no CSI**,
 so the camera must be an **SPI module wired to the 40-pin header** — which the chosen small display makes
 possible again (it covers only a third of the board; see [09-light-audio-input.md](09-light-audio-input.md) §9
 for why the camera was preferred over a light sensor).

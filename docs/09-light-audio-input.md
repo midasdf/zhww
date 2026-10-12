@@ -111,42 +111,42 @@ The receiving logic is pure software and can be developed and tested on a PC tod
 None of this needs the board. The hardware only decides *which* sensor and *which* pin.
 
 
-## 6. Parts that can be used for a light receiver
+## 6. The light receiver: what to actually buy
 
-Nothing here needs an ADC, because **both ADC-capable pins on the header are taken by the LCD HAT**
-(section 2.2). All three options below present a digital interface.
+**Decision: the light path is the input channel** (see §9 for why it beat the camera on cost). The
+module to buy is the commodity **"LM393 light sensor" board**: a photodiode or phototransistor, a
+comparator, a trimmer, and — on the usual 4-pin version — **both an analog (`AO`) and a digital (`DO`)
+output**. Roughly **¥300–600**, sold by Akuzuki Denshi, aitendo, Amazon.co.jp and Yahoo Shopping, in
+multi-packs (for example a 3-pack of "photosensitive diode, digital/analog output" boards).
 
-| Option | Example part | Interface | Notes |
+| Candidate | Output | Speed | Verdict |
 |---|---|---|---|
-| **Photodiode / phototransistor + comparator module** (recommended) | "LM393 light sensor module" boards sold by Akizuki Denshi, aitendo, Amazon and others; discrete photodiodes such as the S6775 / TEPT-family parts if a bare sensor is preferred | **Digital out** (open collector or push-pull), threshold set by an on-board trimmer | ~¥200–500. Works with **any visible light source**, including a phone screen. Bandwidth is kHz-class, so the sender's screen refresh (60–120 Hz) is the limiting factor, not the receiver. |
-| IR receiver module | **TSOP4838** (38 kHz carrier demodulator) | **Digital out**, already demodulated | Very clean signal and **immune to ambient light flicker**, because it only sees modulated IR. But a phone screen emits no IR, so the sender needs an IR emitter (an IR LED dongle) — that hurts the "any phone, no app" story. Good as a *second* channel, not as the primary one. |
-| Digital ambient-light sensor | **VEML7700** (I²C), Adafruit / DFRobot "Gravity" breakouts | **I²C** (digital) | No threshold calibration and a huge dynamic range. Slower: a measurement takes on the order of 100 ms, so the usable rate is a few bytes/s at best. Convenient, but the comparator option is faster and cheaper. |
+| **LM393 board with a photodiode or phototransistor, `AO` + `DO`** | analog **and** digital | kHz-class | **Buy this.** The analog output goes to the ADC so the firmware can threshold in software (robust against a changing ambient level); the digital output is a free fallback if no ADC pin is available |
+| LM393 board with a **photoresistor (LDR/CdS)** | analog + digital | ~10–100 ms | Avoid: too slow for a screen flickering at 30–120 Hz, and CdS cells are being phased out |
+| TSOP4838 infrared receiver | digital, demodulated | fast | Excellent against ambient light, but a phone screen emits no IR, so the sender would need an IR emitter |
+| VEML7700 / BH1750 (I²C lux sensor) | I²C | ~100 ms per reading | No threshold to set, but a few bytes per second at best |
 
-### Wiring (no soldering)
+### How it connects
 
-- Any **free GPIO** on the 40-pin header works: 0, 1, 2, 3, 4, 7, 9, 12, 14, 15, 17, 18, 22, 23
-  (the HAT occupies 14 pins; see section 2.2).
-- Reach them with a **40-pin stacking header** between the board and the HAT, then a jumper wire to
-  the sensor breakout.
-- For the IR module the output is a clean digital edge; both it and the comparator module can be
-  decoded with **PIO** (edge timestamps in hardware) rather than by polling, which is what makes a
-  fast, jitter-free decode possible.
+| Module pin | Goes to | Why |
+|---|---|---|
+| `AO` (analog) | **an ADC pin (GPIO26/27)** | The firmware samples it and applies an adaptive threshold with hysteresis, so a slowly changing room light does not flip the decision |
+| `DO` (digital) | a free GPIO (optional) | A hardware-threshold path; useful as a cross-check or if no ADC is free |
+| `VCC` | 3.3 V | These boards accept 3.3–5 V |
+| `GND` | GND | — |
 
-### Ambient light is the real enemy
+Both ADC-capable pins were blocked by the old Waveshare HAT; with the chosen Adafruit Mini PiTFT
+(#4393) the header is mostly free again, so **at least one ADC channel is expected to be available**.
+That has to be confirmed against Adafruit's pin list when ordering: if the display's two buttons happen
+to occupy GPIO26 and GPIO27, the receiver falls back to the digital output and keeps working.
 
-Indoor lighting flickers at 100/120 Hz, which is the same order as the data rate. Three mitigations,
-all cheap:
+Sampling and decoding plan (all host-testable): sample the ADC at a few kHz, remove the slow ambient
+level with a moving average, threshold with hysteresis, decode **Manchester** symbols, then the frame
+(preamble, length, CRC-32) from §3, and finally hand the resulting **UR string** to the multipart UR
+receiver in `src/transport/ur_receive.zig` — the same assembler the camera path would have used.
 
-1. A **physical light guide** — a short opaque tube or cup over the sensor, so only the sender's
-   screen reaches it. This is the single most effective measure.
-2. **Manchester encoding** plus a preamble and CRC-32 in the frame (section 3), so that a wrong
-   threshold produces a rejected frame rather than wrong data. Nothing is signed on a failed CRC.
-3. The comparator module's **trimmed threshold**, set once while the phone screen is at the distance
-   it will be used at.
-
-The sender can be a **static web page** (a canvas that flashes the screen at 2–4 brightness levels).
-No app installation, which is what makes this practical for other people.
-
+Nothing here has been bought or measured yet; prices are approximate and pin assignments are to be
+confirmed on the real board.
 
 ## 7. How to physically connect anything at all
 
@@ -198,33 +198,44 @@ board-side cut-outs and would gain a parameter for the extra height and the sens
 - Do we accept the stacking-header arrangement, or move straight to a custom carrier board for v0.2?
 - Should the device also *transmit* over these channels (an LED or a buzzer), or is the screen enough?
 
-## 9. Decision: camera + QR (light stays a documented alternative)
+## 9. Decision: a light receiver is the input channel (camera deferred)
 
-The choice was made on **how well each channel fits the protocols this project already speaks**.
+Two candidates were weighed: a camera reading a QR code, and a light receiver reading a screen that
+flickers.
 
-| | Camera + QR | Light (OOK) |
+| | Camera + QR | **Light receiver** |
 |---|---|---|
-| Payload protocol | **BC-UR over QR — already implemented on both ends.** The device encodes UR parts today and the decoder is finished and verified (124/124 against segno and python-qrcode) | The payload could also be UR text, but the **link layer would be invented here**: preamble, framing, Manchester encoding, CRC |
-| Standard? | Yes: QR (ISO/IEC 18004) + BC-UR (BCR-2020-005) | No published standard for wallet exchange over light |
-| Sender (phone/PC) | **Already exists** — any wallet that displays a UR QR (Sparrow, BlueWallet, …) | A **custom web page** would have to be written and given to users |
-| Hard part of the work | Done: the decoder exists, including perspective, rotation, blur, noise and JPEG tolerance | Not started: demodulation, ambient-light rejection, sender |
-| What is still missing | Only the transport: a camera driver and image capture | The whole link plus its sender |
-| Input speed | **One frame is enough**: a cheap 320×240 camera can carry a whole ~200-byte PSBT in a single version-13 QR, and the decoder has been tested down to 1 px/module | Tens of seconds for the same payload |
-| Security shape | Optical, line of sight, same confirmation flow as today | Line of sight (good), but a bespoke protocol whose failure modes are unknown |
+| Cost | ~$25 (about ¥3,800) | **¥300–600** |
+| Sender (phone/PC) | Already exists (any wallet that shows a UR QR) | A **static web page** would be written here (no app to install) |
+| Payload | UR over QR (published standard, both ends implemented and verified) | The **same UR strings**; only the link layer below them is new |
+| Link layer | QR + BC-UR, already done | Written here: Manchester, framing, CRC-32, adaptive thresholding |
+| Speed | One frame, effectively instant | ~5–15 B/s, so a ~200-byte PSBT takes roughly 15–40 s |
+| Pins | ~5 (SPI1) | **1** (an ADC pin, plus an optional digital one) |
+| Hardware risk | Module sourcing, header soldering, SPI/PIO capture | A commodity board that any shop sells |
 
-**Decision: implement camera + QR input.** It reuses a published standard, keeps the payload identical to
-the output path (so the device speaks one language in both directions), needs no sender-side software from
-the user, and the difficult half — decoding — is already built and independently verified.
+**Decision: the light receiver.** The camera wins on protocol fit and speed, but it costs roughly ten
+times as much, and the protocol concern turns out to be smaller than it looked: the payload stays
+**UR**, and the multipart assembler (`src/transport/ur_receive.zig`) takes decoded strings, so it is
+**shared by both channels** — the light path only has to deliver the same strings. Writing a
+Manchester/framing layer and a one-page sender is work this project can do and test without hardware,
+whereas the camera's cost is money the user has to spend.
 
-The light/sound path is **not rejected**, just deferred: the parts list (§6), the protocol sketch (§3) and
-the connection notes (§7) stay here so it can be picked up if a camera turns out to be unacceptable
-(for example if a camera module cannot be sourced without soldering, or if a user wants a device with no
-image sensor at all).
+**Honest costs of this choice**
 
-### What that means concretely
+- **Speed**: a PSBT takes tens of seconds to receive instead of a fraction of a second. Signing is a
+  once-in-a-while action, so this is accepted, but it is real.
+- **No standard link layer**: the framing and modulation are ours. They are simple enough to test
+  hard (synthetic signals with noise, ambient flicker and gain drift), and a failed CRC means nothing
+  is signed — but it is not a standard anyone else has reviewed.
+- **Ambient light**: indoor lighting flickers at 100/120 Hz, the same order as the data rate. A light
+  guide, Manchester encoding and an adaptive threshold are the mitigations (§6).
 
-1. **Host-side (no hardware needed)**: the decoder returns text per frame, so something must **assemble
-   multi-part UR** from a sequence of scanned frames: collect parts, tolerate any order and duplicates,
-   reject conflicting duplicates, check the CBOR checksum, and only then hand back the payload (PSBT).
-   This is pure software and testable against this project's own encoder in a round trip.
-2. **On hardware (later)**: a camera driver, a grayscale frame buffer, and the same assembler.
+The camera research stays in [03-hardware-bom.md](03-hardware-bom.md) §2.5 so it can be picked up later.
+
+### What happens next
+
+1. **Sender** (host, no hardware): a static web page that flashes the screen to send a UR string.
+2. **Receiver** (firmware, no hardware): ADC sampling, ambient removal, adaptive threshold, Manchester
+   decoding, framing and CRC — with synthetic-signal tests.
+3. **Join-up**: the decoded string goes into `ur_receive.zig` (already written and tested), giving a
+   PSBT from a flickering screen.
