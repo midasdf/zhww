@@ -17,16 +17,18 @@ const usage =
     \\使い方: zhww <コマンド> [オプション]
     \\
     \\コマンド:
-    \\  address    アドレスを表示する
-    \\  walkthrough 実機の画面の流れを PNG で出力する（PC での確認用）\n    \\  card       FAT32 イメージ（microSD の代わり）を操作する\n    \\  evm-show   署名済み/未署名の EVM トランザクションを表示する（raw hex）
-    \\  evm-sign   EVM のトランザクション（JSON）に署名する
-    \\  screen     実機の画面（240×240）を PNG で出力する（PC での確認用）
-    \\  show       PSBT の中身を人間可読で表示する（画面の代わり）
-    \\  sign       PSBT（base64）に署名する。標準入力から読む
-    \\  mnemonic   ダイスの出目から mnemonic を作る（記録の検証用）
-    \\  ur         PSBT（base64）を UR（QR 転送用）に変換する
-    \\  ur-decode  UR のパートを読み取って PSBT（base64）に戻す
-    \\  version    バージョンを表示する
+    \\  address     アドレスを表示する
+    \\  show        PSBT の中身を人間可読で表示する
+    \\  screen      実機の画面（240×240）を PNG で出力する
+    \\  walkthrough 実機の画面の流れ（カード待ち → 確認 → 結果の QR）を PNG で出力する
+    \\  card        FAT32 イメージ（microSD の代わり）を操作する
+    \\  sign        PSBT（base64）に署名する。標準入力から読む
+    \\  ur          PSBT（base64）を UR（QR 転送用）に変換する
+    \\  ur-decode   UR のパートを読み取って PSBT（base64）に戻す
+    \\  mnemonic    ダイスの出目から mnemonic を作る（記録の検証用）
+    \\  evm-sign    EVM のトランザクション（JSON）に署名する
+    \\  evm-show    署名済み/未署名の EVM トランザクションを表示する（raw hex）
+    \\  version     バージョンを表示する
     \\
     \\address のオプション:
     \\  --mnemonic "<12/24 語>"    鍵の元にする mnemonic（必須）
@@ -35,41 +37,50 @@ const usage =
     \\  --network mainnet|testnet|signet|regtest （既定: mainnet）
     \\  --kind p2wpkh|p2pkh|p2sh-p2wpkh|p2tr （既定: p2wpkh）
     \\
-    \\walkthrough のオプション（カードの実物が無くても画面の流れを確認できる）:\n    \\  --image <ファイル>    FAT32 イメージ\n    \\  --mnemonic "..."      署名に使う mnemonic\n    \\  --out-dir <ディレクトリ>   PNG の出力先（既定: カレント）\n    \\  --scale <n>           1 ドットを n 倍（既定: 2）\n    \\
-    \\card の使い方（--image <ファイル> が必須。カードの実物が無くても試せる）:\n    \\  card list                    ファイル一覧\n    \\  card read  --name /IN.PSBT   内容を標準出力へ\n    \\  card write --name /OUT.PSBT  標準入力から書く\n    \\  card rm    --name /OUT.PSBT  削除\n    \\  card mv    --name /OUT.TMP --to /OUT.PSBT   リネーム\n    \\  card sign  --mnemonic "..."  /IN.PSBT に署名して /OUT.PSBT を作る\n    \\                               （/OUT.TMP に書いてからリネームする）\n    \\
-    \\evm-show のオプション:
-    \\  入力は raw トランザクションの 16 進数（0x の有無は問わない）
-    \\
-    \\evm-sign のオプション:
-    \\  --mnemonic "..."        署名に使う mnemonic（必須。EVM は 44h/60h/0h/0/0 を使う）
-    \\  --passphrase "..."      パスフレーズ（任意）
-    \\  入力（JSON）: chainId / nonce / to / value / gasLimit / gasPrice、
-    \\                 または maxFeePerGas と maxPriorityFeePerGas（EIP-1559）
-    \\
-    \\screen のオプション:
-    \\  --demo                    サンプルの確認画面を出す（入力不要）
-    \\  --qr                      標準入力の文字列を QR として表示する（UR の 1 パートなど）
-    \\  --network mainnet|testnet|signet|regtest （アドレス表示用。既定: mainnet）
-    \\  --mnemonic "..."          渡すとお釣りを判定する（任意）
-    \\  --scale <n>               1 ドットを n 倍で出力する（既定: 1）
-    \\  入力に PSBT（base64）を渡すと、その確認画面を描く
-    \\
-    \\show のオプション:
-    \\  --network mainnet|testnet|signet|regtest （アドレス表示用。既定: mainnet）
-    \\  --mnemonic "..."         渡すとお釣りを判定する（任意）
-    \\
     \\sign のオプション:
     \\  --mnemonic "..."           署名に使う mnemonic（必須）
     \\  --passphrase "..."         パスフレーズ（任意）
+    \\
+    \\show / screen のオプション:
+    \\  --network mainnet|testnet|signet|regtest （アドレス表示用。既定: mainnet）
+    \\  --mnemonic "..."           渡すとお釣りを判定する（任意）
+    \\  --scale <n>                1 ドットを n 倍で出力する（screen。既定: 1）
+    \\  --demo                     サンプルの確認画面を出す（screen。入力不要）
+    \\  --qr                       標準入力の文字列を QR として表示する（screen）
+    \\  --ec l|m|q|h               QR の誤り訂正レベル（既定: m）
+    \\
+    \\walkthrough のオプション:
+    \\  --image <ファイル>         FAT32 イメージ（必須）
+    \\  --mnemonic "..."           署名に使う mnemonic（必須）
+    \\  --out-dir <ディレクトリ>    PNG の出力先（既定: カレント）
+    \\  --scale <n>                1 ドットを n 倍（既定: 2）
+    \\
+    \\card の使い方（--image <ファイル> が必須。カードの実物が無くても試せる）:
+    \\  card list                    ファイル一覧
+    \\  card read  --name /IN.PSBT   内容を標準出力へ
+    \\  card write --name /OUT.PSBT  標準入力から書く
+    \\  card rm    --name /OUT.PSBT  削除
+    \\  card mv    --name /OUT.TMP --to /OUT.PSBT   リネーム
+    \\  card sign  --mnemonic "..."  /IN.PSBT に署名して /OUT.PSBT を作る
+    \\                               （/OUT.TMP に書いてからリネームする）
+    \\
+    \\ur のオプション:
+    \\  --fragment <n>             QR 1 枚あたりの最大バイト数（既定: 40）
+    \\  --type <型名>              UR の型（既定: crypto-psbt）
     \\
     \\mnemonic のオプション:
     \\  --dice "123456..."         ダイスの出目（1〜6）
     \\  --words 12|24              語数（既定: 24）
     \\  --camera <hex>             カメラ等の追加エントロピー（任意）
     \\
-    \\ur / ur-decode のオプション:
-    \\  --fragment <n>             QR 1 枚あたりの最大バイト数（既定: 40）
-    \\  --type <型名>              UR の型（既定: crypto-psbt）
+    \\evm-sign のオプション:
+    \\  --mnemonic "..."           署名に使う mnemonic（必須。44h/60h/0h/0/0 を使う）
+    \\  --passphrase "..."         パスフレーズ（任意）
+    \\  入力（JSON）: chainId / nonce / to / value / gasLimit / gasPrice、
+    \\                 または maxFeePerGas と maxPriorityFeePerGas（EIP-1559）
+    \\
+    \\evm-show のオプション:
+    \\  入力は raw トランザクションの 16 進数（0x の有無は問わない）
     \\
 ;
 
