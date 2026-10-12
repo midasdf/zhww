@@ -16,7 +16,7 @@
 | 実装済み（CLI） | `address` / `sign` / `show`（署名前の確認表示） / `mnemonic`（ダイス検証） / `ur` / `ur-decode` / `evm-sign` / `evm-show` |
 | 実装済み（転送層） | **BC-UR**（Bytewords の standard/uri/minimal、CRC-32、単一パート・マルチパートのエンコード/デコード、順不同・重複ありの再構成） |
 | 実装済み（EVM） | RLP のエンコード・デコード / EIP-55 チェックサム付きアドレス / **EIP-155（legacy）と EIP-1559（type 2）の署名**（両方とも署名して検証まで行う） / EIP-191 `personal_sign` / **EIP-712 型付きデータ**（encodeType の依存型ソート・配列・入れ子・ドメイン推論） / **ABI デコード**（正準形のみ受理） / **ERC-7730 clear signing**（記述子の解析・関数の照合・人間可読な表示項目の生成・危険パターンの警告） |
-| テスト | **215 件すべて成功**（BTC: BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件・統合テスト・**Bitcoin Core が単一署名・2-of-3 マルチシグ・Taproot の署名を受理することの確認** / EVM: RLP 公式ベクタ・**EIP-155 の公式例とバイト一致**・EIP-55・EIP-191・EIP-712（仕様の既知値と一致し、署名も独立実装と一致）・ABI（ethers.js が生成した calldata と一致）・ERC-7730（実際のレジストリの記述子） / 転送層: BC-UR の仕様・参照実装の文字列と一致） |
+| テスト | **236 件すべて成功**（BTC: BIP39 24 件・BIP32・BIP49/84/86・**BIP143 の署名がバイト単位で一致**・BIP174 の PSBT 不正 20 件/妥当 27 件・統合テスト・**Bitcoin Core が単一署名・2-of-3 マルチシグ・Taproot の署名を受理することの確認** / EVM: RLP 公式ベクタ・**EIP-155 の公式例とバイト一致**・EIP-55・EIP-191・EIP-712（仕様の既知値と一致し、署名も独立実装と一致）・ABI（ethers.js が生成した calldata と一致）・ERC-7730（実際のレジストリの記述子） / 転送層: BC-UR の仕様・参照実装の文字列と一致） |
 | 未実装 | 画面 UI、実機（signet）での送金、MUR（ファウンテン符号の冗長パート） |
 
 ```bash
@@ -154,6 +154,10 @@ cat psbt.txt | ./zig-out/bin/zhww show --network regtest --mnemonic "…"
 # PSBT を UR（QR 転送用）にして、1 行 1 パートで表示する
 cat psbt.txt | ./zig-out/bin/zhww ur --fragment 40
 #   → ur:crypto-psbt/1-4/… のように出力される（アニメーション QR の各コマ）
+
+# 実機の画面（240×240）を PNG で確認する（実機が無くても UI を詰められる）
+./zig-out/bin/zhww screen --demo --scale 2 > demo.png
+cat psbt.txt | ./zig-out/bin/zhww screen --qr --scale 2 > qr.png   # UR を QR 表示
 
 # UR のパートを読み取って PSBT に戻す
 ./zig-out/bin/zhww ur-decode < parts.txt

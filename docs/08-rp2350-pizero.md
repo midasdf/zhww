@@ -96,6 +96,7 @@ Waveshare の HAT は BCM 番号で次のピンを使う。40pin が Pi 互換�
 | [src/ui/font.zig](../firmware/src/ui/font.zig) | 8×8 ビットマップフォント（パブリックドメイン、出典を明記） | 字形の検証 |
 | [src/ui/framebuffer.zig](../firmware/src/ui/framebuffer.zig) | RGB565 の描画（点・矩形・文字・ドット列）。範囲外はクリップ | ピクセル単位で検証 |
 | [src/ui/screen.zig](../firmware/src/ui/screen.zig) | 240×240 の画面レイアウト（タイトル・ラベル/値・警告・QR・フッター） | 領域ごとの描画を検証 |
+| [src/ui/qr.zig](../firmware/src/ui/qr.zig) | QR エンコーダ（ISO/IEC 18004。表示専用、デコーダは含まない） | 独立実装（qrcodegen）と**全モジュール行列が一致** |
 | [src/cli/png.zig](../firmware/src/cli/png.zig) | PNG 出力（無圧縮 zlib。外部ライブラリ不要） | 構造と CRC / Adler-32 を検証 |
 
 **PC で画面を見る方法**（実機は不要）:
@@ -104,7 +105,25 @@ Waveshare の HAT は BCM 番号で次のピンを使う。40pin が Pi 互換�
 cd firmware && zig build
 ./zig-out/bin/zhww screen --demo --scale 2 > demo.png
 cat psbt.txt | ./zig-out/bin/zhww screen --network regtest --scale 2 > confirm.png
+
+# UR の 1 パートを QR として表示する（実機の「スマホに見せる」画面）
+cat psbt.txt | ./zig-out/bin/zhww ur --fragment 40 | head -1 \
+  | ./zig-out/bin/zhww screen --qr --scale 2 > qr.png
 ```
+
+![UR の 1 パートを QR にした画面](images/screen-qr-ur.png)
+
+*Bitcoin Core の PSBT を BC-UR のパートに変換し、その 1 つを QR にした画面（v7・45×45 モジュール・EC M）。
+この PNG を独立した読み取り実装（OpenCV の QRCodeDetector）で復号すると、元の UR 文字列と
+**完全に一致**することを確認済み。*
+
+**QR エンコーダの検証**（重要）:
+- 独立実装 **qrcodegen 1.8.0** と、同一入力・同一 EC・同一マスクで**全モジュール行列が一致**（強制マスクで 16/16、全 40 バージョン × 4 EC の網羅比較は実装時に 320/320）
+- 自動マスク選択は **ISO/IEC 18004 Annex I.2 の作業例**（`"01234567"`・EC M → マスク 2）を再現する
+- 生成した QR を **OpenCV で復号**して内容が一致することまで確認
+- **注意**: オラクルとして使った segno 1.6.6 にはバイトモードのパディングのバグがある
+  （[heuer/segno#123](https://github.com/heuer/segno/issues/123)、未修正）。本実装は規格どおりで、
+  qrcodegen とは一致し segno とは一致しない。詳細は [../firmware/tests/README.md](../firmware/tests/README.md) の #10
 
 実際に Bitcoin Core が作った PSBT から「送金先・金額・手数料」の確認画面が描けることを確認済み。
 

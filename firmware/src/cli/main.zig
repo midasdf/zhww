@@ -46,6 +46,7 @@ const usage =
     \\
     \\screen のオプション:
     \\  --demo                    サンプルの確認画面を出す（入力不要）
+    \\  --qr                      標準入力の文字列を QR として表示する（UR の 1 パートなど）
     \\  --network mainnet|testnet|signet|regtest （アドレス表示用。既定: mainnet）
     \\  --mnemonic "..."          渡すとお釣りを判定する（任意）
     \\  --scale <n>               1 ドットを n 倍で出力する（既定: 1）
@@ -647,7 +648,9 @@ fn commandScreen(
     var warnings_buf: [3][]const u8 = undefined;
     var warning_count: usize = 0;
 
+    const qr_mode = option(args, "--qr") != null;
     const demo = option(args, "--demo") != null;
+    if (qr_mode) return commandScreenQr(allocator, args, stdout);
     var qr_modules: ?[]u8 = null;
     if (demo) {
         title = "CONFIRM";
@@ -780,6 +783,73 @@ fn commandScreen(
     }
     try stdout.interface.flush();
     stderrPrint("画面を PNG で出力しました（{d}×{d}）\n", .{ screen_width * scale, screen_height * scale });
+}
+
+/// 文字列（UR の 1 パートなど）を QR として表示する画面を描く。
+fn commandScreenQr(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    stdout: anytype,
+) !void {
+    const screen_width: usize = 240;
+    const screen_height: usize = 240;
+
+    const input = try readAllStdin(allocator);
+    const text = std.mem.trim(u8, input, " \t\r\n");
+    if (text.len == 0) {
+        stderrPrint("QR にする文字列を標準入力から渡してください\n", .{});
+        return error.Usage;
+    }
+
+    const ec_text = option(args, "--ec") orelse "m";
+    const ec: zhww.ui_qr.EcLevel = switch (ec_text[0]) {
+        'l', 'L' => .l,
+        'm', 'M' => .m,
+        'q', 'Q' => .q,
+        else => .h,
+    };
+
+    var matrix = try zhww.ui_qr.encode(allocator, text, ec);
+
+    const pixels = try allocator.alloc(u16, screen_width * screen_height);
+    var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, screen_width, screen_height);
+
+    const caption = try std.fmt.allocPrint(
+        allocator,
+        "{d} chars  v{d}  EC {s}",
+        .{ text.len, matrix.version, ec_text },
+    );
+    const lines = [_]zhww.ui_screen.Line{
+        .{ .label = "SCAN", .value = caption },
+    };
+    const screen = zhww.ui_screen.Screen{
+        .title = "SHOW TO PHONE",
+        .lines = &lines,
+        .qr = .{ .width = matrix.size, .height = matrix.size, .modules = matrix.modules },
+        .footer_left = "BACK",
+        .footer_right = "NEXT",
+    };
+    screen.render(&fb);
+
+    const scale_text = option(args, "--scale") orelse "1";
+    const scale = try std.fmt.parseInt(usize, scale_text, 10);
+    if (scale <= 1) {
+        try png.writeRgb565(&stdout.interface, allocator, pixels, screen_width, screen_height);
+    } else {
+        const big = try allocator.alloc(u16, screen_width * scale * screen_height * scale);
+        for (0..screen_height * scale) |y| {
+            for (0..screen_width * scale) |x| {
+                big[y * screen_width * scale + x] = pixels[(y / scale) * screen_width + (x / scale)];
+            }
+        }
+        try png.writeRgb565(&stdout.interface, allocator, big, screen_width * scale, screen_height * scale);
+    }
+    try stdout.interface.flush();
+    stderrPrint(
+        "QR を出力しました（v{d}・{d}×{d}モジュール）\n",
+        .{ matrix.version, matrix.size, matrix.size },
+    );
+    matrix.deinit(allocator);
 }
 
 // ---------------------------------------------------------------- show（表示）

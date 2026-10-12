@@ -33,6 +33,7 @@ pub const ui_font = @import("ui/font.zig");
 pub const ui_framebuffer = @import("ui/framebuffer.zig");
 pub const ui_screen = @import("ui/screen.zig");
 pub const ui_st7789 = @import("ui/st7789.zig");
+pub const ui_qr = @import("ui/qr.zig");
 pub const evm_rlp = @import("apps/evm/rlp.zig");
 pub const evm_address = @import("apps/evm/address.zig");
 pub const evm_transaction = @import("apps/evm/transaction.zig");
@@ -64,6 +65,7 @@ test {
     _ = ui_framebuffer;
     _ = ui_screen;
     _ = ui_st7789;
+    _ = ui_qr;
     _ = evm_rlp;
     _ = evm_address;
     _ = evm_transaction;
