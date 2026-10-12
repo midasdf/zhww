@@ -247,8 +247,9 @@ The UR strings come from the host side of this project or from any UR-capable wa
 zhww ur --fragment 14 < psbt.txt > parts.txt
 ```
 
-Keep the number of parts small: a shorter fragment means more parts, and more parts mean a longer
-flash sequence. The device's own output direction is unaffected — it answers with a QR code.
+Choosing `--fragment` is a trade: a shorter fragment makes each frame shorter (easier to receive
+through flicker and noise) but produces more parts, so the repeated flash sequence takes longer. The
+default is 40 bytes. The device's own output direction is unaffected — it answers with a QR code.
 
 ### What happens next
 
