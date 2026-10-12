@@ -15,10 +15,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Zig
-        uses: mlugg/setup-zig@v1
-        with:
-          version: 0.17.0
+      - name: Install Zig 0.17.0
+        run: |
+          # 注意: ziglang.org の index.json には 0.17.0 が載っていないことがあるが、
+          # バイナリの tarball は取得できる。バージョンを固定して再現性を保つ。
+          curl -fsSL -o zig.tar.xz https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.17.0" >> "$GITHUB_PATH"
 
       - name: Install libsecp256k1
         run: |
