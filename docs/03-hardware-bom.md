@@ -315,6 +315,26 @@ nothing extra to buy for it.
 | `AO` | **an ADC pin** (`GPIO26` or `GPIO27`) | the firmware samples this; the pin has to be confirmed against Adafruit's pin list for the display |
 | `DO` | any free GPIO | optional hardware-threshold path |
 
+**Why not a Qwiic/STEMMA QT light sensor** (asked, and worth writing down): the Mini PiTFT has a
+Qwiic port and Switch Science sells both a [Qwiic-Qwiic cable](https://www.switch-science.com/products/6896)
+and a [BH1750 light sensor breakout](https://www.switch-science.com/products/6745), which looks like a
+cable-only, no-soldering answer. It cannot carry this signal:
+
+| | Needed | BH1750 |
+|---|---|---|
+| Readings per second | **3000** (30 symbols/s x 100 samples per symbol) | at most ~60 (one measurement takes 16-180 ms) |
+| Sampling clock | uniform, so the receiver can recover the bit clock | the measurement time itself varies by tens of percent |
+
+That is roughly **50x short**, and even at the slowest sender rate (10 symbols/s, 1000 samples/s) it is
+16x short. Dropping to one sample per symbol would mean redesigning the receiver around a jittery,
+asynchronous clock - a much more fragile design for a signing device - and even then the margin would
+be thin. A Qwiic port carries **I2C only**: it cannot pass an analog light level to the ADC, which is
+what the receiver needs.
+
+So the light signal has to reach an **ADC pin** through the 0.1 inch header, and female-to-female
+jumpers are what does it. The Qwiic port is still useful for the things I2C is good at - extra buttons,
+a rotary encoder, a slow environment sensor - and the Qwiic cable is worth having for those.
+
 Check the silkscreen for the pin order before connecting: the 4-pin boards come in both
 `VCC GND DO AO` and mirror-image orders. Nothing here has been bought or measured in this session, and
 no specific product page could be verified - the specification above is what matters.
