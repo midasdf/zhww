@@ -19,7 +19,7 @@ const usage =
     \\Commands:
     \\  address     Show the address for a mnemonic
     \\  show        Show the contents of a PSBT in human-readable form
-    \\  screen      Render the device screen (240x240) as a PNG
+    \\  screen      Render the device screen (240x240 or 240x135) as a PNG
     \\  walkthrough Render the device screen flow (card, confirm, result QR) as PNGs
     \\  card        Work with a FAT32 image (a stand-in for the microSD card)
     \\  sign        Sign a PSBT (base64) read from stdin
@@ -44,6 +44,8 @@ const usage =
     \\show / screen options:
     \\  --network mainnet|testnet|signet|regtest (for address display; default: mainnet)
     \\  --mnemonic "..."           If given, detect the change output (optional)
+    \\  --size WxH                 Screen size (default: 240x240; 240x135 = Adafruit Mini PiTFT #4393)
+    \\  --page <n>                 Page to draw when the content does not fit (screen; default: 1)
     \\  --scale <n>                Scale each pixel by n (screen; default: 1)
     \\  --demo                     Draw a sample confirmation screen (screen; no input)
     \\  --qr                       Show the stdin text as a QR code (screen)
@@ -53,6 +55,7 @@ const usage =
     \\  --image <file>             FAT32 image (required)
     \\  --mnemonic "..."           Mnemonic to sign with (required)
     \\  --out-dir <dir>            PNG output directory (default: current directory)
+    \\  --size WxH                 Screen size (default: 240x240; 240x135 = Adafruit Mini PiTFT #4393)
     \\  --scale <n>                Scale each pixel by n (default: 2)
     \\  --part <n>                 UR part to show in the result QR (default: 1)
     \\
@@ -215,6 +218,37 @@ fn requiredOption(args: []const []const u8, name: []const u8) ![]const u8 {
         return error.Usage;
     };
 }
+
+/// The screen to render (`--size WIDTHxHEIGHT`).
+///
+/// The default is the original 240x240 panel (Waveshare 1.3" HAT); `240x135` is the Adafruit
+/// Mini PiTFT (#4393). The layout adapts to whatever size is passed in, so other sizes work
+/// too (they are only checked for sanity).
+const ScreenSize = struct {
+    width: usize,
+    height: usize,
+
+    fn of(args: []const []const u8) !ScreenSize {
+        const text = option(args, "--size") orelse return .{ .width = 240, .height = 240 };
+        const at = std.mem.indexOfScalar(u8, text, 'x') orelse std.mem.indexOfScalar(u8, text, 'X') orelse {
+            stderrPrint("invalid value for --size: {s} (expected WIDTHxHEIGHT, e.g. 240x135)\n", .{text});
+            return error.InvalidArgument;
+        };
+        const width = std.fmt.parseInt(usize, text[0..at], 10) catch {
+            stderrPrint("invalid value for --size: {s} (expected WIDTHxHEIGHT, e.g. 240x135)\n", .{text});
+            return error.InvalidArgument;
+        };
+        const height = std.fmt.parseInt(usize, text[at + 1 ..], 10) catch {
+            stderrPrint("invalid value for --size: {s} (expected WIDTHxHEIGHT, e.g. 240x135)\n", .{text});
+            return error.InvalidArgument;
+        };
+        if (width < 64 or height < 64 or width > 4096 or height > 4096) {
+            stderrPrint("--size out of range: {s} (64..4096 dots per side)\n", .{text});
+            return error.InvalidArgument;
+        }
+        return .{ .width = width, .height = height };
+    }
+};
 
 fn networkOf(args: []const []const u8) !zhww.btc_address.Network {
     const name = option(args, "--network") orelse return .mainnet;
@@ -566,8 +600,9 @@ fn commandWalkthrough(
     var fs = try zhww.fs_fat32.Fat32.mount(device.device(), allocator);
     defer fs.deinit();
 
-    const width: usize = 240;
-    const height: usize = 240;
+    const size = try ScreenSize.of(args);
+    const width = size.width;
+    const height = size.height;
     const pixels = try allocator.alloc(u16, width * height);
     const big = try allocator.alloc(u16, width * scale * height * scale);
 
@@ -587,7 +622,6 @@ fn commandWalkthrough(
 
     // --- Screen 2: inspect the contents of the card ---
     {
-        var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, width, height);
         var list_buffer: [4]zhww.ui_screen.Line = undefined;
         var count: usize = 0;
         var names: [4][]const u8 = undefined;
@@ -616,8 +650,7 @@ fn commandWalkthrough(
             .footer_left = "CANCEL",
             .footer_right = if (has_input) "SIGN" else "",
         };
-        screen.render(&fb);
-        try writeScreenPng(allocator, io, out_dir, "6-confirm.png", pixels, big, width, height, scale);
+        try renderScreenPages(allocator, io, out_dir, "6-confirm.png", screen, pixels, big, width, height, scale);
     }
 
     // --- Screen 3: show the result as a QR code (turn the signed PSBT into UR) ---
@@ -637,26 +670,18 @@ fn commandWalkthrough(
         const keys = try zhww.btc_sign.keysFromMnemonic(mnemonic, "");
         const outcome = try zhww.btc_sign.signPsbtBytes(allocator, psbt_bytes, keys);
 
-        // Turn the signed PSBT into UR (show part 1 = same as the device's animated QR)
-        var scratch: [8192]u8 = undefined;
-        var encoder = try zhww.ur.Encoder.init(
-            zhww.ur.type_crypto_psbt,
-            outcome.signed_psbt,
-            60,
-            zhww.ur.default_min_fragment_len,
-            &scratch,
-        );
-        // Build all parts and show the requested one (same as NEXT PART on the device)
-        var parts = std.ArrayList([]const u8).empty;
-        var part_buffer: [1024]u8 = undefined;
-        while (try encoder.next(&part_buffer, .lower)) |part| {
-            try parts.append(allocator, try allocator.dupe(u8, part));
-            if (parts.items.len > 64) break; // just in case
-        }
+        // Turn the signed PSBT into UR (show part 1 = same as the device's animated QR).
+        //
+        // How much fits in one code depends on the screen: a 240x135 screen can only show a
+        // small QR at a scannable scale, so the parts have to be shorter there (more parts
+        // to scan, but each one readable).
+        const capacity = zhww.ui_screen.Layout.forSize(width, height).maxQrModules(2);
+        const ur = try urPartsForScreen(allocator, outcome.signed_psbt, capacity);
+        const parts = ur.parts;
         const part_index_text = option(args, "--part") orelse "1";
         const part_index = @max(@as(usize, 1), std.fmt.parseInt(usize, part_index_text, 10) catch 1);
-        const shown_index = @min(part_index, parts.items.len);
-        const first_part = if (parts.items.len > 0) parts.items[shown_index - 1] else "";
+        const shown_index = @min(part_index, parts.len);
+        const first_part = if (parts.len > 0) parts[shown_index - 1] else "";
 
         var matrix = try zhww.ui_qr.encode(allocator, first_part, .m);
         defer matrix.deinit(allocator);
@@ -671,7 +696,7 @@ fn commandWalkthrough(
             .{ .label = "", .value = try std.fmt.allocPrint(
                 allocator,
                 "part {d}/{d}",
-                .{ shown_index, parts.items.len },
+                .{ shown_index, parts.len },
             ) },
             .{ .label = "", .value = try std.fmt.allocPrint(
                 allocator,
@@ -686,10 +711,106 @@ fn commandWalkthrough(
             .footer_left = "BACK",
             .footer_right = "NEXT PART",
         };
-        screen.render(&fb);
-        try writeScreenPng(allocator, io, out_dir, "7-signed.png", pixels, big, width, height, scale);
-        stderrPrint("QR: part {d}/{d}, {d} chars, v{d}\n", .{ shown_index, parts.items.len, first_part.len, matrix.version });
+        try renderScreenPages(allocator, io, out_dir, "7-signed.png", screen, pixels, big, width, height, scale);
+        const layout = zhww.ui_screen.Layout.forSize(width, height);
+        const qr_scale = if (screen.plan(&fb).qr) |qr| qr.scale else 0;
+        stderrPrint(
+            "QR: part {d}/{d}, {d} chars, v{d} ({d}x{d} modules at {d} dot/module, {d} B fragments)\n",
+            .{ shown_index, parts.len, first_part.len, matrix.version, matrix.size, matrix.size, qr_scale, ur.fragment_len },
+        );
+        if (qr_scale < layout.min_qr_scale) {
+            stderrPrint(
+                "warning: this QR is too large for {d}x{d} (needs {d} dots at the {d} dot/module minimum; the screen has room for {d} modules)\n",
+                .{ width, height, matrix.size * layout.min_qr_scale, layout.min_qr_scale, capacity },
+            );
+        }
     }
+}
+
+/// UR parts of the signed PSBT, sized so that one part still fits the screen's QR area.
+const UrParts = struct {
+    parts: [][]const u8,
+    /// Max bytes per part that was used.
+    fragment_len: usize,
+};
+
+/// Build UR parts that fit `max_modules` at EC level M.
+///
+/// The candidate list starts at the fragment length the device uses on a 240x240 screen (60 B)
+/// and goes down until the resulting QR fits; on a 240x135 screen that means shorter parts and
+/// more of them, because a version-9 symbol (53 modules) cannot be drawn at 2 dots per module
+/// between the title bar and the footer.
+fn urPartsForScreen(
+    allocator: std.mem.Allocator,
+    message: []const u8,
+    max_modules: usize,
+) !UrParts {
+    const candidates = [_]usize{ 60, 50, 45, 40, 35, 32, 30, 26, 20, 14, zhww.ur.default_min_fragment_len };
+    for (candidates) |fragment_len| {
+        var scratch: [8192]u8 = undefined;
+        var encoder = try zhww.ur.Encoder.init(
+            zhww.ur.type_crypto_psbt,
+            message,
+            fragment_len,
+            zhww.ur.default_min_fragment_len,
+            &scratch,
+        );
+        var parts = std.ArrayList([]const u8).empty;
+        var part_buffer: [1024]u8 = undefined;
+        var too_long = false;
+        while (try encoder.next(&part_buffer, .lower)) |part| {
+            var matrix = try zhww.ui_qr.encode(allocator, part, .m);
+            const modules = matrix.size;
+            matrix.deinit(allocator);
+            if (modules > max_modules) {
+                too_long = true;
+                break;
+            }
+            try parts.append(allocator, try allocator.dupe(u8, part));
+            if (parts.items.len > 64) break; // just in case
+        }
+        if (!too_long and parts.items.len > 0) {
+            return .{ .parts = parts.items, .fragment_len = fragment_len };
+        }
+    }
+    stderrPrint("cannot fit the signed PSBT into a {d} module QR code\n", .{max_modules});
+    return error.InvalidArgument;
+}
+
+/// Render every page of a screen and write each one as a PNG.
+///
+/// Most screens fit on one page and produce exactly one file (`name.png`, as before). A screen
+/// whose content does not fit is written as `name.png`, `name-p2.png`, … and every page carries
+/// the `1/2` page indicator, so nothing can be lost silently on a small display.
+fn renderScreenPages(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    out_dir: []const u8,
+    name: []const u8,
+    screen: zhww.ui_screen.Screen,
+    pixels: []u16,
+    big: []u16,
+    width: usize,
+    height: usize,
+    scale: usize,
+) !void {
+    var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, width, height);
+    var paged = screen;
+    var page: usize = 1;
+    while (true) : (page += 1) {
+        paged.page = page;
+        paged.render(&fb);
+        const count = paged.pageCount(&fb);
+        const file_name = if (count > 1) try pageName(allocator, name, page) else name;
+        try writeScreenPng(allocator, io, out_dir, file_name, pixels, big, width, height, scale);
+        if (page >= count) break;
+    }
+}
+
+/// `6-confirm.png` + page 2 -> `6-confirm-p2.png`.
+fn pageName(allocator: std.mem.Allocator, name: []const u8, page: usize) ![]const u8 {
+    const stem = if (std.mem.endsWith(u8, name, ".png")) name[0 .. name.len - ".png".len] else name;
+    return std.fmt.allocPrint(allocator, "{s}-p{d}.png", .{ stem, page });
 }
 
 /// Render a status Notice on the screen and write it as a PNG.
@@ -705,12 +826,10 @@ fn renderNotice(
     height: usize,
     scale: usize,
 ) !void {
-    var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, width, height);
     var lines: [8]zhww.ui_screen.Line = undefined;
     var warnings: [4][]const u8 = undefined;
     const screen = zhww.app_device.screenFor(notice, &lines, &warnings);
-    screen.render(&fb);
-    try writeScreenPng(allocator, io, out_dir, name, pixels, big, width, height, scale);
+    try renderScreenPages(allocator, io, out_dir, name, screen, pixels, big, width, height, scale);
 }
 
 /// Scale the framebuffer and write it to a file as a PNG.
@@ -1043,7 +1162,8 @@ fn warnDangerousCalldata(selector: [4]u8) !void {
 
 const png = @import("png.zig");
 
-/// Build the device screen (240x240) and output it as a PNG.
+/// Build the device screen and output it as a PNG (default 240x240, `--size 240x135` for the
+/// Adafruit Mini PiTFT).
 ///
 /// A command for checking the UI without a device.
 /// `--demo` draws a sample; passing a PSBT draws its confirmation screen.
@@ -1053,8 +1173,9 @@ fn commandScreen(
     stdout: anytype,
 ) !void {
     const network = try networkOf(args);
-    const screen_width: usize = 240;
-    const screen_height: usize = 240;
+    const screen_size = try ScreenSize.of(args);
+    const screen_width = screen_size.width;
+    const screen_height = screen_size.height;
 
     const pixels = try allocator.alloc(u16, screen_width * screen_height);
     var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, screen_width, screen_height);
@@ -1067,7 +1188,7 @@ fn commandScreen(
 
     const qr_mode = hasFlag(args, "--qr");
     const demo = hasFlag(args, "--demo");
-    if (qr_mode) return commandScreenQr(allocator, args, stdout);
+    if (qr_mode) return commandScreenQr(allocator, args, stdout, screen_size);
     var qr_modules: ?[]u8 = null;
     if (demo) {
         title = "CONFIRM";
@@ -1173,7 +1294,7 @@ fn commandScreen(
         qr_bitmap = .{ .width = size, .height = size, .modules = qr_modules.? };
     }
 
-    const screen = zhww.ui_screen.Screen{
+    var screen = zhww.ui_screen.Screen{
         .title = title,
         .lines = lines_buf[0..line_count],
         .warnings = warnings_buf[0..warning_count],
@@ -1181,7 +1302,11 @@ fn commandScreen(
         .footer_left = "OK",
         .footer_right = "CANCEL",
     };
+    const page_text = option(args, "--page") orelse "1";
+    screen.page = @max(@as(usize, 1), std.fmt.parseInt(usize, page_text, 10) catch 1);
     screen.render(&fb);
+    const pages = screen.pageCount(&fb);
+    warnIfQrTooSmall(&fb, &screen, screen_width, screen_height);
 
     // Scale up and output as a PNG (default is 1:1)
     const scale_text = option(args, "--scale") orelse "1";
@@ -1199,7 +1324,33 @@ fn commandScreen(
         try png.writeRgb565(&stdout.interface, allocator, big, screen_width * scale, screen_height * scale);
     }
     try stdout.interface.flush();
-    stderrPrint("wrote screen PNG ({d}x{d})\n", .{ screen_width * scale, screen_height * scale });
+    if (pages > 1) {
+        stderrPrint(
+            "wrote screen PNG ({d}x{d}), page {d}/{d}\n",
+            .{ screen_width * scale, screen_height * scale, screen.page, pages },
+        );
+    } else {
+        stderrPrint("wrote screen PNG ({d}x{d})\n", .{ screen_width * scale, screen_height * scale });
+    }
+}
+
+/// Warn when a QR had to be drawn below the scannable minimum (2 dots per module).
+///
+/// The layout draws it anyway (something is better than nothing), but a caller that can choose
+/// the data — the walkthrough, the device — should use `Layout.maxQrModules` instead.
+fn warnIfQrTooSmall(
+    fb: *const zhww.ui_framebuffer.Framebuffer,
+    screen: *const zhww.ui_screen.Screen,
+    width: usize,
+    height: usize,
+) void {
+    const layout = zhww.ui_screen.Layout.forSize(width, height);
+    const qr = screen.plan(fb).qr orelse return;
+    if (qr.scale >= layout.min_qr_scale) return;
+    stderrPrint(
+        "warning: the QR is {d} modules; {d}x{d} can only draw it at {d} dot/module (the scannable minimum is {d}; room for {d} modules)\n",
+        .{ if (screen.qr) |bitmap| bitmap.width else 0, width, height, qr.scale, layout.min_qr_scale, layout.maxQrModules(layout.min_qr_scale) },
+    );
 }
 
 /// Draw a screen that shows a string (such as one UR part) as a QR code.
@@ -1207,9 +1358,10 @@ fn commandScreenQr(
     allocator: std.mem.Allocator,
     args: []const []const u8,
     stdout: anytype,
+    size: ScreenSize,
 ) !void {
-    const screen_width: usize = 240;
-    const screen_height: usize = 240;
+    const screen_width = size.width;
+    const screen_height = size.height;
 
     const input = try readAllStdin(allocator);
     const text = std.mem.trim(u8, input, " \t\r\n");
@@ -1247,6 +1399,8 @@ fn commandScreenQr(
         .footer_right = "NEXT",
     };
     screen.render(&fb);
+    const layout = zhww.ui_screen.Layout.forSize(screen_width, screen_height);
+    const qr_scale = if (screen.plan(&fb).qr) |qr| qr.scale else 0;
 
     const scale_text = option(args, "--scale") orelse "1";
     const scale = try std.fmt.parseInt(usize, scale_text, 10);
@@ -1263,9 +1417,15 @@ fn commandScreenQr(
     }
     try stdout.interface.flush();
     stderrPrint(
-        "wrote QR (v{d}, {d}x{d} modules)\n",
-        .{ matrix.version, matrix.size, matrix.size },
+        "wrote QR (v{d}, {d}x{d} modules at {d} dot/module on {d}x{d})\n",
+        .{ matrix.version, matrix.size, matrix.size, qr_scale, screen_width, screen_height },
     );
+    if (qr_scale < layout.min_qr_scale) {
+        stderrPrint(
+            "warning: at {d}x{d} this QR can only be drawn at {d} dot/module; the scannable minimum is {d} (room for {d} modules)\n",
+            .{ screen_width, screen_height, qr_scale, layout.min_qr_scale, layout.maxQrModules(layout.min_qr_scale) },
+        );
+    }
     matrix.deinit(allocator);
 }
 

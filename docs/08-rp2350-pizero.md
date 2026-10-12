@@ -189,7 +189,7 @@ cat psbt.txt | ./zig-out/bin/zhww ur --fragment 40 | head -1 \
   | ./zig-out/bin/zhww screen --qr --scale 2 > qr.png
 ```
 
-![A screen rendering one UR part as a QR code](images/screen-qr-ur.png)
+![A screen rendering one UR part as a QR code (240×135, rendered at 2×)](images/screen-qr-ur.png)
 
 *A screen that converts a Bitcoin Core PSBT into BC-UR parts and renders one of them as a QR code (v7, 45×45 modules, EC M).
 Decoding this PNG with an independent reader implementation (OpenCV's QRCodeDetector) has been confirmed to reproduce the original UR string
@@ -205,12 +205,12 @@ Decoding this PNG with an independent reader implementation (OpenCV's QRCodeDete
 
 It has been confirmed that a confirmation screen showing "destination, amount and fee" can be drawn from a PSBT actually created by Bitcoin Core.
 
-![Confirmation screen drawn from a Core PSBT (240×240 rendered at 2×)](images/screen-confirm-psbt.png)
+![Confirmation screen drawn from a Core PSBT (240×135, the chosen display, rendered at 2×)](images/screen-confirm-psbt.png)
 
 *The confirmation screen drawn from a Core PSBT (destination bcrt1qf593…, 99990000 sats, fee 10000 sats. The fee matches Core's
 `decodepsbt`).*
 
-![Demo screen](images/screen-confirm-demo.png)
+![Demo screen (240×135, rendered at 2×)](images/screen-confirm-demo.png)
 
 *Demo screen. The QR area currently shows a demo checkerboard pattern (the demo screen has not yet been switched over to a real QR code).*
 
