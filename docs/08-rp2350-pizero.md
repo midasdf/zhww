@@ -49,7 +49,7 @@ It achieves both "no wireless" and "no soldering" while avoiding the stock short
 | Pinned libsecp256k1 0.8.0 and actual Secure/NS-region linking | **Succeeds**, offline approved-BTC/rendering harness; no target heap/stdio. Not bootable or attributed firmware | `zig build target-link -Dtarget-fetch=true`; [scope](14-target-link-and-fault-prototype.md) |
 | Target static frames/fatal stack | Individual Zig/C frame metadata and separate-stack fatal entry instructions checked; no transitive/runtime proof | [frame/fault scope](14-target-link-and-fault-prototype.md) |
 | Signing speed | **Not verified** (hardware required) | — |
-| HAL (screen, SD, input, randomness) | **Not started** | — |
+| HAL (screen, buttons, camera, randomness) | **Not started** | — |
 
 ## 3. Hardware configuration (draft)
 
@@ -92,8 +92,8 @@ Cutting the power is not an anomaly but **the normal way to switch the device of
 | How to turn off | **Unplug USB** (this is normal use. It must be safe to unplug) |
 | Standby (sleep) | **Not needed**. It runs only while plugged in. With no battery there is no standby drain to worry about |
 | Battery indicator | **Not needed** (with no battery the problem itself does not exist) |
-| Power loss | **A signature either goes all the way through or leaves nothing**. A power loss before the write completes must not leave a half-finished signature valid (the microSD uses `OUT.TMP` → rename; §7b) |
-| Right after boot | Make it possible to confirm "did the previous signing finish?". If `OUT.PSBT` is on the card, it is a result; if only `OUT.TMP` is there, treat it as incomplete |
+| Power loss | **A signature either goes all the way through or leaves nothing**. The result exists only as the QR codes on the screen, drawn after the whole signing step has completed, and nothing is written anywhere, so unplugging at any moment leaves no partial result |
+| Right after boot | Nothing to recover: no state survives a restart. If the host did not receive the result, it shows its request again and the device signs it again after a fresh review |
 | Current draw | **Measurement required** (an RP2350 at 150MHz draws tens of mA, and the LCD backlight draws tens of mA too). USB-powered, so there is no capacity constraint |
 
 ### Status indication (LED and backlight)
@@ -158,15 +158,15 @@ The RP2350-PiZero has 16MB of flash. **The measured usage** is as follows, leavi
 | ERC-7730 descriptors, test vectors | Intermediate signing state, history |
 | The program itself | Battery level and settings (not needed with no battery) |
 
-The SD card is used **only for handoff**. The device keeps the property "insert it and it runs, remove it and nothing remains".
+The microSD slot is **not used** (the owner ruled out exchanging data on cards, 2026-10-13). The device keeps the property "plug it in and it runs, unplug it and nothing remains".
 
 ## 5. What gets ported (HAL)
 
 | Layer | Content | Difficulty |
 |---|---|---|
-| display | Drive the ST7789VW over SPI0 (240×240, RGB565), backlight control, offset correction | Low (many existing C implementations) |
-| input | 5-way joystick + KEY1–3 (GPIO inputs, pull-ups) | Low |
-| storage | microSD (FAT32) read/write. PSBT file input/output | Medium (the FAT32 implementation itself already exists in Zig; an SD block-device driver is still needed) |
+| display | Drive the Mini PiTFT's ST7789 over **SPI1** (MOSI GPIO11, SCK GPIO10, CS GPIO8 as a plain GPIO, DC GPIO25), **240×135** RGB565, backlight on GPIO22. The 135-line panel sits at an offset in the controller's RAM; `src/ui/st7789.zig` sets offset 0 (correct only for 240×240), so the offset has to be added and checked on the real panel | Low–Medium (many existing C implementations) |
+| input | **Two buttons**, GPIO23 / GPIO24 (pulled up on the module), debounced in the Secure world | Low |
+| camera | HM01B0 control over I²C1 (GPIO2 / GPIO3, address 0x24); one-bit capture with PIO + DMA (D0 GPIO9, PCLK GPIO13, HREF GPIO15, VSYNC GPIO16) into a 320×240 grayscale buffer handed to `src/ui/qr_decode.zig`. Never drive XCLK. Pins and electrical notes: [03-hardware-bom.md](03-hardware-bom.md) §3 | Medium–High (PCLK is 24 MHz, about 6 CPU cycles per bit at 150 MHz) |
 | entropy | RP2350 built-in TRNG | Low |
 | signing | Build libsecp256k1 for the target and link it | Medium (the build has been measured) |
 | boot | BOOTSEL → UF2, vector table, linker script | Medium |
@@ -180,7 +180,7 @@ So that the UI can be pinned down without a device, **screen composition is made
 |---|---|---|
 | [src/ui/font.zig](../firmware/src/ui/font.zig) | 8×8 bitmap font (public domain, source credited) | Glyph shape verification |
 | [src/ui/framebuffer.zig](../firmware/src/ui/framebuffer.zig) | RGB565 drawing (points, rectangles, text, dot rows). Out-of-range coordinates are clipped | Verified pixel by pixel |
-| [src/ui/screen.zig](../firmware/src/ui/screen.zig) | 240×240 screen layout (title, label/value, warnings, QR, footer) | Drawing verified per region |
+| [src/ui/screen.zig](../firmware/src/ui/screen.zig) | Screen layouts for 240×240 and the Mini PiTFT's 240×135 (title, label/value, warnings, QR, footer) | Drawing verified per region |
 | [src/ui/qr.zig](../firmware/src/ui/qr.zig) / [src/ui/qr_decode.zig](../firmware/src/ui/qr_decode.zig) | QR encoder and host-side decoder (ISO/IEC 18004) | Encoder matrices and decoder outputs are cross-checked against independent implementations |
 | [src/cli/png.zig](../firmware/src/cli/png.zig) | PNG output (uncompressed zlib. No external libraries) | Structure and CRC / Adler-32 verified |
 
