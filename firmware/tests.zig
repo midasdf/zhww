@@ -5,6 +5,8 @@
 //!
 //! Vectors are embedded verbatim as raw data from third parties (Bitcoin BIPs repository etc.).
 //! **We never use home-grown expected values.**
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 test {
     _ = @import("src/root.zig");

@@ -1,7 +1,8 @@
 //! Host-testable orchestration prototype for a future Secure-world entry point.
 //! NOT a secure gateway, target main loop, or replacement for the existing CLI.
 //! Production must collect boot evidence, seed and GPIO events inside Secure world.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const boot = @import("boot_policy.zig");
 const approval = @import("approval.zig");

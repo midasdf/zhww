@@ -4,7 +4,7 @@
   **Adafruit OPT4048 breakout (25.4 × 17.78 mm)** mounted **under the raised main board**,
   behind a short light-guide tube that looks **down through the case's floor**
 - **Format**: [OpenSCAD](https://openscad.org/) (text; can be version-controlled and regenerated)
-- **License**: **CC-BY-SA-4.0** (the repository's [LICENSE-ENCLOSURE](../../LICENSE-ENCLOSURE))
+- **License**: **CERN-OHL-S-2.0** ([LICENSES/CERN-OHL-S-2.0.txt](../../LICENSES/CERN-OHL-S-2.0.txt))
 
 ## What changed in v0.5 (and why)
 
@@ -69,7 +69,7 @@ and includes editable Inventor (.ipt) sources).
 
 **So the SeedSigner case is kept only as "a reference for how to build one", and we provide our own parametric OpenSCAD instead.**
 
-- We can decide the license ourselves (CC-BY-SA-4.0)
+- We can decide the license ourselves (CERN-OHL-S-2.0, like the rest of the hardware)
 - **The dimensions are parameters**, so the model can be regenerated when parts change
 - It is text, so it can be version-controlled and reviewed (the same style as the rest of this repository)
 

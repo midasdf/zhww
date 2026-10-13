@@ -18,6 +18,8 @@
 //!
 //! On-screen text is **ASCII** (showing Japanese on a 240×240 screen would require bundling a font;
 //! see [docs/08-rp2350-pizero.md] for the policy).
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;

@@ -1,7 +1,8 @@
 //! Bounded, fail-closed entropy interface for a future Secure-world TRNG HAL.
 //! Provider must report actual hardware health/ready status; this is NOT a TRNG,
 //! entropy estimator or statistical health test. No clock/ADC/PRNG fallback.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 
 pub const Error = error{ Unavailable, HealthFailure, Timeout, Latched, InvalidRequest };

@@ -19,7 +19,8 @@
 //!
 //! Some tests embed the official examples from the Solidity spec verbatim (no hand-written
 //! expected values are used). Selectors are checked against Keccak-256 results and known constants.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

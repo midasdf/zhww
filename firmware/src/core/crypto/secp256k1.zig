@@ -8,7 +8,8 @@
 //! This was chosen so that an audit can see at a glance which C functions we depend on.
 //!
 //! Reference: https://github.com/bitcoin-core/secp256k1
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

@@ -1,5 +1,6 @@
 """Adversarial bounds, partition, metadata and dependency-source tests; no ARM execution."""
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+# SPDX-License-Identifier: MIT
 import io
 from pathlib import Path
 import struct

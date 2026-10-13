@@ -1,5 +1,6 @@
 """Bounds/schema tests for the compile-only Cortex-M33 inventory reader."""
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+# SPDX-License-Identifier: MIT
 from pathlib import Path
 import struct
 import sys

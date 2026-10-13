@@ -41,7 +41,8 @@
 //! 110-count swing). A clearly excessive level must lose the transfer, never corrupt it: the frame
 //! CRC and the UR message checksum are what make that "never" rather than "unlikely".
 //!
-//! SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("zhww");

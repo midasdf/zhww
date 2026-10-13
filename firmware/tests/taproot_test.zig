@@ -13,6 +13,8 @@
 //! **Difference from BIP143 (SegWit v0)**: the signature hash uses a single SHA256,
 //! `tagged_hash("TapSighash", ...)`, and the signature is a 64-byte Schnorr signature
 //! (with no sighash type appended). The key used is one with the BIP341 tweak applied.
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

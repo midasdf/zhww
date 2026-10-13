@@ -3,7 +3,8 @@
 //! No dynamic memory. Output is written into a buffer provided by the caller.
 //!
 //! Reference: https://en.bitcoin.it/wiki/Base58Check_encoding
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

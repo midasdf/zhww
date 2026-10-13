@@ -2,7 +2,8 @@
 //!
 //! Vectors: tests/vectors/bip49.json, bip84.json, bip86.json
 //! Source: https://github.com/bitcoin/bips (bip-0049 / bip-0084 / bip-0086 .mediawiki)
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

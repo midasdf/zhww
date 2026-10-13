@@ -1,5 +1,6 @@
 """Dependency tripwire, not proof of algorithmic correctness or fault independence."""
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+# SPDX-License-Identifier: MIT
 from pathlib import Path
 import re
 import unittest

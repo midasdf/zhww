@@ -65,12 +65,13 @@ zhww/
 ├── README.ja.md               ← Japanese version
 ├── DISCLAIMER.md              ← disclaimer, development process, LLM disclosure (read this)
 ├── SECURITY.md                ← how to report vulnerabilities
-├── LICENSE                    ← GPL-3.0 (firmware)
-├── LICENSE-HARDWARE           ← CERN-OHL-S-2.0 (hardware design)
-├── LICENSE-DOCS               ← CC-BY-4.0 (documentation)
-├── LICENSE-ENCLOSURE          ← CC-BY-SA-4.0 (enclosure)
+├── LICENSE                    ← MIT (firmware and tools)
+├── LICENSES/                  ← every licence text used here (MIT, CERN-OHL-S-2.0, CC-BY-4.0, BSD-2-Clause)
+├── REUSE.toml                 ← licences of the files that cannot carry an SPDX header
+├── LICENSE-POLICY.md          ← which licence applies where, and why
+├── TRADEMARKS.md              ← how the name "zhww" may be used
 ├── THIRD-PARTY-NOTICES.md     ← third-party software and test vector sources
-├── docs/                      ← design documents (Japanese)
+├── docs/                      ← design documents
 │   ├── 01-requirements.md     ← requirements, scope, acceptance criteria
 │   ├── 02-architecture.md     ← architecture, key derivation, signing flow
 │   ├── 03-hardware-bom.md     ← BOM, sourcing, assembly, enclosure
@@ -90,6 +91,7 @@ zhww/
 │   ├── src/transport/         ← BC-UR (QR transport)
 │   ├── src/cli/               ← development CLI (host side)
 │   └── tests/                 ← official test vectors and integration tests
+├── tools/                     ← offline checks (licences, target link, memory layout)
 └── hardware/enclosure/        ← parametric OpenSCAD enclosure
 ```
 
@@ -157,12 +159,14 @@ The recommended reading order:
 
 ## License
 
-- Firmware: **GPL-3.0-or-later** ([LICENSE](LICENSE))
-- Hardware design: **CERN-OHL-S-2.0** ([LICENSE-HARDWARE](LICENSE-HARDWARE))
-- Enclosure: **CC-BY-SA-4.0** ([LICENSE-ENCLOSURE](LICENSE-ENCLOSURE))
-- Documentation: **CC-BY-4.0** ([LICENSE-DOCS](LICENSE-DOCS))
+- Firmware and tools: **MIT** ([LICENSE](LICENSE))
+- Hardware design, the enclosure included: **CERN-OHL-S-2.0** ([LICENSES/CERN-OHL-S-2.0.txt](LICENSES/CERN-OHL-S-2.0.txt))
+- Documentation: **CC-BY-4.0** ([LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt))
+- The name "zhww": forks are welcome under their own name ([TRADEMARKS.md](TRADEMARKS.md))
 
-Zig sources carry SPDX headers (`GPL-3.0-or-later`). Third-party software and test data are
+Every file states its licence, with an SPDX header or in [REUSE.toml](REUSE.toml), and CI checks it
+(`git ls-files -z | zig run tools/license_check.zig`). Until 2026-10-14 the firmware was GPL-3.0-or-later
+and the enclosure CC-BY-SA-4.0. Third-party software and test data are
 credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md); the policy is in
 [LICENSE-POLICY.md](LICENSE-POLICY.md).
 

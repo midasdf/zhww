@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 
 /// Build definition for the zhww firmware.

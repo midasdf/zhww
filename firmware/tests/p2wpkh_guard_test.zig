@@ -1,6 +1,7 @@
 //! Independent guard tests: official BIP143, pinned Core, primary-path differential
 //! mutation checks, malformed/bounded wire input and signing-boundary fault injection.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const zhww = @import("../src/root.zig");
 const guard = zhww.p2wpkh_guard;

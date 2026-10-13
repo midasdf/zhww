@@ -8,7 +8,8 @@
 //! approved native-P2WPKH workflow compares independently parsed/computed messages,
 //! but other BTC/EVM/development APIs are unguarded and there is no TrustZone HAL.
 //! See docs/13-independent-p2wpkh-guard.md for the precise implemented subset.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 pub const p2wpkh_guard = @import("security/p2wpkh_guard.zig");
 pub const workspace = @import("security/workspace.zig");

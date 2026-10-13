@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors */
+/* SPDX-License-Identifier: MIT */
 /* Candidate offline map, NOT programmed SAU/MPU/boot policy. No vectors/boot block. */
 ENTRY(zhww_link_only_halt)
 MEMORY {

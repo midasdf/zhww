@@ -69,7 +69,8 @@
 //!   device screen what is about to be signed - the CRC only catches corruption.
 //!
 //! Reference: docs/09-light-audio-input.md §3 (frame format), §6 (sampling and decoding plan)
-//! SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;

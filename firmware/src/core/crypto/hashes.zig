@@ -1,5 +1,6 @@
 //! Hash function collection point. Everything Bitcoin and Ethereum need is gathered here.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Ripemd160 = @import("ripemd160.zig").Ripemd160;

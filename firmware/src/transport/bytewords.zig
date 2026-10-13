@@ -20,7 +20,8 @@
 //!   - test_ur in bc-ur-rust src/ur.rs ("ur:test/lsadaoaxjygonesw")
 //!     https://github.com/BlockchainCommons/bc-ur-rust/blob/master/src/ur.rs
 //!   - the BCR-2024-001 (MUR) §CRC-32 Checksum test vector
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;

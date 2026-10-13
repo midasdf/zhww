@@ -1,5 +1,6 @@
 """Strict little-endian ARM ELF32 reader for offline link checks (no execution)."""
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+# SPDX-License-Identifier: MIT
 from dataclasses import dataclass
 import struct
 

@@ -6,7 +6,8 @@
 //! **Design policy**: transactions are variable length (input count, output count, script
 //! length), so parsing uses an allocator supplied by the caller (a per-session arena is assumed).
 //! **No secret material is placed in this region** (seeds and keys live only in fixed-length buffers).
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

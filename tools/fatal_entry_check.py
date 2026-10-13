@@ -3,7 +3,8 @@
 Not runtime/privilege/MPU/interrupt/FPU/fault-injection verification. Require the
 specific no-prologue sequence, relocated fault MSP and terminal wipe branch.
 """
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+# SPDX-License-Identifier: MIT
 import struct
 
 # msr MSP; mrs CONTROL; clear SPSEL; msr CONTROL; ISB; clear r0-r12/LR/APSR.

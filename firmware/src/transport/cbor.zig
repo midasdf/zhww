@@ -20,7 +20,8 @@
 //!            https://datatracker.ietf.org/doc/draft-mcnally-deterministic-cbor/
 //! Test vector sources: RFC 8949 §Appendix A (the diagnostic notation / hex table) and the CBOR
 //! examples in BCR-2020-012 / BCR-2024-001.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;

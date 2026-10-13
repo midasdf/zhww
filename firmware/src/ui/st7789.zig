@@ -9,6 +9,8 @@
 //! The initialization sequence uses the values commonly used for 240x240 ST7789 panels.
 //! **Panel-specific tuning may be needed on the real device** (porching and gamma).
 //! If the display is disturbed, check the settings one by one following [docs/08-rp2350-pizero.md].
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;

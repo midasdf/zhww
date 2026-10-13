@@ -1,6 +1,7 @@
 //! Approved workflow checks against the pinned Bitcoin Core vector, with synthetic
 //! trusted display/GPIO events. This does not test a real LCD, GPIO or TrustZone.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const zhww = @import("../src/root.zig");
 const testing = std.testing;

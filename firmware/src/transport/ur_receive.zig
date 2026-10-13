@@ -31,7 +31,8 @@
 //!
 //! Reference: https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2020-005-ur.md
 //!            https://github.com/BlockchainCommons/Research/blob/master/papers/bcr-2024-001-multipart-ur.md
-//! SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;

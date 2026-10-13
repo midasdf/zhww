@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors */
+/* SPDX-License-Identifier: MIT */
 /* No target heap implementation: unused allocating secp APIs must be GC'd. */
 #ifndef ZHWW_STDLIB_H
 #define ZHWW_STDLIB_H

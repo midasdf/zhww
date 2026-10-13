@@ -6,6 +6,8 @@
 //!
 //! Colors are RGB565 (16 bit). The LCD takes this buffer as-is over SPI.
 //! Drawing **ignores anything out of range** (it clips), so callers need not fret over coordinates.
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;

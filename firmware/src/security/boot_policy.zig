@@ -1,6 +1,7 @@
 //! Semantic requirements, NOT register definitions or proof of hardware configuration.
 //! Only a future Secure-world HAL may collect Evidence. Never accept it from NS code.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 
 pub const Stepping = enum { unknown, a2, a3, a4 };

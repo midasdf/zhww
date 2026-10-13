@@ -26,7 +26,8 @@
 //!
 //! The tests embed real registry descriptors (stETH / Ekubo Ve33 / ERC-20 generic template)
 //! verbatim and verify against them.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

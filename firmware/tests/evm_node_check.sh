@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+# SPDX-License-Identifier: MIT
+#
 # Verify that a **local EVM node** accepts the transactions this firmware signs.
 #
 # This is the EVM counterpart of the Bitcoin Core interop test: instead of comparing against a

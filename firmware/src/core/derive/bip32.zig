@@ -6,7 +6,8 @@
 //! - When CKDpriv / CKDpub hits an invalid tweak, it moves on to the next index as the BIP32 spec says
 //! - Extended key version bytes follow SLIP-132, so BIP44/49/84 can emit different prefixes
 //! - Paths that must not hold a private key use `neuter()` and keep no extended private key
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

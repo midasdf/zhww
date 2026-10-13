@@ -22,7 +22,8 @@
 //! References: https://eips.ethereum.org/EIPS/eip-155
 //!             https://eips.ethereum.org/EIPS/eip-1559
 //!             https://eips.ethereum.org/EIPS/eip-2718
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

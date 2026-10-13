@@ -215,4 +215,6 @@ That makes it composable as-is, e.g. `zhww sign < psbt.txt > signed.txt`.
 
 ## License
 
-**GPL-3.0-or-later** ([../LICENSE-POLICY.md](../LICENSE-POLICY.md))
+**MIT** ([../LICENSE](../LICENSE); the policy is in [../LICENSE-POLICY.md](../LICENSE-POLICY.md)).
+Every source file carries a two-line SPDX header; `git ls-files -z | zig run tools/license_check.zig`
+(from the repository root) checks it.

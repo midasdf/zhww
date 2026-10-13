@@ -1,6 +1,7 @@
 //! Offline link harness ONLY. Not a boot image, NS gateway or hardware main loop.
 //! Entry halts. No synthetic approval/entropy/evidence and no real seed are embedded.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const zhww = @import("zhww");
 const budget = zhww.memory_budget;

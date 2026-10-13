@@ -73,7 +73,8 @@
 //!   different mask the output conforms to the standard and decodes to the same result).
 //!
 //! Reference: ISO/IEC 18004:2015/2006, https://www.qrcode.com/en/about/standards.html
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const CoreError = @import("../core/errors.zig").Error;

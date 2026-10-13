@@ -14,6 +14,8 @@
 //! and it is the core of this project's recommended operation ([docs/05-threat-model.md]).
 //! P2WSH signatures must be ordered **in the same order as the public keys appearing in
 //! the witnessScript**; get this wrong and Core will not accept them.
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

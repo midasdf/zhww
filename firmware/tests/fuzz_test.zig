@@ -9,6 +9,8 @@
 //!
 //! The RNG uses a fixed seed (so a failure can be reproduced). Under Debug / ReleaseSafe
 //! safety checks are enabled, so out-of-bounds accesses and integer overflows are caught here too.
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

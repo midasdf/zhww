@@ -8,6 +8,8 @@
 //! - The witnessScript is `OP_m <pubkey>... OP_n OP_CHECKMULTISIG`. Signatures must be
 //!   ordered **as the public keys appear in the script** (an OP_CHECKMULTISIG rule)
 //! - Every signature is verified with `secp256k1.verify` before being returned
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

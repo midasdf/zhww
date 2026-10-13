@@ -64,7 +64,7 @@
 //
 // ## License
 //
-// CC-BY-SA-4.0 (the repository's LICENSE-ENCLOSURE)
+// CERN-OHL-S-2.0 (LICENSES/CERN-OHL-S-2.0.txt)
 
 // ---------------------------------------------------------------- board (RP2350-PiZero)
 

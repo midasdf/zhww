@@ -10,7 +10,8 @@
 //! - If an input amount is unknown, do not compute a fee (`amounts_complete = false`).
 //!   In that case the display layer must not ask for approval
 //! - Do not sign a non-witness input that only has `witness_utxo` (BIP174 rule)
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

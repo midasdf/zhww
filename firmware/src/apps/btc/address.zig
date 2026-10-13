@@ -5,7 +5,8 @@
 //!   centralized in core.encoding.bech32.encodeSegwit
 //! - The networks mainnet / testnet / signet / regtest are supported
 //! - P2TR handles only the BIP341 key path (internal key + TapTweak)
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

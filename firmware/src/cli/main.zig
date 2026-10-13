@@ -8,7 +8,8 @@
 //!
 //! In Zig 0.17 stdout goes through `std.Io`, and process arguments arrive via
 //! `pub fn main(init: std.process.Init.Minimal)`.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("zhww");

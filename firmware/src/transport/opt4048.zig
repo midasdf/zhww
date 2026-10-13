@@ -115,7 +115,8 @@
 //!
 //! Reference: docs/09-light-audio-input.md §6, docs/03-hardware-bom.md (the Qwiic OPT4048 entry),
 //!            TI OPT4048 datasheet SBOSA84 (December 2022)
-//! SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 

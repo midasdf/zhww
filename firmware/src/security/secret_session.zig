@@ -1,7 +1,8 @@
 //! Session-owned backing memory for secret material. A building block, not a claim
 //! that existing BIP32/libsecp256k1 stacks or the development CLI are fully erased.
 //! Keep the instance at a stable address in Secure SRAM; never copy it by value.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 
 pub fn Session(comptime capacity: usize) type {

@@ -10,7 +10,8 @@
 //!   3. Sign and finalize it
 //!   4. **Verify each input's signature against a sighash recomputed independently on the
 //!      test side** (without using any internal value of the implementation)
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");
