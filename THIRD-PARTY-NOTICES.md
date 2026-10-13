@@ -65,6 +65,7 @@ The following are listed as references for specifications or design; **no code h
 | Trezor firmware | Multi-chain app separation structure (the idea only) | **GPLv3: must not be copied into this MIT firmware**, and the "Trezor" name is not used |
 | [Ethereum Improvement Proposals](https://eips.ethereum.org/) | EIP-155 / EIP-1559 / EIP-191 / EIP-55 / ERC-7730 | Reference for the specifications |
 | [BC-UR](https://github.com/BlockchainCommons/bc-ur) | QR transport scheme (implemented independently) | BSD-2-Clause-Patent; add a notice if code is ever incorporated |
+| [Arm hm01b0-library-for-pico](https://github.com/ArmDeveloperEcosystem/hm01b0-library-for-pico), [ArduCAM RPI-Pico-Cam](https://github.com/ArduCAM/RPI-Pico-Cam) | How the HM01B0 is captured with PIO in one-bit mode (pin rules, register setup) | Reference for the camera driver still to be written; check each one's licence before copying anything |
 
 ## 5. License notes
 

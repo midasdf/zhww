@@ -1,7 +1,15 @@
 # 09. Light and sound as an input channel
 
-- **Status**: proposal, not implemented
-- **Last updated**: 2026-10-12
+> **Superseded for the standard build (owner decision, 2026-10-14).** The device reads QR codes with a
+> camera instead: the build is RP2350-PiZero + Adafruit Mini PiTFT + ArduCam UC-805 (HM01B0), see
+> [03-hardware-bom.md](03-hardware-bom.md). The light link below stays in the repository as an
+> **optional, tested input channel** — `src/transport/light.zig`, `light_rx.zig`, `opt4048.zig`, the
+> CLI's `light-encode` / `light-decode` and `tools/light-sender.html`, still checked in CI — but no
+> enclosure is designed for it and nothing in the standard build depends on it. §9's cost argument
+> was overtaken by the camera's price and by the decoder already being written.
+
+- **Status**: implemented on the host as an optional channel; not in the standard build
+- **Last updated**: 2026-10-14
 - **Why this document exists**: the chosen transfer route ([08-rp2350-pizero.md](08-rp2350-pizero.md), section 7b)
   uses a microSD card for input and a QR code on the device screen for output. That works, but it makes
   the phone/PC do a file copy each time. A **light or sound receiver** on the device could take the
@@ -198,7 +206,7 @@ board-side cut-outs and would gain a parameter for the extra height and the sens
 - Do we accept the stacking-header arrangement, or move straight to a custom carrier board for v0.2?
 - Should the device also *transmit* over these channels (an LED or a buzzer), or is the screen enough?
 
-## 9. Decision: a light receiver is the input channel (camera deferred)
+## 9. Decision (2026-10-13, superseded 2026-10-14): a light receiver is the input channel
 
 Two candidates were weighed: a camera reading a QR code, and a light receiver reading a screen that
 flickers.

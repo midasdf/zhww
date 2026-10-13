@@ -1,592 +1,208 @@
 # 03. Hardware BOM and Assembly
 
-- **Target version**: v0.1
-- **Last updated**: 2026-10-13
-- **Policy**: No soldering. Just seat off-the-shelf parts.
+- **Target**: the standard build (parts decided by the owner, 2026-10-14)
+- **Last updated**: 2026-10-14
+- **Policy**: no soldering; off-the-shelf parts only; USB power; a clear printed case
 
 ---
 
-## 1. BOM (standard configuration)
+## 1. BOM (the standard build)
 
 | # | Part | Spec / model number | Approx. cost | Example source |
 |---|---|---|---|---|
-| 1 | SBC | **Waveshare RP2350-PiZero** - available domestically at [Switch Science 10733](https://www.switch-science.com/products/10733) (previously listed as Waveshare direct / Amazon) |
-| 1b | SBC (v0.1 Linux build) | **Raspberry Pi Zero 2 WH (header pre-installed)** | ¥3,500–4,400 | スイッチサイエンス (Switch Science), 千石電商 (Sengoku Denshi), Amazon |
-| 2 | Display | **Adafruit Mini PiTFT 135×240** (product 4393, 1.14", ST7789, **two tactile buttons on the board**, **Qwiic/STEMMA QT port**, 38.6×24.5 mm, pre-assembled) | ~¥2,500 | **Switch Science (domestic)**: https://www.switch-science.com/products/7422 |
-| 3 | Light receiver (**the input path**) | **LM393 light-sensor module with a photodiode/phototransistor and both an analog and a digital output** (the common 4-pin "LM393 light sensor" boards) | ¥300–600 | Akizuki Denshi, aitendo, Amazon.co.jp, Yahoo Shopping |
-| — | Camera (**not bought** — the light receiver was chosen, see §2.6) | OV5647 5MP (**the version with the 22-pin FPC for Pi Zero**; Aokin / AuviPal, etc.) | ¥1,000–1,800 | Amazon |
-| 4 | microSD | 8–32GB (A1 or better; compatibility varies) | ¥800 | Consumer electronics retailer |
-| 5 | Power | **Not onboard (external power)**. USB power cable + a power source you already own (PC / mobile battery pack / dry-cell box) | ¥0–3,000 | — |
-| 6 | GPIO hammer header | 2×20 (pushes pins into place without soldering) | ¥800 | 秋月電子 (Akizuki Denshi), Amazon |
-| 7 | Enclosure | 3D printed (**our own OpenSCAD**; see [hardware/enclosure](../hardware/enclosure/README.md). The SeedSigner case is a dimensional reference) | ¥0–1,500 | Self-made or a print service |
-| 8 | microSD writer | USB card reader (on the PC side) | ¥800 | — |
+| 1 | Board | **Waveshare RP2350-PiZero** — RP2350B, 520 KB SRAM, 16 MB flash, **no wireless**, 40-pin header pre-installed, USB-C, 65 × 30 mm | ~¥2,000 | [Switch Science 10733](https://www.switch-science.com/products/10733) |
+| 2 | Display | **Adafruit Mini PiTFT 135×240** (#4393) — 1.14" ST7789, **two tactile buttons**, a **STEMMA QT / Qwiic** port, 38.6 × 24.5 mm, plugs onto header pins 1–24 | ~¥2,500 | [Switch Science 7422](https://www.switch-science.com/products/7422) |
+| 3 | Camera | **ArduCam UC-805** = Arducam **B0315** "HM01B0 Monochrome QVGA Camera Module for Raspberry Pi Pico" — Himax HM01B0, 320 × 320 monochrome, 60° fixed-focus lens, 1×8 right-angle header | ¥2,589 (Amazon.co.jp, 2026-10-14, low stock) / US$15.99 (UCTRONICS) | [Amazon.co.jp B093KBQB1C](https://www.amazon.co.jp/dp/B093KBQB1C), [UCTRONICS](https://www.uctronics.com/arducam-hm01b0-qvga-spi-camera-module-for-raspberry-pi-pico.html) |
+| 4 | Camera power / I²C cable | **Adafruit STEMMA QT to female sockets, 150 mm** (#4397) | price unconfirmed | Adafruit and its distributors |
+| 5 | Camera signal wires | **4 × female–female jumper wires, 10 cm**, plus ~4 cm of Φ2 mm heat-shrink (or polyimide tape) | ~¥300 | Any electronics shop |
+| 6 | Enclosure | 3D printed in a **clear** material ([hardware/enclosure](../hardware/enclosure/README.md)), 4 × M2 × 16 flat-head screws, 4 × Φ8 bumper feet | ¥0–2,000 | Self-printed or a print service |
+| 7 | Power | **Not onboard.** A USB-C cable (power-only recommended) and a power source you already own | ¥0–3,000 | — |
 
-**Estimated total: ¥8,000–13,000 (about USD 55–90); add roughly ¥3,000 if the enclosure is outsourced**
+**Estimated total: about ¥8,000–11,000** (about USD 55–75), plus the cable in #4 and printing if
+outsourced. Nine parts before the case and the consumables (NFR-03: ten or fewer).
 
-## 2. Selection rationale and caveats
+Check, when you buy the camera, that **its header is fitted**: the current stock ships with a 1×8
+right-angle header on the odd row; some older listings show bare holes ("pin headers not included"),
+which would need soldering.
 
-### 2.1 Which SBC to choose (as of 2026-10)
+## 2. Why these parts
 
-**Conclusion: the standard configuration is the Raspberry Pi Zero 2 WH (header pre-installed).**
+### 2.1 Board: RP2350-PiZero
 
-The first candidate was originally the wireless-free Pi Zero 1.3, but two obstacles appeared from the standpoint of actually building the device.
+- **No radio on the board**, so there is nothing to disable and nothing to trust about it being off
+- The **RP2350** has the security features the firmware design is built on (signed boot, TrustZone,
+  OTP, glitch detectors; [11-rp2350-security.md](11-rp2350-security.md)), and Zig targets its
+  Cortex-M33 directly
+- **Pi Zero size, 40-pin header pre-installed**, flashed by copying a UF2 file — no soldering, no
+  programmer
+- The port plan, the flash layout and the power policy are in [08-rp2350-pizero.md](08-rp2350-pizero.md)
 
-1. **The Pi Zero 1.3 is rarely in stock** (the model without wireless ships in small volumes and is hard to obtain reliably in Japan)
-2. **The 40-pin pin header has to be attached** (a hammer header avoids soldering, but doubts remain about how reliable the press-fit is)
+### 2.2 Display: Adafruit Mini PiTFT #4393
 
-The Pi Zero 2 WH is a model whose **header is installed at the factory**, which solves both problems at once. It is available from authorized domestic distributors and mass-market retailers, and the Waveshare LCD HAT plugs straight in. The camera also connects with the 22-pin cable shared by the Zero family, so **neither soldering nor wiring is required** (the SeedSigner enclosure STL also assumes this configuration).
+- It covers only **header pins 1–24**, so pins 25–40 stay free for the camera
+- Two **tactile buttons** on the module (enough for "next / confirm"), and a **STEMMA QT port** that
+  carries 3.3 V, ground and I²C to the camera without a wire to the header
+- The 240 × 135 layout is already implemented (`zhww screen --size 240x135`); the square 240 × 240
+  version (#4484) is hard to get in Japan
 
-The price is that **the wireless chip physically exists**. In operation it is disabled in three ways — (a) remove the wireless drivers from the OS image, (b) disable it in the device tree, (c) verify with rfkill (procedure in [07-zero2w-setup.md](07-zero2w-setup.md)) — and the fact that it **exists as hardware** is stated explicitly as a residual risk in the threat model ([05-threat-model.md](05-threat-model.md)).
+### 2.3 Camera: ArduCam UC-805 (HM01B0)
 
-Only if you want to eliminate wireless physically as well should you consider the following, in order.
+- **Native grayscale**, 320 × 320 (used as 320 × 240): a frame is 76.8 KB, which fits the RP2350's
+  SRAM with room to spare, and needs no colour conversion before the QR decoder
+- **The decoder is ours** ([src/ui/qr_decode.zig](../firmware/src/ui/qr_decode.zig)), verified
+  against two independent encoders and down to one pixel per module. The owner rejected modules
+  that decode QR internally (2026-10-13): the input decides what gets signed, so it must not pass
+  through a third-party decoder
+- **Field of view** 60° diagonal: at 100 mm it sees about 78 × 59 mm, about 0.25 mm per pixel
+  (estimated from the lens's 1.47 mm focal length and the 3.6 µm pixels), so a phone's 3 cm QR code
+  is about 120 pixels across. Fixed focus; the near limit is estimated at 5–11 cm — **measure it**
+- **3.3 V in**, its own 2.8 V regulator and 24 MHz oscillator, I²C at 0x24. Its video bus runs in
+  one-bit mode on four GPIOs (§3)
+- The camera **looks out of the back** of the case (SeedSigner style): you hold the device, aim it at
+  the phone's screen and watch the progress on the display
 
-1. When a **Pi Zero 1.3** (no wireless) can be obtained
-2. **Pi Zero 2 W + hammer header** (press-fit. No soldering, but the reliability is your own responsibility)
-3. If you still want to avoid wireless, the alternatives below (at the cost of more porting work)
+### 2.4 How data gets in and out
 
-| | Pi Zero 2 WH (recommended) | Pi Zero 1.3 | Pi Zero 2 W |
-|---|---|---|---|
-| Header | **Pre-installed** | You install it | You install it |
-| Wireless | Yes (procedure to disable it) | **None** | Yes (procedure to disable it) |
-| Availability | Good (domestic distributors, retailers) | **Poor** | Good |
-| Boot time | Short | Up to about 60 seconds | Short |
-| Price | ¥3,500–4,400 | ¥2,500–3,500 | ¥3,000–3,800 |
-
-### 2.2 Alternative candidates (options if the Zero 1.3 cannot be obtained)
-
-With "no soldering" as an absolute requirement, the table below compares small boards that run Linux.
-Note that **at present, the only boards on which this project's firmware (Zig + libsecp256k1 + Linux `std.Io`) runs as-is are the Raspberry Pi Zero family**.
-
-| Candidate | Soldering | Wireless | Camera | Availability | Fit for this firmware |
-|---|---|---|---|---|---|
-| **Pi Zero 2 WH** | Not needed | Yes (can be disabled) | Pi camera (22-pin) | Good | **Runs as-is** |
-| Pi Zero 2 W + hammer header | Not needed (press-fit) | Yes (can be disabled) | Same as above | Good | Runs as-is |
-| Pi Zero 1.3 | Needed (can be avoided with press-fit) | None | Same as above | Poor | Runs as-is |
-| Compatible boards such as the Banana Pi M2 Zero | Depends on SKU | Depends on model | Connector may be incompatible | Mostly personal imports | **Needs verification** (Linux images are unofficial / community-built) |
-| **RP2350-PiZero + 1.3" LCD HAT** (main v0.2 target) | **Not needed** (40-pin header pre-installed) | **None** (the RP2350 has no wireless) | None (exchange via microSD) | Good (Switch Science, etc.) | **Port required** (core compilation already measured) → [08-rp2350-pizero.md](08-rp2350-pizero.md) |
-| Pico 2 H + Pico-LCD-1.3 | **Not needed** ("H" models ship with the header installed) | **None** (the Pico 2 has no wireless) | SPI camera required (weakness described below) | Good (domestic distributors) | **Port required** (though core compilation has already been measured) |
-| Luckfox Pico (RV1106) | Some SKUs ship without a header | None | Dedicated module (some SKUs include one) | Available in Akihabara and elsewhere | **Port required** (different SoC; LCD wiring also needed) |
-| All-in-one units (Krux-family hardware such as M5Stack) | Not needed | Depends on model | Some models have one built in | Good | **Will not run** (not Linux, so the firmware would have to be a separate implementation) |
-
-**About the enclosure**: the SeedSigner case has **the same screen and board dimensions**, but **the port cut-outs do not line up**
-(on the RP2350-PiZero: mini HDMI + 2× USB-C on the front long edge, microSD on the left short edge, BAT on the right short edge, Φ3.00 mounting holes in the four corners, BOOT/RUN buttons, and no camera is fitted).
-We therefore provide our own parametric OpenSCAD, and **have verified the external shape and structure by rendering**
-(only the hole positions remain to be fixed by measuring the real hardware; [hardware/enclosure](../hardware/enclosure/README.md)).
-
-![Enclosure preview](images/case-preview.png)
-
-**All-in-one units (devices with the screen, buttons and camera built in from the start) are the strongest option from the standpoint of "widespread adoption"**, but
-because they do not run Linux, this repository's Zig firmware will not run on them as-is
-(current Zig has no official support for the ESP32-S3 and similar parts). Adopting one would mean
-redesigning the firmware as a **separate line**; the existing implementation (PSBT, signing, UR transport)
-could be reused as a library, but the HAL, display and camera would all have to be rewritten.
-This decision is recorded in [06-roadmap.md](06-roadmap.md) as an open question for v0.2.
-
-Sources (checked as of 2026-10):
-- Domestic availability of the Raspberry Pi Zero 2 WH: [スイッチサイエンス (Switch Science)](https://www.switch-science.com/products/9812), [千石電商 (Sengoku Denshi)](https://www.sengoku.co.jp/mod/sgk_cart/detail.php?code=EEHD-6JRZ), [Amazon.co.jp](https://www.amazon.co.jp/dp/B0DB2JBD9C) ("header already soldered on")
-- Example of an unofficial Linux image for the Banana Pi BPI-ZERO: [bananapi-zero-ubuntu-base-minimal (community-built)](https://github.com/avafinger/bananapi-zero-ubuntu-base-minimal)
-- Domestic stock of the Luckfox Pico and an example of a "no header" SKU: [エルミタージュ秋葉原 (Hermitage Akihabara)](https://www.gdm.or.jp/crew/2024/0729/548831), [千石電商 (Sengoku Denshi; Luckfox Pico Ultra)](https://www.sengoku.co.jp/mod/sgk_cart/detail.php?code=EEHD-6ERY)
-
-### 2.3 Findings for the Pico family (RP2040 / RP2350)
-
-**Attractive points**: the Pico family best satisfies the conditions for "widespread adoption".
-
-- **No soldering** — the Pico H / **Pico 2 H** come in versions with the header pre-installed ([スイッチサイエンス (Switch Science)](https://www.switch-science.com/products/10257))
-- **A wireless-free model is standard** — the Pico 2 (non-W) has no Wi-Fi/BT. The residual risk that the Zero 2 WH carries — "the wireless chip exists" — disappears
-- **Instant boot, low power consumption** — it is not Linux, so it boots in an instant. Battery life is good too
-- **Inexpensive** — Pico 2 H (around ¥1,000) + [Waveshare Pico-LCD-1.3](https://www.waveshare.com/pico-lcd-1.3.htm) ($7.99, 240×240, SPI, with joystick/buttons)
-- **Officially supported by Zig** — current Zig can target both Cortex-M0+ (RP2040) and Cortex-M33 (RP2350) (the ESP32-S3's Xtensa is not supported)
-
-**Constraints**:
-
-- **It is not Linux** — the HAL (LCD, buttons, SD, randomness) has to be rewritten. The logic (BIP39/32, PSBT, signing, EVM, UR) can be used as-is
-- **The camera is the biggest weakness** — the RP2040/RP2350 has no CSI. There are examples of reading an SPI camera (ArduCAM, etc.) through PIO, but **QR decoding is heavy for a microcontroller**. The two realistic workarounds are (a) display-only QR, and (b) exchanging PSBTs over microSD
-
-**Measured facts** (2026-10-12, run against this repository's code; reproduction steps below):
-
-| What was checked | Result |
+| Direction | Channel |
 |---|---|
-| Compilation of the core (BIP39/32, address generation, PSBT parsing, signing path, EVM parsing, UR) | **Succeeds for both the RP2040 (Cortex-M0+) and the RP2350 (Cortex-M33)** (about 64KB each, `-OReleaseSmall`) |
-| Undefined symbols | Only `secp256k1_*` and compiler-rt (`__aeabi_*`). Zig supplies the latter |
-| **Building libsecp256k1 0.6.0** | **Succeeds for both targets** (`zig cc`, using a minimal libc shim. A real port would use picolibc/newlib and remove the stdio dependency with `-DNDEBUG`) |
-| Signing speed | **Not verified**. On an M0+ at 133MHz a single signature may take hundreds of ms; measurement is required |
+| Host → device | **The device's camera reads a UR QR code** (animated if needed) on the phone's or PC's screen |
+| Device → host | **The device shows a UR QR code** (BC-UR, animated parts) for the host's camera |
 
-```bash
-# Check that the core compiles (from the repository root)
-cd firmware
-zig build pico     # checks both RP2040 and RP2350 together
-# To do them individually:
-zig build-obj pico_smoke.zig -target thumb-freestanding -mcpu=cortex_m0plus -OReleaseSmall
-zig build-obj pico_smoke.zig -target thumb-freestanding -mcpu=cortex_m33 -OReleaseSmall
+Nothing else connects to the host: no SD card, no data over USB. The owner ruled out exchanging data
+on SD cards (2026-10-13): a card is shared physical media that passes through the untrusted host.
+**Do not propose it again.** The FAT32 code stays in the tree, tested, but not as an option.
 
-# Check that libsecp256k1 builds (with minimal picolibc-equivalent headers in place)
-zig cc -target thumb-freestanding -mcpu=cortex_m0plus -O2 -DHAVE_CONFIG_H -Icompat -I. -Isrc -c src/secp256k1.c
-```
+The light receiver of [09-light-audio-input.md](09-light-audio-input.md) stays implemented and
+tested on the host as an optional channel; no hardware or case is designed for it.
 
-**Conclusion**: **v0.1 is completed on the Zero 2 WH (the current implementation runs as-is), and the main v0.2 candidate is the RP2350-PiZero** (§2.2, [08-rp2350-pizero.md](08-rp2350-pizero.md)).
-Moving to an RP2350 board makes "rewriting the HAL + deciding how to handle camera/QR + measuring signing speed" the core of the work.
+### 2.5 Power: external, over USB (decided 2026-10-12)
 
-### 2.4 Display choice
+No battery in the device. A hardware wallet is used a few times a year; a cell kept inside it
+degrades, swells or leaks while it waits, and "plug it in to use it" has no state to forget.
 
-| Option | Size | Pros | Cons |
-|---|---|---|---|
-| ~~A: Waveshare 1.3" LCD HAT~~ (rejected, see below) | 1.3" / 240×240 | Plugs directly into the Zero's 40-pin header. SeedSigner's track record and enclosure STL can be used as-is | Displaying EVM calldata requires paging. **It covers the whole board (65×30 mm), so every free GPIO is hidden** — no sensor or camera can be added (see [09-light-audio-input.md](09-light-audio-input.md) §7) |
-| B: 2.4–3.5" SPI panel (ILI9341 / ST7789) | 2.4–3.5" | Addresses and amounts are easier to take in at a glance | Not a HAT form factor, so jumper wiring is needed and the enclosure STL must be custom |
-| **C: Adafruit Mini PiTFT 135×240 (#4393) — CHOSEN** | 1.14" / **240×135** | Covers only 38.6×24.5 mm of the 65×30 mm board, so the rest of the 40-pin header stays reachable. Uses SPI plus a few control pins (~8-9), and brings **two tactile buttons** and a **Qwiic/STEMMA QT (I2C) port** for sensors. Pre-assembled, $9.95, ~15 FPS (fine for animated QR). Same ST7789 controller as before | **The resolution is 240×135, not 240×240**, so the screen layout has to be redesigned for half the height |
-| D: same 1.3" 240×240 panel as a module + separate buttons | 1.3" / 240×240 | **The same panel and the same ST7789 driver**, so the screen design and the firmware's display layer are unchanged. A module with a 0.1" header is wired with jumpers (no soldering) and **leaves the rest of the 40-pin header reachable**, which is what a camera or light sensor needs. Cheaper than the HAT | The joystick is gone, so the UI simplifies to about three buttons; the enclosure must be redrawn around the module |
-| E: connectorised display (Grove / STEMMA QT) | 0.96–1.14" | One cable, no soldering at all | Small (128×64 or 135×240) and I²C refresh rate is a question mark for animated QR output |
-| F: 1.3" HAT + confirmation on the host side | — | Minimal implementation | Requires trusting the host, which violates principle 2 (not recommended) |
+- **Unplugging is the normal way to switch off**, so signing must be atomic: either it completes
+  or no valid signature exists
+- Use a **power-only** USB cable, or a power bank, so no data lines connect the device to a computer
+  ([05-threat-model.md](05-threat-model.md) §4-8)
+- The board's LiPo connector is not used; it stays inside the case
 
-**C is the choice**: it is the only option that keeps enough of the 40-pin header reachable for a camera or a
-light sensor while still being a single pre-assembled board that plugs in. Jumpers do the wiring, so no
-soldering is needed. Option B (a bigger panel) remains the answer if the 135 px height proves too cramped
-in use, and option D is the fallback if a square 240×240 screen becomes essential.
+### 2.6 Enclosure
 
-**Note on the chosen display (#4393)**:
+Our own parametric design, generated from Zig and built in SolidCraft:
+[hardware/enclosure/README.md](../hardware/enclosure/README.md). 92.8 × 35.1 × 19.7 mm, two shells,
+four screws from underneath.
 
-The square 240×240 version of the same family (Adafruit 4484) would have needed no screen-layout
-change at all, but it is hard to obtain in Japan, so **the 240×135 #4393 was chosen instead**. That
-means the screen layout must be reworked for a 135 px tall panel (13 text lines at the 8x8 font,
-against 26 before); the safety requirement that every error screen states in red that *no signature
-was made* applies unchanged at the smaller size. The exact GPIOs the module uses for SPI, the two
-buttons and the backlight have to be confirmed against Adafruit's guide when ordering.
+- **Clear, not sealed** (owner decision, 2026-10-14). Every user builds and opens their own device,
+  so a tamper-evident seal would prove nothing; a clear case lets you compare the inside with your
+  assembly photo before each use
+- **Thin**: the camera sits beside the board, not under it, and the four signal wires' header-side
+  ends are unhoused and insulated, so the height is the display's (owner decision, 2026-10-14)
 
-**Note on option C form factors**: if a camera or a light sensor is wanted later, C is the cheapest way to make room for
-it. The concrete parts seen while looking into this: the [Waveshare Pico LCD 1.3](https://www.waveshare.net/shop/Pico-LCD-1.3.htm)
-module (240×240, SPI, the same panel as the HAT) and connectorised buttons such as
-[Grove – Button](https://www.taiwaniot.com.tw/product/grove-button-%e6%8c%89%e9%88%95%e6%8e%a7%e5%88%b6%e5%99%a8%e6%94%af%e6%8f%b4arduino%e8%88%87%e6%a8%b9%e8%8e%93%e6%b4%be/) with
-[Grove/STEMMA-to-jumper cables](https://media.distrelec.com/Web/Downloads/_t/ds/114992154_eng_tds.pdf).
-Exact pinouts and stock have to be confirmed against the vendor's wiki when ordering; nothing here has
-been bought or measured yet.
+## 3. Wiring (no soldering)
 
+**The RP2350-PiZero's header is not numbered like a Raspberry Pi's on every pin.** These pins differ
+(Waveshare wiki and schematic):
 
-### 2.5 Build recipes
+| Header pin | 7 | 8 | 10 | 19 | 21 | 23 | 29 | 32 |
+|---|---|---|---|---|---|---|---|---|
+| RP2350-PiZero | GPIO14 | GPIO4 | GPIO5 | GPIO11 (SPI1 TX) | GPIO12 (SPI1 RX) | GPIO10 (SPI1 SCK) | GPIO15 | GPIO9 |
+| Raspberry Pi | GPIO4 | GPIO14 | GPIO15 | GPIO10 | GPIO9 | GPIO11 | GPIO5 | GPIO12 |
 
-The standard build is **optical in both directions**: the host shows a flickering pattern that the
-device's light receiver reads, and the device answers with a BC-UR QR code on its own screen. **No SD
-card is involved at all** (§2.9), so nothing shared with a general-purpose computer ever touches the
-device.
+Pins 2 and 4 are USB VBUS (5 V), pins 1 and 17 are 3.3 V.
 
-| | Standard build (this is the one) | SD-card variant (optional, not standard) |
+**The Mini PiTFT** (plugged onto pins 1–24), in RP2350-PiZero GPIO numbers:
+
+| Function | Header pin | GPIO |
 |---|---|---|
-| Display | **Adafruit Mini PiTFT #4393**, plugged onto the 40-pin header — **available domestically at [Switch Science](https://www.switch-science.com/products/7422)** | same |
-| Input | **LM393 light-sensor module** (¥300-600): three wires to the free header pins (VCC, GND, AO) | microSD card |
-| Output | QR code on the device screen (BC-UR, standard, readable by any UR-capable wallet) | file on the card |
-| Assembly | plug the display on, connect three wires: **~3 minutes** | plug the display on, insert a card |
-| Soldering | none | none |
-| Parts | board $9.99 + display ~¥2,500 + sensor ¥300-600 | + a card and a card reader |
-| Security shape | **air-gapped, optical both ways**; the host never touches the device | the card passes through the host, which is the untrusted party |
+| Display SPI MOSI / SCK | 19 / 23 | **GPIO11 / GPIO10 (SPI1)** |
+| Display CS | 24 | GPIO8 (driven as a plain GPIO) |
+| Display DC | 22 | GPIO25 |
+| Backlight | 15 | GPIO22 (on by default through a pull-up; the backlight runs from 5 V) |
+| Buttons | 16 / 18 | GPIO23 / GPIO24 (pulled up to 3.3 V) |
+| STEMMA QT port | 3 / 5 (+ 3.3 V, GND) | SDA GPIO2 / SCL GPIO3 (I²C1). **No pull-ups on the module or the board** |
 
-The SD-card variant remains implemented and verified in CI (`mtools` + `fsck.fat` in the handoff test),
-because it is the cheapest path for a PC-only user and it exercises the filesystem layer. It is simply
-not what the standard build uses.
+**The camera** (UC-805 header, odd row): power, I²C and ground from the Mini PiTFT's STEMMA QT port
+through the #4397 cable; the four video signals to header pins on jumper wires.
 
-**Grove** is the extension ecosystem: the display leaves most of the header free, so a Grove module
-plugs in through one Grove-to-jumper cable. Seeed's Grove Shield for Pi Pico (domestic at
-[Switch Science](https://www.switch-science.com/collections/seeed/products/7109)) breaks out
-2x I2C, 2x UART, 3x digital, 3x analog and 1x SPI as Grove sockets, but its female headers mean it
-**cannot be stacked with the display**, so it is an alternative to the small display rather than an
-addition.
-
-**Unconfirmed**: prices are approximate, and the light receiver's pin assignment is to be confirmed
-against Adafruit's pin list for the display.
-
-### 2.6 Camera (deferred — the light receiver was chosen instead)
-
-The camera was the alternative **input** path. It is **not** being bought: it costs about $25 against
-¥300–600 for the light receiver, and the light path reuses the same payload (UR strings) and the same
-assembler. The research is kept here in case a camera becomes attractive later.
-
-The camera would be the **input** path (reading a UR QR displayed by the host). On the RP2350 there is **no CSI**,
-so the camera must be an **SPI module wired to the 40-pin header** — which the chosen small display makes
-possible again (it covers only a third of the board; see [09-light-audio-input.md](09-light-audio-input.md) §9
-for why the camera was preferred over a light sensor).
-
-#### 2.6.1 Best candidate: a module that decodes the QR internally (found 2026-10-13)
-
-A shop survey found modules that do the **capture *and* the decoding on board** and hand the MCU a short
-string, which removes the entire image-processing objection to a camera.
-
-| | |
-|---|---|
-| Product / shop | **M5Stack QR Code Scanner Unit (U173)** — [Switch Science product 9508](https://www.switch-science.com/products/9508) |
-| Price / stock | **¥3,498, in stock** (Switch Science, checked 2026-10-13) |
-| Interface | **I²C (address 0x21) or UART**, selected by an on-board toggle switch; Grove / HY2.0-4P (2.0 mm) connector |
-| **What the MCU receives** | **The decoded QR text as a string** — no image crosses the wire. Vendor API: `get_qrcode_data()` returns the scanned data as a string, `get_qrcode_data_status()` reports ready/not-ready, `set_trigger_mode(0 = auto, 1 = manual)` ([UIFlow API docs](https://uiflow-micropython.readthedocs.io/en/2.4.1/units/qrcode.html)) |
-| Sensor | 640 × 480 CMOS capture engine plus an STM32F030F4P6 bus MCU (the sensor part number is not given) |
-| QR capability | **Vendor-documented**: PDF417, QR Code and Data Matrix, plus 8 one-dimensional codes; ≥5 mil, print contrast ≥20 %, scan angle ±55° |
-| Solder-free | **Yes** — comes with a 20 cm HY2.0-4P cable; add the [Grove→Dupont conversion cable (M5Stack A096, ¥847)](https://www.switch-science.com/products/8305) to reach the Pico 2 H's factory-fitted header pins. No soldering |
-| Size | 65.8 × 18.4 × 15.8 mm, 14 g — a hand-held scanner body with its own trigger button and buzzer |
-| **Unverified** | Supply voltage range (Grove units normally run from 5 V, available as VBUS on the 40-pin header); its working distance; and whether it reads a **phone screen** as reliably as printed codes (the datasheet quotes printed-code specs only). Nothing has been bought or measured |
-
-**Alternatives from the same survey** (prices as of 2026-10-13): the
-[M5Stack QR Code Scanner Module 13.2 (M145, ¥3,784, in stock)](https://www.switch-science.com/products/10693)
-also decodes internally over UART but is a Core2-shaped module with a 9–24 V DC jack; the
-[M5Stack UnitV2 M12 (¥18,051)](https://www.switch-science.com/products/7536) decodes QR and emits JSON over
-UART but is **out of stock**; [HuskyLens (¥10,824)](https://www.switch-science.com/products/6248) and
-[HuskyLens 2 (¥19,547)](https://www.switch-science.com/products/10885) document face / object / line / colour /
-AprilTag (and OCR, pose) recognition but **not QR**; the
-[Grove Vision AI Module V2 (¥3,205, camera not included)](https://www.switch-science.com/products/9476) returns
-model output (class + bounding box), not decoded text, and no QR model is documented for it; and the SPI cameras
-([Arducam 5 MP Mini SPI ¥7,920](https://www.switch-science.com/products/11225),
-[Arducam Mega 5 MP ¥6,490](https://www.switch-science.com/products/8943)) hand over **raw images**, leaving the
-decoding to the RP2350 — the expensive path this candidate avoids.
-
-| Candidate | Interface | Resolution | Notes |
-|---|---|---|---|
-| **Arducam 5MP Mini SPI camera module** — verified to exist at a domestic shop: [Switch Science product 11225](https://www.switch-science.com/products/11225). The manufacturer lists it for "Arduino UNO, Raspberry Pi Pico and other MCU", so it is SPI and Pico-documented, which is what this board needs. **Price and stock confirmed 2026-10-13: ¥7,920, in stock**; whether the header comes soldered is still unconfirmed | SPI | 5 MP sensor (OV5642), used at QVGA | It ships with jumper wires but returns **raw images** — no on-board decoding (see §2.6.1) |
-| ArduCAM Mini 2MP Plus (OV2640) — earlier candidate, **no domestic listing confirmed** | SPI (plus a few control pins) | 2 MP sensor, used at QVGA (320×240) | A finished module with a pin header, documented for use with the Pico/RP2040, ~$25. QVGA RGB565 is 153 KB, which fits the 520 KB SRAM; the frame is converted to grayscale before decoding. Listed by a Japan-facing shop ([RobotShop JP](https://jp.robotshop.com/products/arducam-mini-camera-module-w-2mp-plus-ov2640-arduino)) |
-| **Himax HM01B0 (monochrome)** — alternative | SPI | 320×320, **native grayscale** | Electrically the nicest fit: no colour conversion, low power, small frames. The bare sensor is a flex-connector part; a breakout is sold by [SparkFun](https://www.sparkfun.com/himax-cmos-imaging-camera-hm01b0-monochrome.html). Availability and whether the breakout has a solder-free header are unconfirmed |
-| Raspberry Pi camera module (CSI) | CSI | — | **Not possible on the RP2350**: the board has no CSI connector. This applies to the v0.1 Pi Zero build only |
-
-**Why the resolution is not a problem**: the decoder in `src/ui/qr_decode.zig` was verified down to
-**1 pixel per module**, and a whole ~200-byte PSBT in a version-13 QR is 69 modules across. A QVGA camera
-therefore reads a full PSBT in **one frame** (~4.6 px per module), which is much faster than the output
-direction, where the device's 240×135 screen has to send 17 animated parts.
-
-**Pin budget**: SPI1 (SCK/MISO/MOSI), one chip-select, plus power and ground — about five pins. The display
-and its two buttons use roughly nine, so the 28 GPIOs are not a constraint.
-
-**Unconfirmed**: exact pin assignments, whether each module ships with a header soldered (the no-soldering
-rule), and Japanese stock. Nothing here has been bought or measured.
-
-
-### 2.6.2 Decision: decode the image ourselves (owner decision, 2026-10-13)
-
-The M5Stack U173 (§2.6.1) would hand over decoded text and delete the image work entirely, but it puts a
-**third-party decoder on the input path** - and the input decides *what gets signed*, which is the most
-security-critical step in the whole device. The confirmation screen does catch a substituted UR, but it
-relies on a human comparing addresses. Everywhere else in this project we verify instead of trusting, and
-the same decoder that would be replaced here is already written and verified against two independent
-encoders (124/124) and against its own rendered screens.
-
-So: **the camera path decodes raw images with `src/ui/qr_decode.zig`.**
-
-| | U173 (decoded text over I2C) | **Chosen: SPI camera + our decoder** |
+| UC-805 pin | Signal | Goes to |
 |---|---|---|
-| Who decodes | M5Stack's firmware | **this project** (verified, auditable, in the repository) |
-| Trust needed | yes, for the input path | **none beyond the device's own code** |
-| Firmware work | an I2C read | a camera driver, frame capture and a grayscale buffer |
-| What has to be right | the module's QR engine | our decoder, which already survives rotation, blur, noise, JPEG and perspective, and reads 1 px per module |
-
-Candidates for the raw-image route, all domestic and in stock (2026-10-13):
-
-| Module | Price | Interface | Cable in the box |
-|---|---|---|---|
-| **Arducam Mega 5 MP SPI AF (SS 8943)** | **Y6,490** | SPI, 4-wire | **yes, a 300 mm 6-pin cable** |
-| Arducam 5 MP Mini SPI (SS 11225) | Y7,920 | SPI (+I2C control) | jumper wires; header-soldered state unconfirmed |
-| Adafruit OPT4048 + Qwiic (the light path) | Y2,090 | I2C | keep as an optional second input |
-
-This also fits the case already built: v0.5 has an **aperture looking down through the floor**, which was
-designed so the device could be laid on the phone's screen. A downward-looking camera uses exactly that
-geometry, and the "lay it on the phone" gesture keeps the sensor square to the screen and out of room
-light.
-
-Two things the camera driver has to get right, noted here so they are not discovered late:
-
-- **Close focus versus resolution.** These modules are fixed-focus and focus around a metre, so at 10-20 cm
-  the image is soft. Resolution is what saves it: a 5 MP sensor reading a 3 cm QR at 15 cm across a 60 degree
-  lens puts the code on roughly 470 of 2592 pixels wide, about 7 px per module - but the whole 5 MP frame is
-  5 MB and cannot go in 520 KB of SRAM. The sensor must be **windowed** to read only the central region.
-- **Use the luma channel.** Reading Y only halves the bytes and skips a colour conversion, and the decoder
-  wants grayscale anyway.
-
-The third-party module stays documented as an option for anyone who prefers a cable to a driver; the
-trade-off is stated rather than hidden.
-
-### 2.7 GPIO header
-
-**The Pi Zero 2 WH comes with the header pre-installed, so this step itself is unnecessary** (just plug it in).
-Only when using a Pi Zero 2 W / 1.3 does one of the following become necessary.
-
-- **Hammer header** (press-in): no soldering. If the press-fit worries you, check continuity with a multimeter
-- **Soldering**: reliable, but requires tools and skill (not recommended by this project)
-
-
-### 2.8 Power options (dry cells / LiPo / USB)
-
-**Adopted (decided 2026-10-12): no battery in the device; power is supplied externally over USB.**
-
-| | **External power (adopted)** | Dry cells (carried in the device) | LiPo (board connector) |
-|---|---|---|---|
-| Device size | **Smallest** | Large (about 70×65×20mm with 4× AA cells) | Small (a thin cell fits behind the board) |
-| Long-term storage (years to a decade) | **Best** (no battery, so nothing degrades) | Good (20 years with lithium AA cells) | **Poor** (degrades and swells in 2–3 years) |
-| Charging / replacement | **Not needed** | Replacement only | Charging required |
-| Leakage / fire | **None** | Beware of leakage (almost none with lithium) | Risk of fire and swelling |
-| Usable on the spot | Needs a power source (PC / mobile battery pack / dry-cell box) | **Anywhere** | If charged |
-| Remaining-charge indicator | **Not needed** (the problem itself disappears) | Cannot be measured (needs a voltage-divider resistor) | Can be measured |
-| Part count / cost | **Smallest** | Medium | Medium |
-
-**Why external power suits this use case**: a hardware wallet is used **only a few times a year**.
-Carrying a battery in the device for that reason means it degrades, swells and leaks while sitting unused.
-"Plug it in only when you use it" gives **higher long-term storage reliability**.
-
-**Caveats**:
-
-1. **Cutting power becomes "the normal way to switch off"** — the atomicity of signing (either it goes through
-   to the end or nothing remains) becomes even more important. This is guaranteed by the microSD `OUT.TMP` → `OUT.PSBT`
-   rename scheme (section 7b of [08](08-rp2350-pizero.md)) and by a design in which no valid signature remains
-   even if power is lost before the signing result is written out
-2. **USB power should be supplied without the data lines connected** — use a power-only cable, or a mobile
-   battery pack / dry-cell box (which have no data lines). This preserves the air gap (section 4-8 of [05](05-threat-model.md))
-3. It cannot be used where there is no power source (during a disaster, for example) → **carrying a dry-cell box solves this** (do not build it into the device)
-4. The board's LiPo connector is **not used** (it is left available as an optional modification for people who want a smaller device)
-
-## 2.9 SD-card exchange: not proposed any more (owner decision, 2026-10-13)
-
-**Do not propose an SD-card exchange for this project again.** The owner ruled it out: a card is shared
-physical media that passes through the untrusted host and then into the signing device. The code stays
-in the tree because it is implemented and CI-verified, but it must not be suggested as the standard
-build nor as an option. The exchange is **optical**: light in, QR out.
-
-The rest of this section records the original reasoning, kept for context.
-
-
-An SD card is shared physical media: it is written by the **host**, which this project treats as
-untrusted, and then inserted into the signing device. That makes it the one component that carries
-data — and potentially an exploit for the filesystem layer — from the untrusted side into the trusted
-one. The firmware does defend itself (the FAT32 parser is fuzzed, the PSBT is validated and displayed
-before anything is signed, and nothing is signed unless the screen shows it), but the cheapest defence
-is to not have the interface at all.
-
-So the standard build exchanges **optically in both directions**:
-
-| Direction | Channel | Standard? |
-|---|---|---|
-| Host to device | **Light** (the host's screen flickers; the device's light receiver reads it) | Link layer is this project's own; the payload is a standard BC-UR string |
-| Device to host | **QR code on the device screen** (BC-UR, animated parts) | Yes - BCR-2020-005, readable by any UR-capable wallet |
-
-The consequence is honesty about cost: receiving a PSBT over light takes **tens of seconds** instead of
-an instant, and the light link is not a standard anyone else has reviewed. In exchange, the device has
-**no shared storage, no removable media and no cable data path** - only a light sensor and a screen.
-
-
-### 2.10 Exactly what to buy for the light receiver (and the cable)
-
-Search terms: **"LM393 光センサモジュール"** (Akizuki Denshi, aitendo, Amazon.co.jp, Yahoo
-Shopping), or **"LM393 photosensitive diode module digital analog output"**. Category pages worth
-starting from: [aitendo sensors](https://www.aitendo.com/product-list/211?num=50&img=200&sort=rank&page=2),
-[Akizuki photodiodes](https://akizukidenshi.com/catalog/c/cphotodio_dL_spd_p2/). A 3-pack of "photosensitive
-diode, digital/analog output" boards is typically **¥300-600 for three**, i.e. one spare set.
-
-**What it must be** (all four matter):
-
-| Must have | Why |
-|---|---|
-| A **photodiode or phototransistor** as the sensing element | Fast enough for a screen flickering at 30-120 Hz |
-| **Both `AO` (analog) and `DO` (digital)** outputs, on a 4-pin board | `AO` goes to an ADC pin so the firmware thresholds in software; `DO` is the fallback |
-| `3.3-5 V` supply (most of these boards take either) | The board runs at 3.3 V |
-| A **soldered pin header** (or a screw terminal) | The no-soldering rule |
-
-**What to avoid**: boards whose description says **"フォトレジスタ" / "光敏電阻" / "CdS" / "LDR"**. Those
-respond in 10-100 ms - too slow at this data rate - and CdS cells are being phased out anyway. On the
-board itself the difference is visible: a photodiode is a small **clear or black lens** can, a
-photoresistor is a **bare serpentine squiggle** on a ceramic or plastic base.
-
-**The cable**: the sensor's header is male and the board's 40-pin header is male, so the connection is
-**female-to-female (F-F) jumper wires, 4 of them** (or a 4-way F-F ribbon of the same length).
-Choose **10-20 cm**: the display sits on the header, so the wires have to come around it. Nothing else
-is needed - no Grove or Qwiic adapter, because these boards have plain 0.1" pins. The **light guide is
-printed as part of the case** (a collar and floor window that carry the light guide down through the underside (the 16 mm side bay has not existed since v0.4)), so there is
-nothing extra to buy for it.
-
-**Wiring** (3 wires are enough to start; `DO` is optional):
-
-| Sensor pin | Board pin | Note |
-|---|---|---|
-| `VCC` | `3V3` | not 5 V |
-| `GND` | `GND` | — |
-| `AO` | **an ADC pin** (`GPIO26` or `GPIO27`) | the firmware samples this; the pin has to be confirmed against Adafruit's pin list for the display |
-| `DO` | any free GPIO | optional hardware-threshold path |
-
-**Qwiic works - with an I2C ADC.** An earlier note here said a Qwiic light sensor was impossible; that
-was wrong, and the mistake was mine: it conflated the *sensor's integration time* with the *bus*. A
-BH1750 lux sensor really is unusable (one measurement takes 16-180 ms, ~50x too slow, and the time
-varies), but I2C itself is not the limit. Put an **I2C ADC** on the Qwiic port and the analog light
-level arrives as a normal sample stream.
-
-| Part | Status |
-|---|---|
-| **[Qwiic - ADS1015 12-bit ADC, 4 channel (Switch Science 5722)](https://www.switch-science.com/products/5722)** | **Verified to exist domestically.** 12-bit, and the ADS1015 converts at up to **3300 samples/s** in continuous mode - enough for 100 samples per symbol at 30 symbols/s with a 10% margin. (The 16-bit ADS1115 does only 860 samples/s, so pick the 1015.) Price and stock unconfirmed |
-| **[Qwiic-Qwiic cable 50 mm (Switch Science 6896)](https://www.switch-science.com/products/6896)** | Verified product page. One cable from the display's Qwiic port to the ADC |
-| A photodiode/phototransistor module with an analog output (LM393-type board) | **Still to be verified domestically.** Its `AO` goes to the ADC's A0 through three short wires; both boards live together in the sensor bay, so no wire runs to the 40-pin header at all |
-
-**One Qwiic lux sensor is fast enough to skip the ADC entirely (checked 2026-10-13).** Of ten Switch
-Science product pages surveyed, the
-**[Qwiic - OPT4048 三刺激値カラーセンサモジュール (Switch Science 9281)](https://www.switch-science.com/products/9281)**
-is the only plug-and-play Qwiic **ambient-light** sensor whose conversion time is short enough to sample a
-screen flicker: **600 µs per channel, one of 12 selectable conversion times from 600 µs to 800 ms** (stated on
-the product page; Adafruit's CircuitPython OPT4048 driver lists the same 12 values from datasheet page 29).
-**¥2,739, in stock** on the store's own variant data. One Qwiic cable into the display's STEMMA QT port would
-then be the whole light receiver — no ADC, no photodiode wiring.
-
-Caveats, **all unverified** and to be measured on the bench before this displaces the ADS1015 path:
-
-- the auto full-scale range (7 ranges, 2.2-144 klux) changes gain between conversions, so the range must be
-  **pinned manually** for amplitude sampling; the driver exposes `Range.AUTO` plus the seven fixed ranges
-- 600 µs is the shortest and therefore the least sensitive setting; signal-to-noise from a screen at close
-  range, through the IR-cut/CIE filters, on the wideband channel is untested
-- it is a colour sensor that also reports lux, not a plain photodiode: sample the **wideband (clear) channel**
-- the display's STEMMA QT port must land on the I2C pins the firmware uses
-
-Every other Qwiic ambient-light sensor on that list is **25 ms or slower** (fastest settings: VEML6030 and
-VEML7700 25 ms, LTR-381RGB-01 25 ms, MAX44009 6.25 ms but manual-mode only / 100 ms in auto mode, VCNL4200 and
-VCNL4030 50 ms, LTR-329 50 ms, VCNL4020 100 ms), which is the same order as the BH1750 already rejected above.
-
-Why the timing is comfortable rather than marginal:
-
-| Quantity | Value |
-|---|---|
-| ADC sample period | 0.3 ms at 3300 samples/s |
-| Symbol period | 33 ms at 30 symbols/s |
-| Jitter the receiver tolerates | about +-10% of a symbol = **+-3.3 ms** |
-| I2C read jitter | tens of microseconds to a millisecond |
-
-The receiver's own header already says a 12-bit ADC must be shifted down to 8 bits, so the ADS1015
-feeds `light_rx` **unchanged** - the 371 tests still describe it exactly.
-
-What this buys: **no wire to the 40-pin header at all**, so the question of how many pins the display's
-socket covers stops mattering, and the sensor's power comes from the Qwiic port rather than a stolen
-3V3 pin. The light path stays the first candidate.
-
-Check the silkscreen for the pin order before connecting: the 4-pin boards come in both
-`VCC GND DO AO` and mirror-image orders. Nothing here has been bought or measured in this session, and
-no specific product page could be verified - the specification above is what matters.
-
-
-**Cheaper listing of the same part (2026-10-13)**: [Adafruit OPT4048 module, Switch Science 10457](https://www.switch-science.com/products/10457),
-**¥2,090, in stock** - the same OPT4048 chip as 9281 (¥2,739), so the 600 us conversion time, the four
-X/Y/Z/W channels (the fourth is the wideband one to sample), the 0x44 I2C address and the two
-STEMMA QT/Qwiic connectors are identical. Buy this one; the ¥650 difference buys nothing.
-
-Two consequences to act on, both now decided (see §2.11):
-
-- this board is **25.4 x 17.78 mm**, and the sensor goes **under the main board, looking down through the
-  floor** - so the v0.3/v0.4 side bay is removed rather than enlarged, and the case grows in thickness
-  instead of length;
-- the sensor's aperture is **at the centre of the board** (12.70, 8.89 mm), not near an edge: Adafruit's
-  published Eagle board file puts the OPT4048 package U1 exactly there and their top-down photo agrees.
-  That number is still tagged as an estimate in the .scad, because the emitting spot inside the package
-  is not published.
-
-Useful extras this board brings: it has breakout pads for I2C, the address pin and an interrupt output
-(so it can also be wired with jumpers if a Qwiic cable is ever impractical), and it carries a level
-shifter so it works from both 3.3 V and 5 V rails.
-
-
-### 2.11 The light sensor faces the bottom of the case (owner decision, 2026-10-13)
-
-The sensor is mounted so it looks **down through the underside of the case**, not out of an end face.
-
-Why this is better, not just different:
-
-| | Sensor on the bottom | Sensor on an end face |
-|---|---|---|
-| To send | **Lay the device on the phone's screen.** It self-aligns, it is hands-free, and the phone itself **shields the sensor from room light** - which is the single biggest cause of dropped frames | You have to aim the edge at the screen by hand and hold it steady |
-| Ambient light | Blocked by the phone | Room light leaks in from every side |
-| The device's own screen | Faces up and **stays readable while the device sits on the phone** - useful, because the input screen shows progress | Must be tilted away to aim, so it is unreadable |
-| Getting it wrong | Misalignment is obvious and stable | Misalignment is invisible and drifts |
-
-Consequences for the case:
-
-- The main board is raised on **taller standoffs** so the 25.4 x 17.78 mm sensor board fits **underneath** it;
-  the aperture and the light guide pass **down through the floor**.
-- The **16 mm side bay from v0.3 is removed**, so the footprint returns to the board's 65 x 30 mm and the
-  case grows in thickness instead of length - better for holding against a phone.
-- The Qwiic cable runs from the display, around the board edge, to the sensor underneath; 50 mm is enough.
-
-The firmware is unaffected: the sensor is on I2C, so only its physical position changes. The light guide
-still matters (it keeps the phone's own light from spilling in sideways), but the phone now does most of
-the shielding.
-
-
-### 2.12 A single board that replaces the whole stack (found 2026-10-13)
-
-[Switch Science 10387](https://www.switch-science.com/products/10387), **Y4,059, in stock**: an
-RP2350 **module with the screen and the camera already on it**.
-
-| It has | Why it matters here |
-|---|---|
-| **RP2350A**, 520 KB SRAM, **16 MB flash** | The same chip family the firmware already targets |
-| **2 inch 240 x 320 IPS, ST7789T3 over SPI** | Same controller as the display we already drive |
-| **Capacitive touch, CST816D over I2C** | No buttons at all - but the UI design has to change |
-| **OV5640 5 MP camera included**, 24-pin 0.5 mm FPC | **The camera input path becomes possible for free**, and its decoder is already written and verified (124/124 against independent encoders) |
-| **microSD (SPI)**, 6-axis IMU, LiPo charge circuit | Not needed for the standard build, but they cost nothing |
-| **2 x 12-bit ADC and 22 usable GPIO on installed headers** | The ADC pins are free here, so a light sensor can be added as well as the camera |
-| **USB-C with drag-and-drop UF2 flashing** | No programmer needed |
-
-Cost comparison for the current plan: board Y1,991 + display Y2,500 + OPT4048 Y2,090 + Qwiic cable
-Y550 = **Y7,131** - this single board is **cheaper and does more**, including the camera.
-
-What it costs us instead:
-
-- **A new enclosure** - but a simpler one: one board plus a screen window, no HAT, no standoffs, no
-  Qwiic routing.
-- **A different screen shape** (240 x 320 portrait). The layout is already driven by a framebuffer size
-  argument, so this is a new variant rather than a rewrite.
-- **HAL work**: display pin mapping, touch input, and a camera driver. The signing core, the UI layer
-  and the transport stack are unaffected.
-
-So this is a genuine decision point: the assembly story gets *better* (one board, camera included, no
-HAT covering anything), at the cost of the enclosure and HAL rework. Nothing has been bought; the
-specifications above are from the product page.
-
-
-**Chosen camera (owner decision, 2026-10-13)**: [Arducam Mega 3MP SPI camera, Switch Science 8941](https://www.switch-science.com/products/8941),
-**Y4,840, in stock** - not the 5 MP version, which costs Y1,650 more for resolution this does not need.
-
-Why 3 MP is plenty, with the arithmetic: at 10-20 cm a 3 cm QR occupies roughly 18% of a 60 degree
-field of view, so on a 3 MP sensor (2048 x 1536) the code lands on about 370 px across 69 modules -
-**about 5 px per module**, against a decoder that has been verified down to **1 px per module**.
-
-Three more reasons this module is a better fit than the 5 MP one:
-
-- It carries **its own controller with a high-level command API** and an **open-source SDK with a
-  hardware abstraction layer**, so the driver is command-level rather than a sensor register table. That
-  is a large reduction in the work this project has to write and verify.
-- **Standard SPI**, listed for ARM and RISC-V MCUs, so the RP2350 is a supported target.
-- Under **200 mW, with a 42 ms wake-up from sleep**, so the camera can stay off until it is needed - it
-  does not have to be powered while signing.
-
-Unconfirmed: whether the box includes a cable as the 5 MP Mega does, and the same two driver items
-already recorded above (fixed-focus softness at close range handled by windowing, and reading the luma
-channel only).
-
-## 3. Assembly procedure (solder-free; target 45 minutes; for the Pi Zero 2 WH)
-
-1. **Fit the LCD HAT** — plug it into the 40-pin header (1 minute)
-2. **Connect the camera** — lift the lock bar on the CSI connector, insert the FPC taking care with the contact-side orientation, and lock it (5 minutes)
-3. **Write the OS image** — write the release image to the microSD card and verify the hash (15 minutes)
-   (with the RP2350 configuration you just copy a UF2)
-4. **Assemble the enclosure** — print the STL and secure the board (15 minutes)
-5. **Check that it boots** — apply power and confirm that the logo and menu appear (5 minutes)
-6. **Self-test** — check the screen, joystick, 3 buttons, camera and (optionally) QR reading
-
-(If you use a Pi Zero 2 W / 1.3, add "press-fitting the hammer header (10 minutes)" at the start)
-
-**Important**: always supply power through USB micro-B. Reversing the GPIO 5V pin and GND will damage the board.
-
-## 4. Verification (after assembly, before use)
+| 1 | VCC | STEMMA QT red (3.3 V) |
+| 3 | SCL | STEMMA QT yellow → GPIO3 |
+| 5 | SDA | STEMMA QT blue → GPIO2 |
+| 7 | VSYNC | header pin **36** → GPIO16 |
+| 9 | HREF | header pin **29** → GPIO15 |
+| 11 | PCLK | header pin **33** → GPIO13 |
+| 13 | D0 | header pin **32** → GPIO9 |
+| 15 | GND | STEMMA QT black |
+
+The four header pins are chequered across the two rows so the bare terminals (§4) never stand side by
+side. Free header GPIOs left after this: pins 26 (GPIO7, partly under the display), 27 (GPIO0),
+28 (GPIO1), 31 (GPIO6), 35 (GPIO19), 37 (GPIO26), 38 (GPIO20) and 40 (GPIO21).
+
+**For the camera driver** (not written yet):
+
+- The camera's I/O is **2.8 V**; the RP2350 reads it correctly at 3.3 V (V_IH 2.0 V). Its I²C pull-ups
+  are on the camera (4.7 kΩ to 2.8 V), and are the only ones on the bus
+- **Never drive XCLK**: the camera's own 24 MHz oscillator clocks it. In one-bit mode PCLK is 24 MHz,
+  about 6 RP2350 cycles per bit at 150 MHz
+- Capture in **one-bit mode** with PIO. Arm's
+  [hm01b0-library-for-pico](https://github.com/ArmDeveloperEcosystem/hm01b0-library-for-pico) waits on
+  absolute GPIO numbers, so only the data pin has to be chosen with PIO in mind; on the RP2350 the
+  input pads must be initialised before use (input enable on, isolation off). Nothing is incorporated
+  from it
+
+## 4. Assembly (solder-free; about 30 minutes)
+
+The full steps, with the case, are in
+[hardware/enclosure/README.md](../hardware/enclosure/README.md#assembly). In short:
+
+1. Plug the Mini PiTFT onto header pins 1–24, and the #4397 cable into its STEMMA QT socket underneath
+2. **Unhouse one end of each of the four jumper wires** (lift the housing's latch with a pin and slide
+   the terminal out), insulate the terminal with heat-shrink or polyimide tape, and push it onto
+   header pins 29, 32, 33 and 36. This is the one hand step: a standard 14 mm housing would stand 6 mm
+   above the display and make the case 25 mm thick
+3. Plug the other ends and the #4397's sockets onto the camera's header (§3)
+4. Lay the board and the camera (lens down) in the printed base, photograph the inside, close the
+   top and drive in four M2 × 16 screws from underneath
+5. Copy the firmware's UF2 file to the board (hold BOOT while plugging in USB)
+
+## 5. Verification (after assembly, before use)
 
 | Item | Method |
 |---|---|
-| Image authenticity | Verify the distributed hash and PGP signature on the PC before writing to the SD card |
-| Screen / input | Check that every button and the joystick respond |
-| Camera | Check that a test QR code (SeedQR) can be read |
-| Absence of wireless | Confirm that no wireless interface exists in the OS (`ip link`, `rfkill`) |
-| Air gap | Confirm that the signing flow completes even after removing the SD card following boot |
+| Firmware authenticity | Build the UF2 yourself, or check the release's hash and signature before copying it |
+| Screen and buttons | Both buttons respond; the screen shows the whole layout |
+| Camera | A test UR QR code shown on a phone is read at 10–20 cm |
+| The inside | Matches your assembly photo: no extra parts, no extra wires (the case is clear for this) |
+| No data path | Powered from a power-only cable or a power bank |
 
-## 5. Maintenance and operation
+## 6. Maintenance and operation
 
-- **Firmware updates**: via the SD card. Run the signature-verification sequence before updating.
-- **Running from a battery pack is recommended**: because cutting power means wiping memory, running from a mobile battery pack naturally establishes the habit of "switch off when you are done".
-- **Disposal / transfer**: the design leaves nothing from which the seed can be recovered, but do not reuse a used enclosure or SD card.
+- **Firmware updates**: a UF2 file over USB with BOOT held. Check its signature first; open the case
+  if BOOT is not reachable through it
+- **Switching off** is unplugging (§2.5). Nothing is kept: the seed exists only in RAM while powered
+- **Disposal / transfer**: the design leaves nothing from which the seed can be recovered
 
-## 6. Additional requirements when selling (reference)
+## 7. Superseded options (history)
+
+Kept so the reasons are not lost; the full research is in the git history before 2026-10-14.
+
+| Option | Status | Why |
+|---|---|---|
+| Raspberry Pi Zero 2 WH (Linux, the v0.1 build) | Superseded by the RP2350-PiZero | It has a radio, which can only be disabled in software. [07-zero2w-setup.md](07-zero2w-setup.md) is kept for host-side work |
+| Pi Zero 1.3 / Luckfox Pico / other Linux boards | Not adopted | Hard to obtain, or a header to fit, or a port of the Linux build |
+| Waveshare 1.3" LCD HAT (240 × 240) | Replaced by the Mini PiTFT | It covers all 40 header pins, leaving nothing for an input device |
+| Light receiver (LM393 module, then an Adafruit OPT4048 under a raised board) | Replaced by the camera; code kept as an optional channel | Cheapest, but tens of seconds per PSBT, a link layer only this project uses, and a 33.5 mm case |
+| SD-card exchange | **Ruled out** (owner decision, 2026-10-13) | Shared media through the untrusted host |
+| M5Stack QR Code Scanner Unit (decodes on the module) | Rejected (owner decision, 2026-10-13) | A third-party decoder on the input path |
+| Arducam Mega 3 MP / 5 MP SPI, Arducam 5 MP Mini, OV2640 | Superseded by the UC-805 | Colour sensors with frames far larger than SRAM (windowing needed), at two to three times the price |
+| RP2350 board with a built-in 2" touch screen and camera (Switch Science 10387) | Not adopted | A new UI and a new case for a capacitive touch screen; the chosen stack keeps physical buttons |
+| Tamper-evident sealing of the case | Dropped (owner decision, 2026-10-14) | Users build and open their own devices; a clear case is recommended instead |
+
+## 8. Additional requirements when selling (reference)
 
 This BOM assumes **personal use**. Distributing or selling the device requires the following in addition.
 
-- A configuration with wireless: giteki certification (technical conformity certification)
 - If an AC adapter is included: PSE
-- For Europe and North America: CE / FCC
+- For Europe and North America: CE / FCC (a camera and a microcontroller with no radio still need EMC conformity)
 - Export control of cryptographic functions (even with public source code, US EAR can impose notification requirements)

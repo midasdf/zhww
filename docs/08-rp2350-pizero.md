@@ -1,8 +1,8 @@
 # 08. Port plan for the RP2350-PiZero
 
 - **Target**: Waveshare RP2350-PiZero
-- **Last updated**: 2026-10-12
-- **Position**: the main v0.2 candidate. The preparation that does not need hardware is already done with [pico_smoke.zig](../firmware/pico_smoke.zig) and `zig build pico`
+- **Last updated**: 2026-10-14
+- **Position**: **the standard build's board** (with the Adafruit Mini PiTFT and the ArduCam UC-805 camera; [03-hardware-bom.md](03-hardware-bom.md)). The preparation that does not need hardware is already done with [pico_smoke.zig](../firmware/pico_smoke.zig) and `zig build pico`
 
 ---
 
@@ -35,8 +35,8 @@ It achieves both "no wireless" and "no soldering" while avoiding the stock short
 **How it fits this project**:
 
 - **No onboard wireless chip** — removes the onboard radio interface, not every communication/tampering risk. USB, media, optical transport and firmware still need a threat model.
-- **Same size and 40-pin compatible with the Pi Zero** — the existing [Waveshare 1.3inch LCD HAT](https://www.waveshare.com/wiki/1.3inch_LCD_HAT) (the BOM's standard display) **plugs straight in**. The enclosure needs a new STL because the port positions differ
-- **microSD is standard** — PSBTs can be handed over even without a camera
+- **Pi Zero size and a Pi-style 40-pin header** — the Mini PiTFT plugs onto pins 1–24 and the camera takes four of pins 25–40. **Several header pins carry different GPIO numbers from a Raspberry Pi's** (the table is in [03-hardware-bom.md](03-hardware-bom.md) §3)
+- **A microSD slot exists but is not used**: the owner ruled out exchanging data on cards (2026-10-13)
 - **External power, no onboard battery/charger** — initial stateless design deliberately avoids an always-powered secret session.
 - **UF2 flashing** — onboarding for users is just "copy a file"
 - **Zig supports it officially** (Cortex-M33) — unlike the ESP32-S3's Xtensa, it can be written in current Zig
@@ -53,36 +53,33 @@ It achieves both "no wireless" and "no soldering" while avoiding the stock short
 
 ## 3. Hardware configuration (draft)
 
-| # | Part | Notes | Approx. |
-|---|---|---|---|
-| 1 | RP2350-PiZero | The board itself. 40-pin header pre-installed | $9.99 (about ¥1,600) |
-| 2 | Waveshare 1.3inch LCD HAT (SKU 14972) | ST7789VW 240×240, joystick + 3 buttons | $13.99 |
-| 3 | microSD (8–32GB) | Inserted into the board's slot | ¥800 |
-| 4 | **No power supply on board** (external USB power, **adopted**) | A power-only cable plus a power source you already have. A dry-cell box is optional for carrying it around (§2.7 of [03-hardware-bom.md](03-hardware-bom.md)) | ¥0–3,000 |
-| 5 | Enclosure | 3D printed. **A new STL is needed because the port positions differ from the Pi Zero** | ¥0–1,500 |
-| 6 | USB-C cable | Flashing and power | ¥500 |
+The parts are decided (owner, 2026-10-14); prices and sources are in [03-hardware-bom.md](03-hardware-bom.md) §1.
 
-**Estimated total: ¥6,000–9,000** (about USD 40–60; without a camera)
+| # | Part | Notes |
+|---|---|---|
+| 1 | RP2350-PiZero | The board itself. 40-pin header pre-installed |
+| 2 | Adafruit Mini PiTFT 135×240 (#4393) | ST7789 240×135, two buttons, STEMMA QT; on header pins 1–24 |
+| 3 | ArduCam UC-805 (Arducam B0315, HM01B0) | 320×320 monochrome camera, one-bit video bus on four GPIOs; looks out of the back of the case |
+| 4 | Adafruit #4397 cable + 4 jumper wires | Camera power and I²C from the display's STEMMA QT port; its four signals to the header |
+| 5 | **No power supply on board** (external USB power) | A power-only cable plus a power source you already have |
+| 6 | Enclosure | 3D printed, clear: [hardware/enclosure](../hardware/enclosure/README.md) |
 
-## 4. Pin assignment (the LCD HAT's official table)
+## 4. Pin assignment (Mini PiTFT and camera, RP2350-PiZero GPIO numbers)
 
-Waveshare's HAT uses the following pins by BCM number. As long as the 40-pin header is Pi-compatible, they land on the same physical pins.
+The full tables, with sources, are in [03-hardware-bom.md](03-hardware-bom.md) §3. In short:
 
-| Function | BCM | Function | BCM |
-|---|---|---|---|
-| KEY1 | 21 | Joystick UP | 6 |
-| KEY2 | 20 | Joystick DOWN | 19 |
-| KEY3 | 16 | Joystick LEFT | 5 |
-| SCLK (SPI0) | 11 | Joystick RIGHT | 26 |
-| MOSI (SPI0) | 10 | Joystick PRESS | 13 |
-| CS (CE0) | 8 | DC | 25 |
-| RST | 27 | BL (backlight) | 24 |
+| Function | GPIO | Header pin |
+|---|---|---|
+| Display SPI1 MOSI / SCK / CS | 11 / 10 / 8 | 19 / 23 / 24 |
+| Display DC / backlight | 25 / 22 | 22 / 15 |
+| Buttons | 23 / 24 | 16 / 18 |
+| I²C1 SDA / SCL (STEMMA QT: camera control, address 0x24) | 2 / 3 | 3 / 5 |
+| Camera D0 / PCLK / HREF / VSYNC | 9 / 13 / 15 / 16 | 32 / 33 / 29 / 36 |
 
-**Things to confirm before porting**:
-
-1. Whether "BCM number = RP2350 GPIO number" can be assumed (check the board's schematic and pinout diagram)
-2. **Which GPIO the microSD is connected to** — Waveshare publishes the board schematic ([RP2350-PiZero Schematic](https://files.waveshare.com/wiki/RP2350-PiZero/RP2350-PiZero.pdf)). It is very likely independent of the 40-pin header
-3. DVI is not used (leave it disabled)
+**Answered since 2026-10-12**: the header is **not** numbered like a Raspberry Pi's on pins 7, 8, 10,
+19, 21, 23, 29 and 32 (Waveshare schematic), which is why the display's SPI lands on **SPI1**, not SPI0.
+The board's own peripherals use GPIOs outside the header: microSD 30/31/40–43, DVI 32–39 and 44–46,
+PIO-USB 28/29, PSRAM chip select 47. DVI is not used (leave it disabled).
 
 ## 4b. Power policy (settled: external power)
 
@@ -107,7 +104,7 @@ Cutting the power is not an anomaly but **the normal way to switch the device of
 |---|---|
 | Power LED | **Present** (lights when powered). However, it is most likely wired directly to the power rail and **probably cannot be controlled from software**. To be settled from the schematic |
 | An LED controllable from GPIO (WS2812 etc.) | **Most likely absent** on this board (boards such as the RP2040-Zero have one). To be settled from the schematic |
-| Spare 40-pin pins | There are some, but the LCD HAT covers them, so adding an LED would require a stacking header |
+| Spare 40-pin pins | Eight GPIOs stay free after the display and the camera ([03-hardware-bom.md](03-hardware-bom.md) §3); an LED would need a jumper wire |
 
 **So the "policy" was turned into code first** ([src/ui/indicator.zig](../firmware/src/ui/indicator.zig)).
 Even with the hardware undecided, what should light up in which state can be decided and tested.
@@ -120,7 +117,7 @@ Even with the hardware undecided, what should light up in which state can be dec
 | Error | Fast blink (100ms / 100ms) | 50% |
 | Low battery (estimated) | Two blinks then a long off period | 3% |
 
-**The screen backlight (BCM24) can be controlled, so it is used as the main indicator** (turned off while idle).
+**The screen backlight (GPIO22 on the Mini PiTFT) can be controlled, so it is used as the main indicator** (turned off while idle).
 The LED is positioned as an auxiliary for "idle periods when the screen is off" and "dark places".
 
 **The battery level itself cannot be measured** (reading the 5V rail with an ADC would require adding a voltage-divider resistor, i.e. soldering).
@@ -230,9 +227,14 @@ It has been confirmed that a confirmation screen showing "destination, amount an
 - The 391 tests, including the official test vectors, continue to run on the host to prevent regressions
 - The development CLI stays as it is too (used for host-side verification and vector generation)
 
-## 7. Open decision: how to handle QR
+## 7. How QR is handled (decided)
 
-**Adopted: C (build A first, add B if capacity allows)** — decided 2026-10-12
+**Camera in, display out** (owner decisions 2026-10-13 and 2026-10-14): the UC-805 reads the host's UR
+QR codes, decoded on the device by `src/ui/qr_decode.zig`; the device shows its result as UR QR codes.
+No SD card is involved. The plan below, from 2026-10-12, is kept for the record: its option A (microSD)
+was ruled out on 2026-10-13, and option B became the standard build.
+
+Plan of 2026-10-12 (superseded): **C (build A first, add B if capacity allows)**
 
 | Option | Pros | Cons | Verdict |
 |---|---|---|---|
@@ -250,9 +252,13 @@ For now the **on-screen text is English (ASCII)**, and Japanese appears only in 
 A Japanese font (a bitmap restricted to the necessary glyphs) will be considered once the UI settles.
 
 
-## 7b. microSD handoff protocol (settled)
+## 7b. microSD handoff protocol (not used by the device)
 
-Since the policy is not to use a camera (C), **PSBTs are handed over as files on the microSD card**.
+> **Superseded (owner decision, 2026-10-13):** the device does not exchange data on SD cards; the
+> camera reads QR codes instead (§7). The protocol below stays implemented and CI-tested on the host
+> (the FAT32 layer and `zhww card`), and is recorded as it was settled on 2026-10-12.
+
+Since the policy then was not to use a camera, **PSBTs were to be handed over as files on the microSD card**.
 The specification agreed with the PC / phone-side tools is fixed here.
 
 ### File names (directly under the card's root)
@@ -337,8 +343,8 @@ All are shown on screen with a red note that **nothing was signed**.
 |---|---|---|
 | 1 | Get the board → blink an LED with a UF2 | Confirm that it runs without a screen |
 | 2 | ST7789 display | Text and shapes appear |
-| 3 | Input (joystick, buttons) | Presses are detected |
-| 4 | microSD read/write | PSBT files can be read |
+| 3 | Input (the two buttons) | Presses are detected |
+| 4 | Camera capture (PIO, one-bit mode) + on-device QR decoding | A UR QR on a phone is read |
 | 5 | Link libsecp256k1 + measure signing speed | Decide whether it is usable in practice |
 | 6 | Screen UI (pre-signing confirmation display) | Satisfies "sign only what is displayed" |
 | 7 | Send on signet | Actually usable |
