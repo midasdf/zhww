@@ -1,6 +1,39 @@
 # Next-session handoff
 
-## Latest security review and boundary hardening
+## Latest: hardware decided, enclosure redesigned, licences aligned (2026-10-14)
+
+Owner decisions this session:
+
+- **Parts**: RP2350-PiZero + Adafruit Mini PiTFT #4393 + **ArduCam UC-805** (Arducam B0315, HM01B0).
+  The light receiver (OPT4048) is out of the standard build; its code stays as an optional channel.
+- **Camera looks out of the back** (SeedSigner style); **thin first**: the camera sits beside the board
+  and the four header-side jumper ends are unhoused and insulated (heat-shrink/tape), so the case is
+  the display's height.
+- **No sealing** (users build their own); **a clear case is recommended** for inspection instead.
+- **CAD = SolidCraft**. **Licences**: firmware and tools **MIT** (was GPL-3.0-or-later), hardware
+  incl. enclosure **CERN-OHL-S-2.0** (enclosure was CC-BY-SA-4.0), docs CC-BY-4.0, logo CC-BY-SA-4.0
+  when one exists, name via `TRADEMARKS.md`. REUSE layout (`LICENSES/`, `REUSE.toml`).
+- **Language preference**: Zig first, Go only where Zig can't, **no new Python**.
+
+State:
+
+- `hardware/enclosure/case.zig` (CERN-OHL-S) is the parametric source: 33 analytic checks, writes three
+  SolidCraft scripts; `zig run case.zig -- verify results.json` checks SolidCraft's interference
+  result. Case 92.8 × 35.1 × 19.7 mm; 4 × M2 × 16 from underneath; STEP + 3 STLs exported with
+  SolidCraft 0.8.0 and committed. **Nothing measured**: the UC-805 has no published drawing.
+- `tools/license_check.zig` replaces `reuse lint` (Python); CI runs it and the enclosure checks.
+- Pin map (RP2350-PiZero numbering differs from the Pi on pins 7, 8, 10, 19, 21, 23, 29, 32):
+  PiTFT on **SPI1** (MOSI 11, SCK 10, CS 8), DC 25, BL 22, buttons 23/24, I²C1 2/3; camera
+  D0 9, PCLK 13, HREF 15, VSYNC 16, I²C 0x24, 2.8 V I/O, never drive XCLK. See docs/03 §3.
+
+Next:
+
+1. Buy the parts and measure the `MEASURED` values (UC-805 outline/holes/lens, BAT connector height,
+   header stack height, bare-terminal height), then re-run the checks and print the base first.
+2. Camera HAL: PIO one-bit capture → `qr_decode.zig` on the target.
+3. Port the remaining Python tools under `tools/` to Zig (the user prefers not to keep Python).
+
+## Earlier: security review and boundary hardening
 
 Internal follow-up review: [15-security-audit-2026-10-14.md](15-security-audit-2026-10-14.md).
 The offline target harness now rejects zero/oversized ABI lengths before constructing raw-pointer

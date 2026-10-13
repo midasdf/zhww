@@ -134,7 +134,7 @@ The next tasks do not require target hardware and must precede HAL work.
 | Item | Content |
 |---|---|
 | Deliverables | Public repository, the full set of design documents, reproducible builds, certification |
-| Published material | (1) This complete document set (2) The firmware (MIT) (3) Reproducible build instructions (4) PGP-signed releases (5) Enclosure STL / STEP (6) Assembly instructions (with photos) (7) Threat model (8) Vulnerability disclosure policy |
+| Published material | (1) This complete document set (2) The firmware (MIT) (3) Reproducible build instructions (4) PGP-signed releases (5) Enclosure SolidCraft scripts, STEP and STL (CERN-OHL-S-2.0) (6) Assembly instructions (with photos) (7) Threat model (8) Vulnerability disclosure policy |
 | Hardware design | A board design is not required because the device is built from off-the-shelf parts. Only if a custom board is made should the full KiCad set be published and **OSHWA certification** obtained |
 | Done | (1) A third party (one or more people) can assemble and verify operation on their own from the BOM alone (2) Builds in two environments produce the same hash (3) An application is filed to register with [WalletScrutiny](https://walletscrutiny.com/) (4) The vulnerability disclosure policy is published |
 

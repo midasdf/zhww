@@ -85,7 +85,7 @@ zhww/
 │   ├── tests.zig
 │   ├── src/                   ← core（チェーン非依存）と apps（BTC / EVM）
 │   └── tests/                 ← 公式テストベクタと統合テスト
-└── hardware/                  ← KiCad 等（v0.1 は既成部品のため現状は方針のみ）
+└── hardware/enclosure/        ← 筐体（Zig で寸法と干渉を検査し、SolidCraft で STEP / STL を出力）
 ```
 
 ## 現在の進捗
