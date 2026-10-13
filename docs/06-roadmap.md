@@ -1,7 +1,8 @@
 # 06. Roadmap
 
 - **Target version**: v0.1
-- **Last updated**: 2026-10-13
+- **Last updated**: 2026-10-14
+- **Hardware**: the standard build is **RP2350-PiZero + Adafruit Mini PiTFT + ArduCam UC-805 camera** ([03-hardware-bom.md](03-hardware-bom.md)), decided 2026-10-14. The milestones below target it; the earlier Raspberry Pi Zero 2 WH Linux build ([07-zero2w-setup.md](07-zero2w-setup.md)) remains only as a host-side tool
 
 Each milestone is defined as a pair of "something that works" and "how to verify it". **Anything that cannot be reproduced on a test network is not considered done.**
 
@@ -12,8 +13,8 @@ Each milestone is defined as a pair of "something that works" and "how to verify
 | Item | Content |
 |---|---|
 | Deliverables | One assembled device, a development environment, the skeleton of CI |
-| Work | (1) Order and assemble the parts in the [BOM](03-hardware-bom.md) (2) Run one reference implementation (SeedSigner / Krux) and measure the UX (3) Establish the Raspberry Pi OS Lite build procedure and **wireless disablement** ([07-zero2w-setup.md](07-zero2w-setup.md)) (4) Establish a Zig + libsecp256k1 build environment (both on the Mac and on the Pi) (5) Prepare the LCD/camera device tree overlays (6) Prepare testnet nodes/wallets (Core signet, Sepolia) |
-| Done | (1) The device boots and can read a QR code with the camera (2) `zig build test` passes on the Pi (3) It can be confirmed that no wireless interface exists (4) Test data can be produced from Core (signet) and MetaMask (Sepolia) (5) The build is confirmed reproducible (same hash) once |
+| Work | (1) Order the parts in the [BOM](03-hardware-bom.md), measure the `MEASURED` values and re-run the enclosure checks, then print and assemble the [enclosure](../hardware/enclosure/README.md) (2) Run one reference implementation (SeedSigner / Krux) and measure the UX (3) Pin the target toolchain — Pico SDK and picotool versions, image format, tool hashes ([11-rp2350-security.md](11-rp2350-security.md) §2) — and build a development UF2 (4) Build Zig + libsecp256k1 for the host and the Cortex-M33 (5) Bring up the HAL in the order of [08-rp2350-pizero.md](08-rp2350-pizero.md) §9: display on SPI1, the two buttons, camera capture over PIO (6) Prepare testnet nodes/wallets (Core signet, Sepolia) |
+| Done | (1) The device boots from a UF2 and reads a UR QR code on a phone with its camera (2) `zig build test` passes on the host and `zig build pico` compiles for the target; the on-device self-test of the vectors passes ([08](08-rp2350-pizero.md) §8) (3) It works from a power-only USB cable, with no data connection (4) Test data can be produced from Core (signet) and MetaMask (Sepolia) (5) The build is confirmed reproducible (same hash) once |
 
 ---
 
@@ -24,7 +25,7 @@ Each milestone is defined as a pair of "something that works" and "how to verify
 | Deliverables | BTC P2WPKH address generation, PSBT signing, QR response |
 | Implementation | BIP39 (dice + camera entropy) / BIP32 / BIP84 / Bech32 / PSBT parsing / BC-UR send and receive / approval UI |
 | Tests | Match the official BIP39, BIP32 and BIP84 vectors. PSBT round trip with Core (signet) |
-| Done | (1) The **same addresses are derived from the same seed** as the reference implementation (2) A send completes on signet (3) The seed cannot be recovered from the SD card after power loss (the test in [02](02-architecture.md) §8) |
+| Done | (1) The **same addresses are derived from the same seed** as the reference implementation (2) A send completes on signet (3) The seed cannot be recovered from the device's flash after power loss (the test in [02](02-architecture.md) §8) |
 
 ### Component progress (as of 2026-10-13)
 
@@ -60,7 +61,7 @@ or hardware-wallet flow is done. The remaining architecture work is tracked in t
 | SRAM/stack budget | 🧩 Fixed 128 KiB workspace including two-input 64 KiB requests; schema-2 inventory plus actual pinned-C Secure/NS link harness and individual frames. Complete boot image, transitive/IRQ bounds and HAL/camera buffers remain open ([scope](14-target-link-and-fault-prototype.md)) |
 | On-device screen UI and QR send/receive | ⬜ Not started (HAL and hardware verification required) |
 | Development CLI | ✅ Implemented as a development tool; signing commands sign immediately and are not the device flow |
-| CI (build and tests on Linux) | ✅ Done (GitHub Actions. On the same Linux as the device it verifies the tests, the CLI, Core-vector signing, the UR round trip and the FAT32 microSD handoff on every run) |
+| CI (build and tests on Linux) | ✅ Done (GitHub Actions. On Linux it verifies the tests, the CLI, Core-vector signing, the UR round trip and the FAT32 microSD handoff on every run) |
 
 ### Substantial host-side architecture work remains
 
@@ -74,7 +75,7 @@ The next tasks do not require target hardware and must precede HAL work.
 | Integrate P2TR/P2WSH into PSBT | **Required feature integration** | Current Core tests call standalone modules |
 | Integrate EVM parsing, ERC-7730/EIP-712 display, and signing | **Required feature integration** | Current modules and CLI are separate |
 | Descriptor authenticity/update design | **Security design** | Clear-signing metadata changes what users believe they authorize |
-| On-device display, camera, buttons, SD, and RNG | **Hardware required** | The HAL must be implemented and verified on the selected board |
+| On-device display, buttons, camera and RNG | **Hardware required** | The HAL must be implemented and verified on the selected board |
 | Sending on the real device (signet/Sepolia) | **Hardware required** | End-to-end behavior must be checked against real nodes |
 | MUR fountain recovery | Optional hardening | Sequential retransmission works but is less robust under frame loss |
 
@@ -146,8 +147,8 @@ The next tasks do not require target hardware and must precede HAL work.
 |---|---|
 | ed25519 chains (Solana / TON / Cardano) | Add SLIP-0010 to `core` and keep the structure extensible by adding an app |
 | SLIP-39 Shamir splitting | An option for the backup scheme |
-| **Porting to the RP2350-PiZero** | **The main v0.2 candidate**. Same size and 40-pin compatible with the Pi Zero, no wireless, no soldering, microSD, LiPo charging, UF2 flashing. Compiling the core and building libsecp256k1 have been confirmed by measurement. The plan is [08-rp2350-pizero.md](08-rp2350-pizero.md). The remaining work is implementing the HAL, the QR approach (decided: microSD handoff first, SPI camera later) and measuring signing speed |
-| **Support for all-in-one hardware (M5Stack etc.)** | Devices with a screen, buttons and camera built in are "solder-free and easy to popularize". However, they do not run Linux, and current Zig has no official support for the ESP32-S3 and similar parts, so **the firmware would have to be redesigned as a separate line** |
+| Optional light input channel | Implemented and tested on the host ([09-light-audio-input.md](09-light-audio-input.md)); not in the standard build, and no enclosure is designed for it |
+| **Support for all-in-one hardware (M5Stack etc.)** | Devices with a screen, buttons and camera built in are "solder-free and easy to popularize". However, current Zig has no official support for the ESP32-S3 and similar parts, so **the firmware would have to be redesigned as a separate line** |
 | Custom board (ESP32-S3 etc.) | Smaller size, lower cost. The full KiCad set would be published |
 | Considering an auditable SE (TROPIC01) | The main candidate if availability improves |
 | Support for larger display panels | Better UX for displaying EVM calldata |

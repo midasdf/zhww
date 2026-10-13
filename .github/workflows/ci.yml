@@ -4,8 +4,8 @@
 name: CI
 
 # Goal: keep confirming that the build and tests pass not only on the development
-# machine (macOS) but also on the same Linux as the device. The Raspberry Pi runs
-# Linux, so passing here is a prerequisite for the real device.
+# machine (macOS) but also on Linux, and that the core still compiles and links for
+# the RP2350 target. None of this runs on the device itself.
 
 on:
   push:
