@@ -28,6 +28,8 @@ pub const btc_transaction = @import("apps/btc/transaction.zig");
 pub const btc_sighash = @import("apps/btc/sighash.zig");
 pub const btc_psbt = @import("apps/btc/psbt.zig");
 pub const btc_sign = @import("apps/btc/sign.zig");
+pub const btc_review = @import("apps/btc/review.zig");
+pub const btc_approved_sign = @import("apps/btc/approved_sign.zig");
 pub const btc_multisig = @import("apps/btc/multisig.zig");
 pub const btc_taproot = @import("apps/btc/taproot.zig");
 pub const bytewords = @import("transport/bytewords.zig");
@@ -73,6 +75,8 @@ test {
     _ = btc_sighash;
     _ = btc_psbt;
     _ = btc_sign;
+    _ = btc_review;
+    _ = btc_approved_sign;
     _ = btc_multisig;
     _ = btc_taproot;
     _ = bytewords;

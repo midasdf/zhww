@@ -42,6 +42,33 @@ const SecuritySmokeSink = struct {
     }
 };
 
+/// Compile the real approved BTC path with synthetic trusted events, never a
+/// production main loop. External scratch budget must be measured on real hardware.
+export fn zhww_smoke_approved_btc(
+    evidence: *const zhww.boot_policy.Evidence,
+    seed: *const [64]u8,
+    raw_ptr: [*]const u8,
+    raw_len: usize,
+    scratch_ptr: [*]u8,
+    scratch_len: usize,
+) usize {
+    var fba = std.heap.FixedBufferAllocator.init(scratch_ptr[0..scratch_len]);
+    const allocator = fba.allocator();
+    const raw = raw_ptr[0..raw_len];
+    var workflow: zhww.btc_approved_sign.Workflow = .{};
+    defer workflow.abort();
+    workflow.begin(allocator, evidence.*, seed, raw, .regtest, 0) catch return 0;
+    for (0..workflow.review.count) |i| {
+        const page = workflow.review.page(i) catch return 0;
+        workflow.displayed(i, page.bytes(), @intCast(i + 1)) catch return 0;
+    }
+    workflow.button(false, 100) catch return 0;
+    workflow.button(true, 101) catch return 0;
+    workflow.button(false, 1101) catch return 0;
+    const output = workflow.sign(allocator, raw, 1102) catch return 0;
+    return output.signed_psbt.len;
+}
+
 /// Reference address generation (BIP84) through PSBT signing so that real code gets generated.
 export fn zhww_smoke(
     mnemonic_ptr: [*]const u8,

@@ -71,11 +71,11 @@ Files under `firmware/src/security/`:
 | `boot_policy.zig` | Fail-closed semantic requirements; every missing requirement tested | Evidence is caller-supplied, not hardware attestation; no MMIO/OTP code |
 | `approval.zig` | Bounded owned input, exact page commitments, sequential traversal, release/fresh hold/release, timeout, rollback detection, single-use consume | Page rendering and GPIO events must come from trusted HAL; hashes do not prove human understanding |
 | `secret_session.zig` | Pointer-owned backing storage, bounded reservation, full-capacity secure erasure, borrow-memory tests | Does not erase caller copies, stacks, registers, C contexts or power-loss remanence |
-| `signing_session.zig` | Boot-policy check → seed ownership → review → approval → callback → unconditional wipe; no callback on invalid approval | Trusted mock callback in tests, **not connected to CLI/BTC/EVM signing yet** |
+| `signing_session.zig` | Boot-policy check → seed ownership → review → approval → callback → unconditional wipe; no callback on invalid approval | Generic trusted callback, now used by the separate approved BTC workflow; not a physical HAL or secure gateway |
 
 The approval flow binds exact request bytes and rendered page bytes. It does **not** establish that
-those page bytes are a complete or correct interpretation of the transaction. The next integration
-must construct all pages from the frozen canonical request and reject undisplayable content.
+those page bytes are a complete or correct interpretation of the transaction. The BTC integration below constructs bounded pages from a frozen request and refuses unsupported
+content. EVM and additional BTC input types still need their own complete review integration.
 Recompute/compare the authoritative signing plan at the signing boundary; merely checking a
 PSBT byte hash is not independent sighash validation.
 
@@ -93,6 +93,38 @@ published by a faulty callback.
 
 The CLI intentionally remains a test-vector development tool that signs immediately. There is
 no command-line flag that turns it into a physically approved hardware wallet.
+
+### Approved BTC workflow (host prototype)
+
+`firmware/src/apps/btc/review.zig` and `approved_sign.zig` now connect the gate to real
+`signPsbtBytes`, with integration tests in `firmware/tests/approved_btc_test.zig`.
+
+- Freeze at most 64 KiB before parsing. Retain no transport pointer in the workflow.
+- Initially accept only non-finalized **P2WPKH inputs**, SIGHASH_ALL, and known amounts.
+  Other input types, unknown amounts, excess pages, unknown output scripts and invalid totals
+  are refused before seed ownership. No partial-signing output is published.
+- Show network, version, locktime, input/output counts, sighash policy, every input txid/vout/
+  sequence/amount, every complete destination and amount, totals and fee. All outputs are
+  conservatively labeled payments: no output is hidden as presumed change.
+- At most 64 explicit pages, six ASCII lines of at most 26 characters each. Addresses/txids are
+  split across lines, never abbreviated. Rendering rejects implicit extra pagination and supports
+  240×135 and 240×240 only. HAL must acknowledge each successfully transferred physical page.
+- A Secure-selected network is displayed and committed; PSBTs do not authenticate networks.
+  Witness UTXO amounts are host-supplied and **not independently checked against a blockchain**;
+  review pages explicitly warn about this.
+- Immediately before signing, rebuild the review from owned bytes and compare the ordered-page
+  digest. Then run the existing signer (which verifies each generated ECDSA signature), require
+  signatures for every input and check the fee. Consume approval before the operation, return
+  output only after success, and wipe session-owned seed/input plus the adapter's master-key
+  backing copy on all exits. Result allocations belong to a caller-owned arena, discarded on error.
+- The pinned Core transaction matches byte-for-byte after synthetic review/approval. Tests also
+  exercise pre-approval refusal, request mutation, network changes, media removal, timeout,
+  wrong wallet, multiple outputs, unsupported schemes and rendering on both screen sizes.
+
+This is **same-parser revalidation, not I-3 independent sighash computation**. Existing by-value
+BIP32/key-search/C temporaries are not proven erased. TrustZone, physical HAL, seed entry,
+periodic polling and result transport are still pending. Direct CLI signing remains separate.
+The development board remains reflashable; none of this code burns OTP or disables BOOTSEL/SWD.
 
 ## 5. TRNG and fault response plan
 
@@ -146,7 +178,8 @@ zig build pico --summary all
 ```
 
 New modules are included in the full host suite. The Pico smoke check references the orchestrator
-with a synthetic review and hash-only callback; it compiles for both Cortex-M0+ and Cortex-M33.
+with a synthetic review and hash-only callback, plus the actual approved BTC adapter with
+synthetic trusted events; both compile for Cortex-M0+ and Cortex-M33.
 Compilation on RP2040 does not give it RP2350 security features. Neither result is execution,
 a signed UF2, a linked Secure/Non-secure image or a hardware security test.
 

@@ -3,7 +3,7 @@
 > **⚠️ Experimental, in development. Do not use with real funds.**
 > This code has not had a third-party audit. Screen/QR components exist on the host, but the
 > target HAL and end-to-end device main loop are not implemented, and the host-tested approval
-> prototype is not connected to real signing or physical input,
+> BTC approval workflow is not connected to physical input or target isolation,
 > so this is not a hardware wallet firmware yet. Development makes **heavy use of LLMs**, and
 > generated code can contain mistakes. See the [2026-10-13 internal review](../docs/10-security-audit-2026-10-13.md)
 > and [../DISCLAIMER.md](../DISCLAIMER.md).
@@ -19,12 +19,12 @@
 | Implemented (CLI) | `address` / `sign` / `show` (confirmation display before signing) / `screen` (preview of the device screen) / `walkthrough` (screen flow) / `card` (FAT32 image operations) / `mnemonic` (dice verification) / `ur` / `ur-decode` / `evm-sign` / `evm-show` |
 | Implemented (transport) | **BC-UR** (Bytewords standard/uri/minimal, CRC-32, single-part and multi-part encode/decode, reconstruction from out-of-order parts with duplicates) |
 | Implemented (EVM) | RLP encoding and decoding / EIP-55 checksummed addresses / **EIP-155 (legacy) and EIP-1559 (type 2) signing** (both are signed and then verified) / EIP-191 `personal_sign` / **EIP-712 typed data** (dependency sorting for encodeType, arrays, nesting, domain inference) / **ABI decoding** (canonical form only) / **ERC-7730 clear signing** (descriptor parsing, function matching, generation of human-readable display items, warnings for dangerous patterns) |
-| Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, and single-use signing-session orchestration. Host-tested with a mock signer; **not integrated with CLI signing or target HAL**. See [RP2350 security design](../docs/11-rp2350-security.md). |
-| Tests | **All 405 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall (391 previous tests plus 14 security prototype tests). They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
+| Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, and single-use signing-session orchestration. `btc_approved_sign.Workflow` connects canonical bounded review to actual P2WPKH-input PSBT signing, tested against the pinned Core vector with synthetic trusted events. **Not integrated with CLI signing or target HAL/TrustZone**. See [RP2350 security design](../docs/11-rp2350-security.md). |
+| Tests | **All 412 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall (391 previous tests plus 14 security prototype tests and 7 approved BTC integration tests). They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
 | Not implemented | Target HAL and device main loop; physical display/approval/sign gate; session-wide secret erasure; P2TR/P2WSH integration in the normal PSBT workflow; EVM clear-signing integration; real-hardware Signet/Sepolia flow; MUR fountain recovery. |
 
 ```bash
-zig build test     # 405 tests, including official vectors and security prototypes
+zig build test     # 412 tests, including official vectors and approved BTC integration
 ```
 
 ## Dependencies

@@ -1,5 +1,23 @@
 # Next-session handoff
 
+## Latest approved BTC integration
+
+Security foundations were committed and pushed as `24eab88`. Follow-up work adds
+`src/apps/btc/review.zig`, `approved_sign.zig` and seven integration tests. The separate host
+workflow freezes PSBT bytes, generates bounded complete review pages, traverses the gate,
+revalidates presentation and calls the real signer. Its final transaction matches the pinned Core
+vector. Initial input policy is P2WPKH/SIGHASH_ALL/known amounts; no hidden change or partial
+signing result. All 412 tests passed in all four optimization modes, and both Pico compilation
+checks include the actual adapter with synthetic events.
+
+No OTP programming or hardware-interface lockdown is implemented. Development remains
+reflashable. Still pending: physical HAL, actual seed entry, Secure/NS isolation, true independent
+sighash validation, complete key-copy/context erasure, other BTC/EVM inputs, measured memory
+budget and recovery/update/rollback design. Direct CLI signing stays a development tool.
+
+The sections below preserve earlier snapshots; use the current firmware README and security
+design for current capabilities.
+
 ## Latest hardware-free RP2350 security work
 
 The base review fixes are committed in `1fbcc39`. Subsequent local work adds four modules under

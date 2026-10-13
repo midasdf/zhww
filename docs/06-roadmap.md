@@ -53,7 +53,7 @@ or hardware-wallet flow is done. The remaining architecture work is tracked in t
 | Screen UI layer (layouts, QR encoder, PNG preview) | 🧩 Rendering components and host previews pass; not yet connected to the approval gate |
 | Mutation and fuzz tests on broken input | ✅ Present; the 2026-10-13 review still found additional issues |
 | Sending on the real device (signet) | ⬜ Not started (hardware required) |
-| Immutable prepare → display → physical approval → sign state machine | 🧩 Host-tested owned-input/page gate and mock-signer orchestration; canonical BTC/EVM display/sign and physical HAL integration remain open ([design](11-rp2350-security.md)) |
+| Immutable prepare → display → physical approval → sign state machine | 🧩 Host gate now connects bounded canonical BTC review to actual P2WPKH-input PSBT signing, with a pinned Core-vector test. Physical HAL, key isolation, other BTC inputs and EVM remain open ([design](11-rp2350-security.md)) |
 | I-2 key isolation and I-3 independent hash comparison | ⬜ Not started |
 | Session-wide secret erasure | 🧩 Owned backing-memory erasure tested; derived-key, caller-copy, C-context and target-stack erasure remain open |
 | On-device screen UI and QR send/receive | ⬜ Not started (HAL and hardware verification required) |
@@ -66,7 +66,7 @@ The next tasks do not require target hardware and must precede HAL work.
 
 | What remains | Type | Reason |
 |---|---|---|
-| Integrate approval prototype with canonical display and signing | **Release blocker** | Mock-signer tests do not prevent direct BTC/EVM signing or establish display completeness |
+| Complete approved-flow/physical HAL integration | **Release blocker** | Host BTC integration is separate from direct CLI signing; no real button/display or isolated key gateway exists yet |
 | Key isolation and independent signing-hash comparison | **Release blocker** | The documented I-2/I-3 boundaries do not exist in the current code |
 | Session-wide secret erasure | **Release blocker** | Temporary buffer wipes do not erase master/derived/session copies |
 | Integrate P2TR/P2WSH into PSBT | **Required feature integration** | Current Core tests call standalone modules |
