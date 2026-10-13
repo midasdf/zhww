@@ -97,7 +97,7 @@ zhww/
 | セキュリティ基盤 | PC 上の承認付き native P2WPKH／SIGHASH_ALL フロー、所有する秘密情報と暗号コンテキストの消去、乱数・固定メモリの異常系、別パーサーによる BIP143 ハッシュ照合を実装。物理承認と実機の隔離は未実装。[設計](docs/11-rp2350-security.md)・[メモリ予算](docs/12-rp2350-memory-budget.md)・[独立検証の範囲](docs/13-independent-p2wpkh-guard.md)を参照。 |
 | テスト | **449 件すべて成功**（通常のホストライブラリと、対象用32bit整数演算のC構成、それぞれ4つの最適化モード）。既存の署名・相互運用ベクタに加え、承認・消去・乱数／メモリ不足・独立検証・入力改変を検査。実機での動作や安全性の証明ではない。現在の詳細は[firmware](firmware/README.md)、過去の内部レビューは[報告書](docs/10-security-audit-2026-10-13.md)を参照。 |
 | CI | Linux ホストでの回帰テスト、Pico 向けコンパイル、Cortex-M33 の暫定メモリ予算、検査ツールと依存関係のチェックを実行。microSD イメージの受け渡しも mtools／fsck.fat で検査する。RP2350 実機での実行ではない。 |
-| 実機 | 部品は決定済み（2026-10-14）。**[RP2350-PiZero](docs/08-rp2350-pizero.md)** ＋ **Mini PiTFT #4393** ＋ **ArduCam UC-805（HM01B0）**、USB 給電のみ（[部品表と配線](docs/03-hardware-bom.md)）。筐体は 92.8 × 35.1 × 19.7 mm の透明ケースで、Zig から生成して SolidCraft で組み立て、すべてのすき間を検査している（[hardware/enclosure](hardware/enclosure/README.md)）。部品の購入・実測はまだ |
+| 実機 | 部品は決定済み（2026-10-14）。**[RP2350-PiZero](docs/08-rp2350-pizero.md)** ＋ **Mini PiTFT #4393** ＋ **ArduCam UC-805（HM01B0）**、USB 給電のみ（[部品表と配線](docs/03-hardware-bom.md)）。筐体は 97.2 × 38.6 × 19.7 mm の透明ケースで、Zig から生成して SolidCraft で組み立て、すべてのすき間を検査している（[hardware/enclosure](hardware/enclosure/README.md)）。部品の購入・実測はまだ |
 | ターゲット向け試作 | 固定バージョンのC暗号ライブラリで Secure／Non-secure 領域を実際にリンクし、関数単体のスタック使用量を取得。別スタックに切り替えて既知の領域を消去する異常終了経路もコンパイル・命令検査済み。ただし起動可能なファームウェア、実機の隔離、NS用ゲートウェイではない（[範囲と限界](docs/14-target-link-and-fault-prototype.md)）。 |
 | 次の作業 | 実際の起動／SDK／CMSEとアクセス制限、呼出し先と割り込みを含むスタック上限、物理画面・ボタン・カメラ取り込み・TRNG の HAL。その後に P2TR／P2WSH／EVM の承認・検証フローと実機テストを進める。 |
 
