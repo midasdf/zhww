@@ -77,7 +77,8 @@ pub const KeySource = struct {
 
     /// Build a key set from a seed (BIP32 master key).
     pub fn fromSeed(seed: []const u8) Error!KeySource {
-        const master = try bip32.ExtendedKey.fromSeed(seed, .xprv);
+        var master = try bip32.ExtendedKey.fromSeed(seed, .xprv);
+        defer master.wipe();
         return .{
             .master = master,
             .master_fingerprint = try master.fingerprint(),
@@ -89,10 +90,20 @@ pub const KeySource = struct {
         return .{ .raw_keys = keys };
     }
 
-    pub fn derive(self: KeySource, path: []const u32) Error!bip32.ExtendedKey {
-        const master = self.master orelse return error.NoMatchingKey;
-        var node = master;
-        for (path) |index| node = try node.child(index);
+    /// Erase this owned copy, not caller-owned raw_keys storage. Never use after wipe.
+    pub fn wipe(self: *KeySource) void {
+        std.crypto.secureZero(u8, std.mem.asBytes(self));
+    }
+
+    pub fn derive(self: *const KeySource, path: []const u32) Error!bip32.ExtendedKey {
+        var node = self.master orelse return error.NoMatchingKey;
+        defer node.wipe();
+        for (path) |index| {
+            var child = try node.child(index);
+            defer child.wipe();
+            node.wipe();
+            node = child;
+        }
         return node;
     }
 };
@@ -127,6 +138,12 @@ pub fn sign(
     psbt: psbt_mod.Psbt,
     keys: KeySource,
 ) Error!SignResult {
+    var owned_keys = keys;
+    defer owned_keys.wipe();
+    return signOwned(allocator, psbt, &owned_keys);
+}
+
+fn signOwned(allocator: std.mem.Allocator, psbt: psbt_mod.Psbt, keys: *const KeySource) Error!SignResult {
     const tx = psbt.unsigned_tx;
     var partial_sigs = std.ArrayList(PartialSignature).empty;
     errdefer partial_sigs.deinit(allocator);
@@ -169,7 +186,7 @@ pub fn sign(
             try unsigned.append(allocator, index);
             continue;
         };
-        defer std.crypto.secureZero(u8, &found.private_key);
+        defer std.crypto.secureZero(u8, std.mem.asBytes(&found));
 
         // Compute the signature hash
         const message = try sighashForInput(
@@ -226,7 +243,7 @@ pub fn sign(
     } else null;
 
     // Change detection
-    const change_outputs = try findChangeOutputs(allocator, psbt, keys);
+    const change_outputs = try findChangeOutputsOwned(allocator, psbt, keys);
 
     // Finalization (only when every input could be signed)
     var final_tx: ?[]const u8 = null;
@@ -335,7 +352,7 @@ pub fn utxoForDisplay(
 fn findKeyForInput(
     allocator: std.mem.Allocator,
     psbt: psbt_mod.Psbt,
-    keys: KeySource,
+    keys: *const KeySource,
     index: usize,
     utxo: ResolvedUtxo,
     kind: ScriptKind,
@@ -343,7 +360,8 @@ fn findKeyForInput(
     // 1) Use the PSBT's BIP32 derivation information (those whose fingerprint matches)
     for (psbt.inputs[index].bip32_derivations) |derivation| {
         if (!std.mem.eql(u8, &derivation.fingerprint, &keys.master_fingerprint)) continue;
-        const node = try keys.derive(derivation.path);
+        var node = try keys.derive(derivation.path);
+        defer node.wipe();
         if (node.keyIsPrivate()) {
             const pub_key = try node.publicKey();
             if (!std.mem.eql(u8, derivation.pubkey, &pub_key)) continue;
@@ -354,8 +372,8 @@ fn findKeyForInput(
     }
 
     // 2) Individually supplied keys
-    for (keys.raw_keys) |raw| {
-        if (matchesKey(utxo, kind, raw.public_key)) return raw;
+    for (keys.raw_keys) |*raw| {
+        if (matchesKey(utxo, kind, raw.public_key)) return raw.*;
     }
 
     // 3) Walk the standard derivation paths
@@ -372,7 +390,8 @@ fn findKeyForInput(
                         change,
                         i,
                     };
-                    const node = keys.derive(&path) catch continue;
+                    var node = keys.derive(&path) catch continue;
+                    defer node.wipe();
                     if (!node.keyIsPrivate()) continue;
                     const pub_key = try node.publicKey();
                     if (matchesKey(utxo, kind, pub_key)) {
@@ -474,6 +493,12 @@ pub fn findChangeOutputs(
     psbt: psbt_mod.Psbt,
     keys: KeySource,
 ) Error![]const usize {
+    var owned_keys = keys;
+    defer owned_keys.wipe();
+    return findChangeOutputsOwned(allocator, psbt, &owned_keys);
+}
+
+fn findChangeOutputsOwned(allocator: std.mem.Allocator, psbt: psbt_mod.Psbt, keys: *const KeySource) Error![]const usize {
     var result = std.ArrayList(usize).empty;
     errdefer result.deinit(allocator);
     if (keys.master == null) return result.toOwnedSlice(allocator);
@@ -488,7 +513,7 @@ pub fn findChangeOutputs(
     return result.toOwnedSlice(allocator);
 }
 
-fn outputMatchesChangeKey(keys: KeySource, script: []const u8, kind: ScriptKind) Error!bool {
+fn outputMatchesChangeKey(keys: *const KeySource, script: []const u8, kind: ScriptKind) Error!bool {
     const purposes = [_]u32{ 84, 49, 44 };
     for (purposes) |purpose| {
         var i: u32 = 0;
@@ -500,7 +525,8 @@ fn outputMatchesChangeKey(keys: KeySource, script: []const u8, kind: ScriptKind)
                 1, // change
                 i,
             };
-            const node = keys.derive(&path) catch continue;
+            var node = keys.derive(&path) catch continue;
+            defer node.wipe();
             const pub_key = try node.publicKey();
             if (matchesKey(.{ .script_pubkey = script, .amount = 0 }, kind, pub_key)) {
                 return true;
@@ -620,8 +646,20 @@ pub fn signPsbtBytes(
     psbt_bytes: []const u8,
     keys: KeySource,
 ) Error!SignedPsbt {
+    var owned_keys = keys;
+    defer owned_keys.wipe();
+    return signPsbtWithKeys(allocator, psbt_bytes, &owned_keys);
+}
+
+/// Pointer-borrowing entry point used by approved signing. Caller owns and erases
+/// the master/raw-key storage; no key pointer is retained in the returned result.
+pub fn signPsbtWithKeys(
+    allocator: std.mem.Allocator,
+    psbt_bytes: []const u8,
+    keys: *const KeySource,
+) Error!SignedPsbt {
     const psbt = try psbt_mod.Psbt.parse(allocator, psbt_bytes);
-    const result = try sign(allocator, psbt, keys);
+    const result = try signOwned(allocator, psbt, keys);
 
     // Collect the additional signatures for each input.
     // The public key points into `result.partial_sigs` (stable storage), so
@@ -660,6 +698,16 @@ pub fn keysFromMnemonic(mnemonic: []const u8, passphrase: []const u8) Error!KeyS
 // ---------------------------------------------------------------- tests
 
 const testing = std.testing;
+
+test "owned key source wipe erases master backing bytes without modifying caller key" {
+    var keys = try KeySource.fromSeed(&@as([64]u8, @splat(0x42)));
+    var derived = try keys.derive(&.{ 84 | bip32.hardened, 0 | bip32.hardened, 0 | bip32.hardened, 0, 0 });
+    defer derived.wipe();
+    const public_before = try derived.publicKey();
+    keys.wipe();
+    try testing.expectEqualSlices(u8, &@as([@sizeOf(KeySource)]u8, @splat(0)), std.mem.asBytes(&keys));
+    try testing.expectEqualSlices(u8, &public_before, &(try derived.publicKey()));
+}
 
 test "scriptPubKey kind detection" {
     var p2pkh: [25]u8 = undefined;

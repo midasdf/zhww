@@ -72,6 +72,7 @@ Files under `firmware/src/security/`:
 | `approval.zig` | Bounded owned input, exact page commitments, sequential traversal, release/fresh hold/release, timeout, rollback detection, single-use consume | Page rendering and GPIO events must come from trusted HAL; hashes do not prove human understanding |
 | `secret_session.zig` | Pointer-owned backing storage, bounded reservation, full-capacity secure erasure, borrow-memory tests | Does not erase caller copies, stacks, registers, C contexts or power-loss remanence |
 | `signing_session.zig` | Boot-policy check → seed ownership → review → approval → callback → unconditional wipe; no callback on invalid approval | Generic trusted callback, now used by the separate approved BTC workflow; not a physical HAL or secure gateway |
+| `rng.zig` | Nonblocking status/read interface, bounded poll budget, full-output erasure and terminal failure latch | Mock-tested only; provider status is not hardware attestation or an entropy-quality test |
 
 The approval flow binds exact request bytes and rendered page bytes. It does **not** establish that
 those page bytes are a complete or correct interpretation of the transaction. The BTC integration below constructs bounded pages from a frozen request and refuses unsupported
@@ -96,8 +97,9 @@ no command-line flag that turns it into a physically approved hardware wallet.
 
 ### Approved BTC workflow (host prototype)
 
-`firmware/src/apps/btc/review.zig` and `approved_sign.zig` now connect the gate to real
-`signPsbtBytes`, with integration tests in `firmware/tests/approved_btc_test.zig`.
+`firmware/src/apps/btc/review.zig` and `approved_sign.zig` now connect the gate to the real
+pointer-borrowing `signPsbtWithKeys` entry point, with integration tests in
+`firmware/tests/approved_btc_test.zig`. Legacy `signPsbtBytes` remains a compatibility wrapper.
 
 - Freeze at most 64 KiB before parsing. Retain no transport pointer in the workflow.
 - Initially accept only non-finalized **P2WPKH inputs**, SIGHASH_ALL, and known amounts.
@@ -121,21 +123,53 @@ no command-line flag that turns it into a physically approved hardware wallet.
   exercise pre-approval refusal, request mutation, network changes, media removal, timeout,
   wrong wallet, multiple outputs, unsupported schemes and rendering on both screen sizes.
 
-This is **same-parser revalidation, not I-3 independent sighash computation**. Existing by-value
-BIP32/key-search/C temporaries are not proven erased. TrustZone, physical HAL, seed entry,
+This is **same-parser revalidation, not I-3 independent sighash computation**. Owned master,
+derivation intermediates and C-context backing storage are erased, but by-value parameters,
+compiler spills/registers and C internal temporary stacks are still not proven erased. TrustZone, physical HAL, seed entry,
 periodic polling and result transport are still pending. Direct CLI signing remains separate.
 The development board remains reflashable; none of this code burns OTP or disables BOOTSEL/SWD.
 
 ## 5. TRNG and fault response plan
 
-The production policy requires healthy entropy, but no target RNG exists yet. Implement a
-mockable Secure-world RNG that checks hardware status, applies bounded waits, rejects hardware
-health failures, wipes partial output and latches failure for the session. No time/ADC/PRNG fallback.
-Follow the datasheet's actual TRNG initialization/health semantics; statistical tests or observing
-nonzero output do not prove entropy. Existing required dice input remains required.
+The production policy requires healthy entropy, but no target TRNG HAL exists yet. The new
+`security/rng.zig` provides the mockable bounded interface: at most 256 output bytes and 1,024
+nonblocking provider polls per fill. It accepts ready words, waits for not-ready status within the
+budget, rejects reported health failure/unavailability, wipes the entire destination on error and
+latches failure for the session. No time/ADC/PRNG fallback or deterministic production source.
+The provider must implement actual Secure-world hardware initialization/status semantics; a poll
+count is not a wall-clock timeout if a provider violates the nonblocking contract. Statistical tests
+or observing nonzero output do not prove entropy. Existing required dice input remains required.
 
-Wire context randomization and BIP340 auxiliary randomness through this interface. Measure
-constant-time target compilation and stack use for the actual linked libsecp256k1 configuration.
+Approved BTC `Workflow.sign` now requires an explicit `*rng.Rng`. It requests 32 fresh blinding
+bytes only after valid approval and presentation revalidation, before key derivation/signing. A
+failed entropy request consumes approval and erases the owned session. Context randomization
+does not change RFC6979 signature bytes; the pinned Bitcoin Core transaction still matches.
+
+`secp256k1.ContextOwner` uses the library's
+[preallocated API](https://github.com/bitcoin-core/secp256k1/blob/master/include/secp256k1_preallocated.h):
+no context malloc/free, 4,096-byte aligned backing capacity, actual required size checked at
+runtime. `SigningLease` retires the development context, creates/randomizes a fresh one, rejects
+nested signing scopes, and on exit calls the correct C preallocated destructor **before** securely
+erasing the whole allocation. Tests check the backing bytes only after destruction. Legacy CLI
+operations still lazily create an unrandomized development context; they are not production APIs.
+
+The compatibility context remains a shared singleton, **not thread-safe or a TrustZone boundary**.
+Only serialized trusted execution may use the lease: park the secondary core and prevent crypto
+interrupt re-entry. Never copy an active owner/lease; do not read live C backing memory. Nested
+lease refusal is a logical guard, not synchronization or fault-injection resistance.
+
+The new `schnorrSignRandomized` primitive requests 64 fresh bytes (separate halves for context
+blinding and BIP340 auxiliary randomness), verifies the result and wipes its entropy/context.
+It is not yet connected to an approved Taproot transaction workflow. Deterministic `schnorrSign`
+and low-level explicit-aux helpers remain for vectors/development, not the production path.
+
+BIP32/key-source ownership now has explicit wipe methods. Derivation loops erase intermediates
+before replacement and on exit; BTC key discovery erases each derived node, including nonmatching
+candidates, and the approved adapter borrows its key source rather than forwarding it by value.
+Master-generation and extended-key parse/serialization buffers are also erased. This is NOT proof
+that caller copies, all by-value API parameters, encoding/HMAC internals, spills, registers or C
+stack temporaries are erased. Measure constant-time target compilation and stack use for the
+actual linked libsecp256k1 configuration.
 On a security fault, erase software-owned secrets and halt/reset to the locked state; never
 continue signing after a retry. Hardware reset/power removal does not prove all SRAM was erased.
 
@@ -179,7 +213,8 @@ zig build pico --summary all
 
 New modules are included in the full host suite. The Pico smoke check references the orchestrator
 with a synthetic review and hash-only callback, plus the actual approved BTC adapter with
-synthetic trusted events; both compile for Cortex-M0+ and Cortex-M33.
+synthetic trusted events and an injected RNG, plus the randomized BIP340 primitive;
+all compile for Cortex-M0+ and Cortex-M33.
 Compilation on RP2040 does not give it RP2350 security features. Neither result is execution,
 a signed UF2, a linked Secure/Non-secure image or a hardware security test.
 

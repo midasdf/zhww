@@ -1,5 +1,25 @@
 # Next-session handoff
 
+## Latest entropy/context/key-lifecycle hardening
+
+Follow-up to `6a263ec` adds `security/rng.zig`, mandatory RNG injection in approved BTC
+`Workflow.sign(..., rng)`, preallocated libsecp256k1 context ownership and single-threaded
+randomized signing leases. Context destruction is followed by whole-allocation erasure; context
+heap allocation is removed. New `schnorrSignRandomized` requests separate blinding/auxiliary
+bytes and verifies signatures, but is not an approved Taproot transaction workflow.
+
+BIP32 master/parse/serialize/derivation buffers and BTC key-discovery intermediates have explicit
+wipes. The approved signer borrows its owned key source via `signPsbtWithKeys`. This still does
+not prove all by-value/caller copies, C internal stacks, registers or compiler spills are erased.
+The crypto singleton/lease is not thread-safe: target integration must serialize trusted execution,
+park the other core and prevent crypto interrupt re-entry. Never copy active owners/leases.
+
+Verification: 425/425 tests in Debug/ReleaseSafe/ReleaseFast/ReleaseSmall and RP2040/RP2350
+compilation checks (including injected-RNG BTC and randomized BIP340). No real TRNG/MMIO,
+OTP, signed UF2, physical approval or TrustZone setup has been implemented. Development
+interfaces remain writable. Next priorities: target memory/stack budget, independent signing-plan
+validation, explicit-context crypto boundaries and actual Secure-world HAL.
+
 ## Latest approved BTC integration
 
 Security foundations were committed and pushed as `24eab88`. Follow-up work adds

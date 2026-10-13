@@ -19,12 +19,12 @@
 | Implemented (CLI) | `address` / `sign` / `show` (confirmation display before signing) / `screen` (preview of the device screen) / `walkthrough` (screen flow) / `card` (FAT32 image operations) / `mnemonic` (dice verification) / `ur` / `ur-decode` / `evm-sign` / `evm-show` |
 | Implemented (transport) | **BC-UR** (Bytewords standard/uri/minimal, CRC-32, single-part and multi-part encode/decode, reconstruction from out-of-order parts with duplicates) |
 | Implemented (EVM) | RLP encoding and decoding / EIP-55 checksummed addresses / **EIP-155 (legacy) and EIP-1559 (type 2) signing** (both are signed and then verified) / EIP-191 `personal_sign` / **EIP-712 typed data** (dependency sorting for encodeType, arrays, nesting, domain inference) / **ABI decoding** (canonical form only) / **ERC-7730 clear signing** (descriptor parsing, function matching, generation of human-readable display items, warnings for dangerous patterns) |
-| Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, and single-use signing-session orchestration. `btc_approved_sign.Workflow` connects canonical bounded review to actual P2WPKH-input PSBT signing, tested against the pinned Core vector with synthetic trusted events. **Not integrated with CLI signing or target HAL/TrustZone**. See [RP2350 security design](../docs/11-rp2350-security.md). |
-| Tests | **All 412 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall (391 previous tests plus 14 security prototype tests and 7 approved BTC integration tests). They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
+| Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, single-use signing-session orchestration, and bounded entropy interface. Approved BTC signing requires explicit entropy for context blinding and erases preallocated C-context backing memory. `btc_approved_sign.Workflow` connects canonical bounded review to actual P2WPKH-input PSBT signing, tested against the pinned Core vector with synthetic trusted events. **Not integrated with CLI signing or target HAL/TrustZone**. See [RP2350 security design](../docs/11-rp2350-security.md). |
+| Tests | **All 425 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall (412 previous tests plus 13 RNG/context/key-wipe and failure-integration tests). They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
 | Not implemented | Target HAL and device main loop; physical display/approval/sign gate; session-wide secret erasure; P2TR/P2WSH integration in the normal PSBT workflow; EVM clear-signing integration; real-hardware Signet/Sepolia flow; MUR fountain recovery. |
 
 ```bash
-zig build test     # 412 tests, including official vectors and approved BTC integration
+zig build test     # 425 tests, including vectors, approved BTC, entropy failure and wipe
 ```
 
 ## Dependencies
@@ -102,6 +102,7 @@ private keys, and there is no independent second signing-hash computation. See t
 | Decision | Rationale |
 |---|---|
 | **No dynamic memory** (the core uses fixed-size buffers and slices) | Structurally eliminates fragmentation, allocation failure and freeing mistakes. Behaviour on embedded targets becomes predictable |
+| **Preallocated libsecp256k1 context with explicit ownership** | Eliminates context heap allocation, checks the library's required size, and permits full backing-memory erasure after the correct C destructor. Approved signing randomizes it from an explicit entropy provider; singleton use is still serialized, not thread-safe |
 | **Use libsecp256k1 as the only cryptographic primitive** | A pure Zig implementation would not resist timing attacks, so it is not used for operations involving private keys |
 | **Declare only the needed functions as extern instead of `@cImport`-ing the C headers** | At audit time it is obvious at a glance which C functions we depend on |
 | **Implement RIPEMD-160 here** | Some environments can depend on neither the standard library nor OpenSSL (verified against official vectors) |

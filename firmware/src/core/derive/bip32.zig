@@ -162,6 +162,12 @@ pub const ExtendedKey = struct {
     chain_code: [32]u8,
     key: Key,
 
+    /// Wipe an owned extended key, including chain code/padding. Lifetime ends here.
+    /// Caller copies, by-value parameters and compiler spills still need separate review.
+    pub fn wipe(self: *ExtendedKey) void {
+        std.crypto.secureZero(u8, std.mem.asBytes(self));
+    }
+
     /// Compressed public key (33 bytes). Derived when only a private key is present.
     pub fn publicKey(self: ExtendedKey) Error![33]u8 {
         return switch (self.key) {
@@ -232,6 +238,7 @@ pub const ExtendedKey = struct {
         if (!secp256k1.isValidPrivateKey(master)) return error.InvalidKey;
 
         var chain_code: [32]u8 = undefined;
+        defer std.crypto.secureZero(u8, &chain_code);
         @memcpy(&chain_code, digest[32..64]);
 
         return .{
@@ -272,6 +279,7 @@ pub const ExtendedKey = struct {
         defer std.crypto.secureZero(u8, &tweak);
         @memcpy(&tweak, digest[0..32]);
         var child_chain: [32]u8 = undefined;
+        defer std.crypto.secureZero(u8, &child_chain);
         @memcpy(&child_chain, digest[32..64]);
 
         return .{
@@ -338,8 +346,12 @@ pub const ExtendedKey = struct {
         const parsed = try parsePath(path);
         if (parsed.absolute and self.depth != 0) return error.InvalidPath;
         var node = self;
+        defer node.wipe();
         for (parsed.indices[0..parsed.len]) |index| {
-            node = try node.child(index);
+            var child_key = try node.child(index);
+            defer child_key.wipe();
+            node.wipe();
+            node = child_key;
         }
         return node;
     }
@@ -347,6 +359,7 @@ pub const ExtendedKey = struct {
     /// Return the extended key string in Base58Check form (xprv / zpub etc.).
     pub fn serialize(self: ExtendedKey, out: []u8) Error![]u8 {
         var payload: [78]u8 = undefined;
+        defer std.crypto.secureZero(u8, &payload);
         std.mem.writeInt(u32, payload[0..4], self.version.bytes(), .big);
         payload[4] = self.depth;
         @memcpy(payload[5..9], &self.parent_fingerprint);
@@ -365,6 +378,7 @@ pub const ExtendedKey = struct {
     /// Parse an extended key string.
     pub fn parse(text: []const u8) Error!ExtendedKey {
         var payload: [128]u8 = undefined;
+        defer std.crypto.secureZero(u8, &payload);
         const decoded = try base58.checkDecode(&payload, text);
         if (decoded.len != 78) return error.InvalidEncoding;
 
@@ -372,12 +386,14 @@ pub const ExtendedKey = struct {
         const version = Version.fromBytes(version_bytes) orelse return error.InvalidEncoding;
 
         var chain_code: [32]u8 = undefined;
+        defer std.crypto.secureZero(u8, &chain_code);
         @memcpy(&chain_code, decoded[13..45]);
 
         const key_data = decoded[45..78];
-        const key: Key = if (key_data[0] == 0) blk: {
+        var key: Key = if (key_data[0] == 0) blk: {
             if (!version.isPrivate()) return error.InvalidEncoding;
             var priv_key: [32]u8 = undefined;
+            defer std.crypto.secureZero(u8, &priv_key);
             @memcpy(&priv_key, key_data[1..33]);
             if (!secp256k1.isValidPrivateKey(priv_key)) return error.InvalidKey;
             break :blk .{ .priv = priv_key };
@@ -389,6 +405,8 @@ pub const ExtendedKey = struct {
             @memcpy(&pub_key, key_data);
             break :blk .{ .pub_key = pub_key };
         };
+
+        defer std.crypto.secureZero(u8, std.mem.asBytes(&key));
 
         const depth = decoded[4];
         const parent_fingerprint = decoded[5..9].*;
@@ -412,6 +430,12 @@ pub const ExtendedKey = struct {
 // ---------------------------------------------------------------- tests
 
 const testing = std.testing;
+
+test "extended key wipe erases all owned key and chain-code backing bytes" {
+    var key = try ExtendedKey.fromSeed(&@as([32]u8, @splat(0x42)), .xprv);
+    key.wipe();
+    try testing.expectEqualSlices(u8, &@as([@sizeOf(ExtendedKey)]u8, @splat(0)), std.mem.asBytes(&key));
+}
 
 test "path parsing" {
     const path = try parsePath("m/84'/0'/0'/0/0");

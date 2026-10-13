@@ -7,6 +7,8 @@ const signing = @import("sign.zig");
 const address = @import("address.zig");
 const boot = @import("../../security/boot_policy.zig");
 const session_mod = @import("../../security/signing_session.zig");
+const rng_mod = @import("../../security/rng.zig");
+const secp256k1 = @import("../../core/crypto/secp256k1.zig");
 
 pub const Workflow = struct {
     session: session_mod.SigningSession(review_mod.max_request_bytes, review_mod.max_pages) = .{},
@@ -52,12 +54,15 @@ pub const Workflow = struct {
     /// Return output only after full signing/verification succeeds. Caller owns result
     /// allocations; use a dedicated arena and discard it on failure. Approval is spent
     /// on EVERY attempt and the seed/input backing memory is wiped on EVERY exit.
-    pub fn sign(self: *Workflow, allocator: std.mem.Allocator, raw: []const u8, now: u64) !signing.SignedPsbt {
+    /// Fresh context blinding entropy is mandatory and requested only inside the
+    /// approved callback. There is no deterministic/default RNG for this workflow.
+    pub fn sign(self: *Workflow, allocator: std.mem.Allocator, raw: []const u8, now: u64, rng: *rng_mod.Rng) !signing.SignedPsbt {
         defer self.abort();
         var adapter: Adapter = .{
             .allocator = allocator,
             .network = self.network,
             .expected_digest = self.review_digest,
+            .rng = rng,
         };
         try self.session.sign(raw, now, &adapter);
         return adapter.output orelse error.NoMatchingKey;
@@ -74,6 +79,7 @@ const Adapter = struct {
     allocator: std.mem.Allocator,
     network: address.Network,
     expected_digest: [32]u8,
+    rng: *rng_mod.Rng,
     output: ?signing.SignedPsbt = null,
 
     pub fn sign(self: *Adapter, frozen: []const u8, seed: []const u8) !void {
@@ -83,15 +89,20 @@ const Adapter = struct {
         try review.build(self.allocator, frozen, self.network);
         if (!std.crypto.timing_safe.eql([32]u8, review.digest(), self.expected_digest))
             return error.ReviewMismatch;
+        var blinding_seed: [32]u8 = undefined;
+        defer std.crypto.secureZero(u8, &blinding_seed);
+        try self.rng.fill(&blinding_seed);
+        var lease = try secp256k1.SigningLease.begin(&blinding_seed);
+        defer lease.end();
         var keys = try signing.KeySource.fromSeed(seed);
-        defer std.crypto.secureZero(u8, std.mem.asBytes(&keys));
-        const outcome = try signing.signPsbtBytes(self.allocator, frozen, keys);
+        defer keys.wipe();
+        const outcome = try signing.signPsbtWithKeys(self.allocator, frozen, &keys);
         if (outcome.result.unsigned_inputs.len != 0 or
             outcome.result.partial_sigs.len != review.input_count) return error.NoMatchingKey;
         if (outcome.result.fee == null or outcome.result.fee.? != review.fee)
             return error.ReviewMismatch;
         self.output = outcome;
-        // Existing signer verifies each ECDSA signature. Master backing copy above is
-        // wiped, but existing by-value BIP32/C temporaries still need a separate audit.
+        // Existing signer verifies each ECDSA signature. Lease destroys and wipes C
+        // context backing memory. By-value parameters/compiler spills still need audit.
     }
 };

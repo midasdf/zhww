@@ -39,6 +39,31 @@ fn approve(w: *Workflow) !void {
     try w.button(false, 1101);
 }
 
+const MockEntropy = struct {
+    const Mode = enum { ready, unhealthy, stalled, unavailable };
+    calls: usize = 0,
+    mode: Mode = .ready,
+    fn read(raw: *anyopaque) error{Unavailable}!zhww.rng.Word {
+        const self: *@This() = @ptrCast(@alignCast(raw));
+        self.calls += 1;
+        return switch (self.mode) {
+            .ready => .{ .ready = @intCast(self.calls) }, // test-only, NOT secure entropy
+            .unhealthy => if (self.calls == 2) .health_failure else .{ .ready = 1 },
+            .stalled => .not_ready,
+            .unavailable => error.Unavailable,
+        };
+    }
+    fn rng(self: *@This()) zhww.rng.Rng {
+        return .{ .source = .{ .context = self, .read_word = read } };
+    }
+};
+
+fn signTest(w: *Workflow, allocator: std.mem.Allocator, raw: []const u8, now: u64) !zhww.btc_sign.SignedPsbt {
+    var mock: MockEntropy = .{};
+    var rng = mock.rng();
+    return w.sign(allocator, raw, now, &rng);
+}
+
 fn wiped(w: *Workflow) !void {
     try testing.expect(!w.session.ready);
     try testing.expectEqualSlices(u8, &@as([64]u8, @splat(0)), &w.session.secret.memory);
@@ -75,10 +100,10 @@ test "approved BTC workflow produces the pinned Core final transaction and wipes
     try testing.expectEqual(@as(u64, 10000), w.review.fee);
     try testing.expectEqual(@as(usize, 5), w.review.count);
     try approve(&w);
-    const outcome = try w.sign(a, f.raw, 1102);
+    const outcome = try signTest(&w, a, f.raw, 1102);
     try testing.expectEqualSlices(u8, f.expected_tx, outcome.result.final_tx.?);
     try wiped(&w);
-    try testing.expectError(error.InvalidState, w.sign(a, f.raw, 1103));
+    try testing.expectError(error.InvalidState, signTest(&w, a, f.raw, 1103));
 }
 
 test "no signature before all pages and physical event sequence" {
@@ -97,7 +122,7 @@ test "no signature before all pages and physical event sequence" {
             try w.button(true, 100); // held without a release after review
             try w.button(false, 1101);
         }
-        try testing.expectError(error.InvalidState, w.sign(a, f.raw, 1102));
+        try testing.expectError(error.InvalidState, signTest(&w, a, f.raw, 1102));
         try wiped(&w);
     }
 }
@@ -116,20 +141,84 @@ test "input mutation, network change, media removal and timeout prevent signing"
             0 => {
                 const changed = try a.dupe(u8, f.raw);
                 changed[changed.len - 1] ^= 1;
-                try testing.expectError(error.RequestMismatch, w.sign(a, changed, 1102));
+                try testing.expectError(error.RequestMismatch, signTest(&w, a, changed, 1102));
             },
             1 => {
                 w.network = .mainnet;
-                try testing.expectError(error.ReviewMismatch, w.sign(a, f.raw, 1102));
+                try testing.expectError(error.ReviewMismatch, signTest(&w, a, f.raw, 1102));
             },
             2 => {
                 w.abort();
-                try testing.expectError(error.InvalidState, w.sign(a, f.raw, 1102));
+                try testing.expectError(error.InvalidState, signTest(&w, a, f.raw, 1102));
             },
             else => try testing.expectError(error.Timeout, w.poll(120000)),
         }
         try wiped(&w);
     }
+}
+
+test "approved BTC entropy failures consume approval and wipe without output" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    for ([_]MockEntropy.Mode{ .unhealthy, .stalled, .unavailable }) |mode| {
+        var w: Workflow = .{};
+        try w.begin(a, evidence(), &f.seed, f.raw, .regtest, 0);
+        try approve(&w);
+        var mock: MockEntropy = .{ .mode = mode };
+        var rng = mock.rng();
+        switch (mode) {
+            .unhealthy => try testing.expectError(error.HealthFailure, w.sign(a, f.raw, 1102, &rng)),
+            .stalled => try testing.expectError(error.Timeout, w.sign(a, f.raw, 1102, &rng)),
+            .unavailable => try testing.expectError(error.Unavailable, w.sign(a, f.raw, 1102, &rng)),
+            else => unreachable,
+        }
+        try testing.expect(rng.failed);
+        try wiped(&w);
+        const calls = mock.calls;
+        try testing.expectError(error.InvalidState, w.sign(a, f.raw, 1103, &rng));
+        try testing.expectEqual(calls, mock.calls);
+    }
+}
+
+test "entropy is not requested before valid approval or after request mutation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    var mock: MockEntropy = .{};
+    var rng = mock.rng();
+    var w: Workflow = .{};
+    try w.begin(a, evidence(), &f.seed, f.raw, .regtest, 0);
+    try testing.expectError(error.InvalidState, w.sign(a, f.raw, 1102, &rng));
+    try testing.expectEqual(@as(usize, 0), mock.calls);
+    w = .{};
+    try w.begin(a, evidence(), &f.seed, f.raw, .regtest, 0);
+    try approve(&w);
+    const changed = try a.dupe(u8, f.raw);
+    changed[changed.len - 1] ^= 1;
+    try testing.expectError(error.RequestMismatch, w.sign(a, changed, 1102, &rng));
+    try testing.expectEqual(@as(usize, 0), mock.calls);
+    try wiped(&w);
+}
+
+test "nested context acquisition refuses approved signing without closing outer lease" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    var w: Workflow = .{};
+    try w.begin(a, evidence(), &f.seed, f.raw, .regtest, 0);
+    try approve(&w);
+    var lease = try zhww.secp256k1.SigningLease.begin(&@as([32]u8, @splat(0x77)));
+    defer lease.end();
+    try testing.expectError(error.ContextBusy, signTest(&w, a, f.raw, 1102));
+    try wiped(&w);
+    try testing.expectError(error.ContextBusy, zhww.secp256k1.SigningLease.begin(&@as([32]u8, @splat(0x88))));
 }
 
 test "review renders every complete page on both supported displays" {
@@ -210,6 +299,6 @@ test "wrong wallet cannot publish a partially signed or unsigned result" {
     var w: Workflow = .{};
     try w.begin(a, evidence(), &f.seed, f.raw, .regtest, 0);
     try approve(&w);
-    try testing.expectError(error.NoMatchingKey, w.sign(a, f.raw, 1102));
+    try testing.expectError(error.NoMatchingKey, signTest(&w, a, f.raw, 1102));
     try wiped(&w);
 }

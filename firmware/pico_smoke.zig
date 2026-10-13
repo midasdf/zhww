@@ -34,6 +34,12 @@ export fn zhww_smoke_security(evidence: *const zhww.boot_policy.Evidence, seed: 
     return sink.digest[0];
 }
 
+/// Compile fresh-entropy BIP340 primitive too. Still no transaction approval here.
+export fn zhww_smoke_randomized_schnorr(msg: *const [32]u8, private_key: *const [32]u8, rng: *zhww.rng.Rng) usize {
+    const sig = zhww.secp256k1.schnorrSignRandomized(msg.*, private_key, rng) catch return 0;
+    return sig[0];
+}
+
 const SecuritySmokeSink = struct {
     digest: [32]u8 = undefined,
     pub fn sign(self: *@This(), request: []const u8, seed: []const u8) !void {
@@ -47,6 +53,7 @@ const SecuritySmokeSink = struct {
 export fn zhww_smoke_approved_btc(
     evidence: *const zhww.boot_policy.Evidence,
     seed: *const [64]u8,
+    rng: *zhww.rng.Rng,
     raw_ptr: [*]const u8,
     raw_len: usize,
     scratch_ptr: [*]u8,
@@ -65,7 +72,7 @@ export fn zhww_smoke_approved_btc(
     workflow.button(false, 100) catch return 0;
     workflow.button(true, 101) catch return 0;
     workflow.button(false, 1101) catch return 0;
-    const output = workflow.sign(allocator, raw, 1102) catch return 0;
+    const output = workflow.sign(allocator, raw, 1102, rng) catch return 0;
     return output.signed_psbt.len;
 }
 

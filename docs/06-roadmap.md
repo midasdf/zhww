@@ -55,7 +55,8 @@ or hardware-wallet flow is done. The remaining architecture work is tracked in t
 | Sending on the real device (signet) | ⬜ Not started (hardware required) |
 | Immutable prepare → display → physical approval → sign state machine | 🧩 Host gate now connects bounded canonical BTC review to actual P2WPKH-input PSBT signing, with a pinned Core-vector test. Physical HAL, key isolation, other BTC inputs and EVM remain open ([design](11-rp2350-security.md)) |
 | I-2 key isolation and I-3 independent hash comparison | ⬜ Not started |
-| Session-wide secret erasure | 🧩 Owned backing-memory erasure tested; derived-key, caller-copy, C-context and target-stack erasure remain open |
+| Session-wide secret erasure | 🧩 Owned seed/master/intermediate-key and preallocated C-context backing erasure tested; caller-copy, by-value API, C internal stacks/registers and target-spill erasure remain open |
+| Secure entropy / context blinding | 🧩 Bounded RNG interface, mandatory approved-BTC context blinding and randomized/verified BIP340 primitive tested with mocks; actual TRNG HAL and approved Taproot integration remain open |
 | On-device screen UI and QR send/receive | ⬜ Not started (HAL and hardware verification required) |
 | Development CLI | ✅ Implemented as a development tool; signing commands sign immediately and are not the device flow |
 | CI (build and tests on Linux) | ✅ Done (GitHub Actions. On the same Linux as the device it verifies the tests, the CLI, Core-vector signing, the UR round trip and the FAT32 microSD handoff on every run) |

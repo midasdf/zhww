@@ -28,8 +28,9 @@ const ec_compressed: c_uint = (1 << 1) | (1 << 8);
 /// SECP256K1_EC_UNCOMPRESSED
 const ec_uncompressed: c_uint = (1 << 1);
 
-extern fn secp256k1_context_create(flags: c_uint) ?*Context;
-extern fn secp256k1_context_destroy(ctx: ?*Context) void;
+extern fn secp256k1_context_preallocated_size(flags: c_uint) usize;
+extern fn secp256k1_context_preallocated_create(memory: *anyopaque, flags: c_uint) ?*Context;
+extern fn secp256k1_context_preallocated_destroy(ctx: *Context) void;
 extern fn secp256k1_context_randomize(ctx: *Context, seed32: *const [32]u8) c_int;
 extern fn secp256k1_ec_pubkey_create(
     ctx: *const Context,
@@ -149,22 +150,75 @@ pub fn isValidPublicKey(serialized: []const u8) bool {
 
 // --- context -------------------------------------------------------------
 
-var global_context: ?*Context = null;
+/// Fixed-capacity C context ownership. Keep at a stable address; never copy while live.
+/// libsecp256k1 preallocated API performs no malloc/free. Runtime size check supports
+/// differing library configurations; alignment 64 covers the supported host/Arm ABIs.
+/// Do not read/write backing memory before preallocated_destroy returns.
+pub fn ContextOwner(comptime capacity: usize) type {
+    return struct {
+        memory: [capacity]u8 align(64) = @splat(0),
+        ptr: ?*Context = null,
 
-/// Return the context shared within the process.
-///
-/// Assumes single-threaded use (the device side is single-threaded). With multiple threads,
-/// the caller must provide mutual exclusion.
-pub fn context() Error!*const Context {
-    if (global_context) |ctx| return ctx;
-    const created = secp256k1_context_create(context_none) orelse return error.InvalidKey;
-    global_context = created;
-    return created;
+        pub fn get(self: *@This()) Error!*Context {
+            if (self.ptr) |ctx| return ctx;
+            const required = secp256k1_context_preallocated_size(context_none);
+            if (required == 0 or required > capacity) return error.BufferTooSmall;
+            self.ptr = secp256k1_context_preallocated_create(&self.memory, context_none) orelse return error.InvalidKey;
+            return self.ptr.?;
+        }
+
+        /// C destruction first, then wipe ALL backing bytes including padding/tail.
+        pub fn deinit(self: *@This()) void {
+            if (self.ptr) |ctx| secp256k1_context_preallocated_destroy(ctx);
+            self.ptr = null;
+            std.crypto.secureZero(u8, &self.memory);
+        }
+    };
 }
 
-/// Blinding for side-channel protection. Call at device startup with TRNG output.
+const context_capacity = 4096;
+var global_owner: ContextOwner(context_capacity) = .{};
+var signing_context_active = false;
+
+/// Compatibility accessor for existing crypto/BIP32 code. Shared singleton, NOT
+/// a thread-safe/per-request API or security boundary. Secure target must serialize
+/// execution, prevent interrupt re-entry and park the other core. Legacy CLI operations
+/// lazily create an unrandomized development context; approved signing uses the lease.
+pub fn context() Error!*const Context {
+    return global_owner.get();
+}
+
+/// Exclusive logical signing lease for single-threaded trusted orchestration.
+/// Context blinding seed is borrowed, not copied into the lease. Lexical use only:
+/// `var lease = try SigningLease.begin(&seed); defer lease.end();` Never copy a lease.
+/// Ordinary context() calls still work inside the scope, so this is not isolation.
+pub const SigningLease = struct {
+    live: bool = false,
+
+    pub fn begin(seed: *const [32]u8) !SigningLease {
+        if (signing_context_active) return error.ContextBusy;
+        global_owner.deinit(); // retire any unrandomized development context
+        errdefer global_owner.deinit();
+        const ctx = try global_owner.get();
+        if (secp256k1_context_randomize(ctx, seed) == 0) return error.InvalidKey;
+        signing_context_active = true;
+        return .{ .live = true };
+    }
+
+    pub fn end(self: *SigningLease) void {
+        if (!self.live) return;
+        global_owner.deinit();
+        signing_context_active = false;
+        self.live = false;
+    }
+};
+
+/// Legacy development helper. Approved signing uses a bounded RNG and SigningLease.
 pub fn randomize(seed: [32]u8) Error!void {
-    if (secp256k1_context_randomize(try context(), &seed) == 0) return error.InvalidKey;
+    if (signing_context_active) return error.InvalidKey;
+    var copy = seed;
+    defer std.crypto.secureZero(u8, &copy);
+    if (secp256k1_context_randomize(try global_owner.get(), &copy) == 0) return error.InvalidKey;
 }
 
 // --- operations ----------------------------------------------------------
@@ -419,22 +473,41 @@ extern fn secp256k1_schnorrsig_verify(
 /// **The caller must tweak the key beforehand**. Taproot key path signing uses a key
 /// passed through `taproot_tweak_private_key` (BIP341).
 ///
-/// aux_rand is fixed to 0. The nonce is determined by "aux_rand, key, message", so the same
-/// input always yields the same signature (tests are reproducible) and the nonce is never reused.
-/// On real hardware this can be extended to pass TRNG values (it only takes an extra argument).
+/// Deterministic development/vector helper (zero auxiliary randomness). Device code
+/// must use schnorrSignRandomized with a bounded Secure-world entropy provider.
 pub fn schnorrSign(msg: [32]u8, priv: [32]u8) Error![64]u8 {
-    if (!isValidPrivateKey(priv)) return error.InvalidKey;
+    return schnorrSignWithAux(msg, &priv, &@as([32]u8, @splat(0)));
+}
+
+/// Explicit borrowed BIP340 auxiliary randomness; caller owns its secure erasure.
+/// This low-level API does not establish a randomized context or verify the result.
+pub fn schnorrSignWithAux(msg: [32]u8, priv: *const [32]u8, aux_rand: *const [32]u8) Error![64]u8 {
+    if (!isValidPrivateKey(priv.*)) return error.InvalidKey;
     const ctx = try context();
 
     var keypair: Keypair = undefined;
     defer std.crypto.secureZero(u8, &keypair.data);
-    if (secp256k1_keypair_create(ctx, &keypair, &priv) == 0) return error.InvalidKey;
+    if (secp256k1_keypair_create(ctx, &keypair, priv) == 0) return error.InvalidKey;
 
     var signature: [64]u8 = undefined;
-    const aux_rand: [32]u8 = @splat(0);
-    if (secp256k1_schnorrsig_sign32(ctx, &signature, &msg, &keypair, &aux_rand) == 0) {
+    if (secp256k1_schnorrsig_sign32(ctx, &signature, &msg, &keypair, aux_rand) == 0) {
         return error.SignatureInvalid;
     }
+    return signature;
+}
+
+/// Fresh independent portions for context blinding and BIP340 auxiliary randomness.
+/// RNG must implement the fail-closed fill contract (security/rng.zig on the target).
+/// No fallback: entropy/acquisition/signature/verification errors propagate. This is
+/// a primitive, NOT a transaction approval gateway or integrated Taproot workflow.
+pub fn schnorrSignRandomized(msg: [32]u8, priv: *const [32]u8, rng: anytype) ![64]u8 {
+    var entropy: [64]u8 = undefined;
+    defer std.crypto.secureZero(u8, &entropy);
+    try rng.fill(&entropy);
+    var lease = try SigningLease.begin(entropy[0..32]);
+    defer lease.end();
+    const signature = try schnorrSignWithAux(msg, priv, entropy[32..64]);
+    if (!(try schnorrVerify(signature, msg, try schnorrPublicKey(priv.*)))) return error.SignatureInvalid;
     return signature;
 }
 
@@ -488,6 +561,81 @@ fn scalar(value: u8) [32]u8 {
     var out: [32]u8 = @splat(0);
     out[31] = value;
     return out;
+}
+
+test "preallocated context validates capacity and wipes backing memory after destruction" {
+    var small: ContextOwner(1) = .{};
+    try testing.expectError(error.BufferTooSmall, small.get());
+    try testing.expect(small.ptr == null);
+    var owner: ContextOwner(context_capacity) = .{};
+    _ = try owner.get();
+    try testing.expect(owner.ptr != null);
+    // Never inspect live C backing memory. Destroy, then verify the whole allocation.
+    owner.deinit();
+    try testing.expect(owner.ptr == null);
+    try testing.expectEqualSlices(u8, &@as([context_capacity]u8, @splat(0)), &owner.memory);
+    owner.deinit();
+    _ = try owner.get();
+    owner.deinit();
+}
+
+test "randomized signing lease preserves deterministic signatures and rejects nesting" {
+    const msg: [32]u8 = @splat(0x42);
+    const before = try sign(msg, scalar(1));
+    var first = try SigningLease.begin(&@as([32]u8, @splat(0x11)));
+    errdefer first.end();
+    try testing.expectError(error.ContextBusy, SigningLease.begin(&@as([32]u8, @splat(0x22))));
+    const during = try sign(msg, scalar(1));
+    try testing.expectEqualSlices(u8, &before.data, &during.data);
+    try testing.expect(try verify(&during, msg, try pubKeyCompressed(scalar(1))));
+    first.end();
+    first.end();
+    try testing.expect(!signing_context_active);
+    try testing.expect(global_owner.ptr == null);
+    try testing.expectEqualSlices(u8, &@as([context_capacity]u8, @splat(0)), &global_owner.memory);
+    var second = try SigningLease.begin(&@as([32]u8, @splat(0x33)));
+    defer second.end();
+    const after = try sign(msg, scalar(1));
+    try testing.expectEqualSlices(u8, &before.data, &after.data);
+}
+
+test "randomized Schnorr uses fresh auxiliary bytes, verifies and wipes context" {
+    const MockRng = struct {
+        calls: usize = 0,
+        pub fn fill(self: *@This(), out: []u8) !void {
+            self.calls += 1;
+            try testing.expectEqual(@as(usize, 64), out.len);
+            @memset(out, @intCast(self.calls));
+        }
+    };
+    var rng: MockRng = .{};
+    const msg: [32]u8 = @splat(0x42);
+    const priv = scalar(1);
+    const pubkey = try schnorrPublicKey(priv);
+    const first = try schnorrSignRandomized(msg, &priv, &rng);
+    try testing.expect(global_owner.ptr == null);
+    try testing.expectEqualSlices(u8, &@as([context_capacity]u8, @splat(0)), &global_owner.memory);
+    const second = try schnorrSignRandomized(msg, &priv, &rng);
+    try testing.expect(!std.mem.eql(u8, &first, &second));
+    try testing.expect(try schnorrVerify(first, msg, pubkey));
+    try testing.expect(try schnorrVerify(second, msg, pubkey));
+    try testing.expectEqual(@as(usize, 2), rng.calls);
+    global_owner.deinit();
+}
+
+test "randomized Schnorr refuses failed entropy without creating a signing context" {
+    const FailedRng = struct {
+        pub fn fill(_: *@This(), out: []u8) !void {
+            @memset(out, 0xab); // partial read before hardware failure
+            return error.HealthFailure;
+        }
+    };
+    var rng: FailedRng = .{};
+    global_owner.deinit();
+    try testing.expectError(error.HealthFailure, schnorrSignRandomized(@splat(0x42), &scalar(1), &rng));
+    try testing.expect(global_owner.ptr == null);
+    try testing.expect(!signing_context_active);
+    try testing.expectEqualSlices(u8, &@as([context_capacity]u8, @splat(0)), &global_owner.memory);
 }
 
 test "the library is linked (public key from a BIP49 test vector)" {
