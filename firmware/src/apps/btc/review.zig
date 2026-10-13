@@ -1,7 +1,8 @@
 //! Bounded, key-free, conservative PSBT review for the first approved BTC workflow.
 //! Initial policy: P2WPKH inputs, known amounts, SIGHASH_ALL, standard address outputs.
 //! Every output is shown as a payment (no unproven change suppression).
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const psbt_mod = @import("psbt.zig");
 const sign = @import("sign.zig");

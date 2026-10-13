@@ -4,7 +4,8 @@
 No external Python packages. This is a provisional inventory, NOT a linked SRAM/stack
 proof. The stack and HAL entries are reservations, not compiler/hardware measurements.
 """
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+# SPDX-License-Identifier: MIT
 import argparse
 import json
 from pathlib import Path

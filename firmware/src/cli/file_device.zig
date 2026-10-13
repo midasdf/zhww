@@ -7,6 +7,8 @@
 //!
 //! Reads and writes are positional (`readPositionalAll` / `writePositionalAll`),
 //! so they do not depend on the file position.
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const block_device = @import("zhww").block_device;

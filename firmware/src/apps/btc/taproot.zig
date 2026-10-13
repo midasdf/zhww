@@ -12,6 +12,8 @@
 //! - The key used for signing must already be tweaked with `taproot_tweak_private_key` (BIP341)
 //! - A `SIGHASH_DEFAULT` signature is 64 bytes and carries no sighash type at the end
 //!   (unlike BIP143's 65 bytes)
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

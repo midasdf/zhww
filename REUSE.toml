@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+# SPDX-License-Identifier: MIT
+#
+# Copyright and licence of the files that cannot carry an SPDX header (Markdown, images, JSON,
+# word lists, exported CAD), in the REUSE 3.3 format (https://reuse.software/spec-3.3/).
+# Source files carry their own header instead, which takes precedence over this file.
+# When several annotations match one file, the LAST one wins: keep the specific ones at the end.
+#
+# Checked in CI by tools/license_check.zig (see LICENSE-POLICY.md).
+version = 1
+
+# Hardware design: the enclosure's SolidCraft scripts, its STEP/STL exports and renders.
+[[annotations]]
+path = "hardware/**"
+SPDX-FileCopyrightText = "2026 midasdf and the zhww contributors"
+SPDX-License-Identifier = "CERN-OHL-S-2.0"
+
+# Documentation and the images it shows (screen captures and enclosure renders).
+[[annotations]]
+path = ["*.md", "**/*.md", "docs/images/**"]
+SPDX-FileCopyrightText = "2026 midasdf and the zhww contributors"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+# Firmware data written for this project, and test vectors this project compiled from
+# public-domain / CC0 sources (BIP 49, BIP 84, BIP 143) or captured from Bitcoin Core runs.
+[[annotations]]
+path = [
+  "firmware/target/dependencies.json",
+  "firmware/tests/vectors/bip49.json",
+  "firmware/tests/vectors/bip84.json",
+  "firmware/tests/vectors/bip143.json",
+  "firmware/tests/vectors/core_*.json",
+]
+SPDX-FileCopyrightText = "2026 midasdf and the zhww contributors"
+SPDX-License-Identifier = "MIT"
+
+# Third-party data: the BIP 39 word list and the python-mnemonic BIP 39 vectors (MIT).
+[[annotations]]
+path = "firmware/src/core/seed/english.txt"
+SPDX-FileCopyrightText = "2013 Marek Palatinus, Pavol Rusnak, Aaron Voisine, Sean Bowe (BIP 39)"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "firmware/tests/vectors/bip39.json"
+SPDX-FileCopyrightText = "2013-2016 Pavol Rusnak (trezor/python-mnemonic)"
+SPDX-License-Identifier = "MIT"
+
+# Third-party data: vectors copied from BIPs that are licensed BSD-2-Clause.
+[[annotations]]
+path = "firmware/tests/vectors/bip32.json"
+SPDX-FileCopyrightText = "2012 Pieter Wuille (BIP 32)"
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = "firmware/tests/vectors/bip86.json"
+SPDX-FileCopyrightText = "2021 Ava Chow (BIP 86)"
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = "firmware/tests/vectors/bip174.json"
+SPDX-FileCopyrightText = "2017 Ava Chow (BIP 174)"
+SPDX-License-Identifier = "BSD-2-Clause"

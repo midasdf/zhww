@@ -12,7 +12,8 @@
 //! **How this differs from the other tests**: the BIP143 vectors check whether the
 //! implementation follows the spec, while this test checks **whether real Bitcoin Core
 //! considers our signature valid**. It only passes when implementation, encoding, key discovery and finalization all mesh.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

@@ -9,7 +9,8 @@
 //! It provides a streaming API (init/update/final), so it handles input of any length.
 //!
 //! Reference: ISO/IEC 10118-3, https://homes.esat.kuleuven.be/~bosselae/ripemd160.html
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 

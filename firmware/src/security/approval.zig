@@ -1,7 +1,8 @@
 //! Secure-world approval logic prototype. Not wired to the CLI signing APIs.
 //! All calls must originate in trusted code; Zig visibility is NOT a TrustZone boundary.
 //! Renderer acknowledges a page only after successful physical display transfer.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const Sha256 = std.crypto.hash.sha2.Sha256;
 

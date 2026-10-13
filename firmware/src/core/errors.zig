@@ -3,7 +3,8 @@
 //! Policy: every parse/validation failure is reported as an error, and when the signing flow
 //! catches an error it **shows the reason on screen without signing**. Never swallow an error
 //! and carry on regardless.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 pub const Error = error{
     /// Invalid format such as Base58 / Bech32

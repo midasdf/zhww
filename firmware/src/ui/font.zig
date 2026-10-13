@@ -3,10 +3,12 @@
 //! Source: font8x8 by Daniel Hepper (**public domain**)
 //!       https://github.com/dhepper/font8x8
 //!       Derived by the same author from the public domain VGA font by Marcel Sondaar / IBM.
-//! The license is public domain, so it is compatible with this repository's GPL.
+//! The font is public domain, so it can be relicensed under this repository's MIT licence.
 //!
 //! Each glyph is 8 bytes. **The low bit is on the left** (bit0 is the leftmost dot) and the
 //! byte sequence runs from top to bottom.
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 pub const glyph_width = 8;
 pub const glyph_height = 8;

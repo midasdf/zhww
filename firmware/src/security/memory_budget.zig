@@ -1,7 +1,8 @@
 //! Provisional RP2350 SRAM inventory, NOT a linked-image or worst-case stack proof.
 //! Size-of terms are target ABI measurements; stack/HAL terms are UNVALIDATED reserves.
 //! One framebuffer, one ingress buffer, one workflow, one reusable workspace.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const Workflow = @import("../apps/btc/approved_sign.zig").Workflow;
 const Review = @import("../apps/btc/review.zig").Review;

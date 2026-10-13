@@ -5,7 +5,8 @@
 //!
 //! - **Every invalid PSBT must be rejected** (none may be accepted)
 //! - **Every valid PSBT must be accepted** (we must not be overly strict either)
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

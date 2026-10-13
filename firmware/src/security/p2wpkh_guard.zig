@@ -2,7 +2,8 @@
 //! Deliberately imports NO application parser, cursor, serializer, script or sighash
 //! helper. Only std SHA-256/memory primitives are shared. This is a second software
 //! calculation, not a TrustZone boundary, independent crypto implementation or fault proof.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const Sha256 = std.crypto.hash.sha2.Sha256;
 pub const Error = error{ GuardInvalid, GuardTruncated, GuardUnsupported, GuardLimit };

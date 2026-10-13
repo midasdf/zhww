@@ -1,3 +1,5 @@
+/* SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors */
+/* SPDX-License-Identifier: MIT */
 /* Freestanding declarations only. Unimplemented dependencies must fail at link. */
 #ifndef ZHWW_STRING_H
 #define ZHWW_STRING_H

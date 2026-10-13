@@ -8,6 +8,8 @@
 //! - Errors are **always shown on screen** (never stop silently)
 //! - Show what is being signed (file name, destination, amount, fee) before signing
 //! - Say "unknown" for what is unknown (never fill it in by guessing)
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const ui_screen = @import("../ui/screen.zig");

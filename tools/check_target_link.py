@@ -5,7 +5,8 @@ The first --fetch downloads a SHA256-pinned source archive. Every build checks t
 archive and extracts fresh sources. No host libsecp256k1, SDK, heap or stdio is linked.
 Zig emits optimized LLVM IR; Zig's Clang lowers it with per-function stack metadata.
 """
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+# SPDX-License-Identifier: MIT
 import argparse
 import hashlib
 import json

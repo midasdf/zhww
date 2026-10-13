@@ -17,7 +17,8 @@
 //! Checking that scripts agree (whether redeemScript matches scriptPubKey, etc.) is
 //! the **signer's responsibility** and is not validated at parse time (BIP174's own
 //! test vectors treat a "valid PSBT whose scripts do not match" as valid).
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;

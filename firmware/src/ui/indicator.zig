@@ -9,6 +9,8 @@
 //! **Power consumption matters because it runs on dry cells**: idle is limited to "a brief flash now
 //! and then", and the average duty cycle is kept to a few percent or less (so that the average blinking
 //! current can be computed, the patterns are expressed as a sequence of on/off states and durations).
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../core/errors.zig").Error;

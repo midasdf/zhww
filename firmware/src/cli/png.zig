@@ -4,6 +4,8 @@
 //!
 //! Nothing is compressed: the PNG is built from zlib "stored" (uncompressed) blocks only.
 //! That needs no external library and makes the output deterministic (easy to test).
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

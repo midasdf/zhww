@@ -29,7 +29,8 @@
 //! Memory: the binarized image and the module matrices use one bit per pixel. The `Image`
 //! pixel buffer belongs to the caller and is never modified. Scratch memory comes from the
 //! allocator passed to `decode` and is released inside this module.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const qr = @import("qr.zig");

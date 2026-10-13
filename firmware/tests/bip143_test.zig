@@ -14,7 +14,8 @@
 //!
 //! **RFC6979 is deterministic**, so the same key and the same message always give the same signature.
 //! Hence an exact match with the official vector is strong evidence that the implementation is correct.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

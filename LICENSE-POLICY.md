@@ -1,57 +1,84 @@
 # License Policy
 
-- **Last updated**: 2026-10-12
+- **Last updated**: 2026-10-14
 
-Because this project claims to be "fully open source", it **states a license explicitly for each kind
-of deliverable**. The canonical license texts are obtained from each official source and bundled with
-the repository (see the TODO below).
+This project calls itself "fully open source", so **every file states its own licence**, in the
+[REUSE](https://reuse.software/) layout, and CI checks that none is missing. The licence texts are the
+official ones, kept in [LICENSES/](LICENSES/).
 
 ---
 
-## 1. License by deliverable
+## 1. Licence by deliverable
 
-| Deliverable | License | Reason |
+| Deliverable | Where | Licence | Why |
+|---|---|---|---|
+| Firmware and tools | `firmware/`, `tools/`, CI and config files | **MIT** ([LICENSE](LICENSE)) | Permissive and short: anyone may reuse the code (the PSBT and EVM parsers, the QR decoder, the FAT32 reader, …) in their own wallets and libraries, products included, as long as the notice is kept. It is the licence of the two things the firmware links against, libsecp256k1 and the Zig standard library |
+| Hardware design: the enclosure now, schematics and PCB if they are ever made | `hardware/` | **CERN-OHL-S-2.0** ([LICENSES/CERN-OHL-S-2.0.txt](LICENSES/CERN-OHL-S-2.0.txt)) | Strongly reciprocal and written for hardware: anyone who distributes a modified design, **or devices made from it**, must publish the modified source. Consistent with OSHWA certification |
+| Documentation and its images | `*.md`, `docs/` | **CC-BY-4.0** ([LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt)) | Quoting, translation and redistribution are welcome with attribution |
+| Logo (there is none yet) | — | **CC-BY-SA-4.0** when one is added | Open, and modified logos stay open. Add `LICENSES/CC-BY-SA-4.0.txt` in the same change |
+| The name "zhww" | — | Not a copyright matter | See [TRADEMARKS.md](TRADEMARKS.md): forks are welcome, but under their own name |
+
+The firmware is permissive and the hardware is reciprocal on purpose. Code is most useful when
+other wallets can lift a parser without changing their licence; a device design is most useful when
+every variant that is sold or shared stays buildable by its users.
+
+For the differences between the CERN-OHL variants (S: strongly reciprocal / W: weakly reciprocal /
+P: permissive), see the [official explanation](https://ohwr.org/project/cernohl/-/wikis/uploads/c2e5e9d297949b5c2d324a6cbf6adda0/cern_ohl_w_v2_howto.pdf).
+
+## 2. How each file states its licence
+
+| File | Where the licence is stated |
+|---|---|
+| Source files (`.zig`, `.py`, `.html`, `.sh`, `.ld`, `.h`, YAML, `.gitignore`) | A two-line SPDX header (the copyright line, then the licence identifier) right after the Zig doc comment, or at the top of the file |
+| Files that cannot carry a header (Markdown, images, JSON, the BIP39 word list, the enclosure's SolidCraft scripts and its STEP / STL exports) | An annotation in [REUSE.toml](REUSE.toml); the last matching annotation wins |
+| Licence texts | `LICENSES/<SPDX id>.txt`. The root `LICENSE` is the MIT text again, so GitHub shows the firmware's licence |
+
+The check, run by CI on every push:
+
+```bash
+git ls-files -z | zig run tools/license_check.zig   # every file has a copyright and a licence
+zig test tools/license_check.zig                    # the checker's own tests
+```
+
+It fails when a file states no licence, when an SPDX header has only one of its two lines, when a
+licence is used without its text in `LICENSES/`, or when a text there is used by nothing. The official
+`reuse lint` should agree with it; it is written in Python, so this repository does not depend on it.
+
+## 3. Using third-party code and data
+
+| Source licence | In the firmware / tools (MIT) | In `hardware/` (CERN-OHL-S-2.0) |
 |---|---|---|
-| Hardware design (schematics, BOM, board data) | **CERN-OHL-S-2.0** | Strong copyleft. Modified versions must publish their design too. As an open-source hardware license it is consistent with OSHWA certification |
-| Firmware | **GPL-3.0-or-later** | Requires modified versions to publish their source. It also works as the destination license if we incorporate code learned from Trezor firmware (GPLv3) |
-| Enclosure and 3D data | **CC-BY-SA-4.0** | Fits the 3D-printing culture. Modified versions are shared under the same terms |
-| Documentation | **CC-BY-4.0** | Quoting, translation and redistribution are welcome |
-| Logo and name | **All rights reserved** | Distributing a modified version under this project's name would cause confusion |
+| MIT, BSD, ISC, Zlib, CC0, public domain | Yes. Keep the notice; record it in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and in the file's SPDX tags | Yes, the same way |
+| Apache-2.0 | Yes, but that file stays Apache-2.0 and its NOTICE is kept | Yes, the same way |
+| CERN-OHL-P / CERN-OHL-S | — | Yes |
+| **GPL / LGPL / AGPL** (for example **Trezor firmware**, GPLv3) | **No.** It would force the firmware back under the GPL. Learn from it, do not copy from it | No |
+| CC-BY-SA, CC-BY-NC, "free for personal use", no licence at all | No | No (for example most enclosure STLs on model-sharing sites) |
 
-For the differences between the CERN-OHL variants (S: strongly reciprocal / W: weakly reciprocal / P: permissive), see the [official explanation](https://ohwr.org/project/cernohl/-/wikis/uploads/c2e5e9d297949b5c2d324a6cbf6adda0/cern_ohl_w_v2_howto.pdf).
-
-## 2. Policy on using third-party code
-
-| Source | License | Handling when incorporated |
+| Source | Licence | Handling |
 |---|---|---|
-| SeedSigner | Open source | When reusing the parts list or the enclosure STL, state the source and the license |
+| SeedSigner | MIT | May be reused with its notice. Its community enclosures carry their own, varying licences: check each one |
 | Krux | MIT | May be incorporated. Keep the copyright notice |
-| Trezor firmware | **GPLv3** | If incorporated, this project's firmware becomes GPLv3 and the **"Trezor" name and logo cannot be used**. State the code's lineage |
-| libsecp256k1 | MIT | Keep the notice when linking dynamically or bundling |
-| BC-UR / bc-ur | BSD-family | Keep the notice |
-| ERC-7730 descriptors | Follow the registry's license | Record the source and hash when bundling |
+| Trezor firmware | GPLv3 | **Not incorporated**, and the "Trezor" name and logo are not used |
+| libsecp256k1 | MIT | Linked; the notice is kept |
+| BC-UR / bc-ur | BSD-2-Clause-Patent | Keep the notice if code is ever incorporated (none is today) |
+| ERC-7730 registry descriptors | CC0-1.0 | Record the source when bundling |
 
-**Firmware defaults to GPL-3.0-or-later.** Code under an incompatible license (a proprietary EULA, etc.) must not be incorporated.
-
-## 3. Stating the scope of "fully open source"
+## 4. Stating the scope of "fully open source"
 
 This project does **not** open the following. This is a design constraint and is stated in the README.
 
 | Closed element | Reason |
 |---|---|
-| Raspberry Pi boot ROM and GPU firmware | Closed by the vendor. This project cannot replace them |
-| The internal implementation of the LCD driver IC and camera module used | Closed by the vendor |
+| The RP2350 chip and the RP2350-PiZero board themselves | Vendor products. (The RP2350's boot ROM source is published by Raspberry Pi, but it is mask ROM: this project cannot replace it) |
+| The internal implementation of the display's driver IC (ST7789) and the camera's image sensor (HM01B0) | Closed by the vendor |
 | (Only if adopted) the internals of a secure element | Not applicable at present, since none is adopted |
 
-This project therefore takes the position of "**opening everything in the application layer and the design, and stating explicitly what is not open**". The phrase "fully open source" refers to this scope.
+This project therefore takes the position of "**opening everything in the application layer and the
+design, and stating explicitly what is not open**". The phrase "fully open source" refers to this scope.
 
-## 4. TODO (before the v0.1 release)
+## 5. History
 
-- [x] Obtain the canonical GPL-3.0 text and place it as `LICENSE` (for the firmware)
-- [x] Obtain the canonical CERN-OHL-S-2.0 text and place it as `LICENSE-HARDWARE` (for the hardware design)
-- [x] Place CC-BY-4.0 as `LICENSE-DOCS` (for documentation) and CC-BY-SA-4.0 as `LICENSE-ENCLOSURE`
-      (for the enclosure)
-- [x] Add a per-file SPDX header (`SPDX-License-Identifier: GPL-3.0-or-later`) to
-      every Zig source (placed directly after the doc comment)
-- [x] Create `THIRD-PARTY-NOTICES.md` for third-party code (libsecp256k1, test vectors, oracles)
-- [x] Create the vulnerability disclosure policy `SECURITY.md`
+- **Until 2026-10-14** the firmware and the tools were GPL-3.0-or-later, the enclosure was
+  CC-BY-SA-4.0, and the logo and name were "all rights reserved". Copies obtained before that keep
+  the terms they came with. Every commit up to that point had a single author, who relicensed the
+  project as described above.

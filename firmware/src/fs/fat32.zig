@@ -29,7 +29,8 @@
 //!   from the allocator. No buffer holds a whole file.
 //! - Directory traversal uses a caller-provided `Iterator` (about 1.1KB).
 //! - Write-side scratch space is at most about 4KB (`Iterator` + `Entry` + name buffer).
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const block_device = @import("block_device.zig");

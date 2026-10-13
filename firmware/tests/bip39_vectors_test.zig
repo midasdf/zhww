@@ -3,7 +3,8 @@
 //! Vector: tests/vectors/bip39.json (official vectors from https://github.com/trezor/python-mnemonic)
 //! Each entry is a 4-tuple [entropy, mnemonic, seed, xprv].
 //! Matching all the way to the final xprv also validates the BIP39 -> BIP32 link.
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const zhww = @import("../src/root.zig");

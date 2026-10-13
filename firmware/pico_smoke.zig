@@ -15,6 +15,8 @@
 //!
 //! The only undefined symbols left are libsecp256k1 (`secp256k1_*`) and compiler-rt (`__aeabi_*`).
 //! The former must be built separately for the target; the latter is supplied by Zig.
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 const std = @import("std");
 const zhww = @import("src/root.zig");
 

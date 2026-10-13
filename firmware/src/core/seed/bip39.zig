@@ -9,7 +9,8 @@
 //! - Passphrases and mnemonics need NFKD normalization, but v0.1 supports ASCII only, and
 //!   non-ASCII is made an **explicit error** (so we never silently build a different seed)
 //! - The mnemonic is whitespace-normalized before PBKDF2 (so the seed cannot change on trailing whitespace)
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../errors.zig").Error;

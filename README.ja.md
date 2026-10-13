@@ -64,11 +64,11 @@ zhww/
 ├── README.md                  ← 本ファイル
 ├── DISCLAIMER.md              ← 免責・開発体制・LLM 利用の開示（必読）
 ├── SECURITY.md                ← 脆弱性の報告方法
-├── LICENSE                    ← GPL-3.0（ファームウェア）
-├── LICENSE-HARDWARE           ← CERN-OHL-S-2.0（ハードウェア設計）
-├── LICENSE-DOCS               ← CC-BY-4.0（ドキュメント）
-├── LICENSE-ENCLOSURE          ← CC-BY-SA-4.0（筐体）
+├── LICENSE                    ← MIT（ファームウェアとツール）
+├── LICENSES/                  ← 使っているライセンスの全文（MIT、CERN-OHL-S-2.0、CC-BY-4.0、BSD-2-Clause）
+├── REUSE.toml                 ← SPDX ヘッダを書けないファイルのライセンス
 ├── LICENSE-POLICY.md          ← ライセンス方針
+├── TRADEMARKS.md              ← 「zhww」という名前の使い方
 ├── THIRD-PARTY-NOTICES.md     ← 第三者ソフトウェア・テストベクタの出典
 ├── docs/
 │   ├── 01-requirements.md     ← 要求仕様・スコープ・受け入れ基準
@@ -124,12 +124,14 @@ zig build memory                   # 暫定の型サイズ・予約量。実機�
 
 ## ライセンス
 
-- ファームウェア: **GPL-3.0-or-later**（[LICENSE](LICENSE)）
-- ハードウェア設計: **CERN-OHL-S-2.0**（[LICENSE-HARDWARE](LICENSE-HARDWARE)）
-- 筐体: **CC-BY-SA-4.0**（[LICENSE-ENCLOSURE](LICENSE-ENCLOSURE)）
-- ドキュメント: **CC-BY-4.0**（[LICENSE-DOCS](LICENSE-DOCS)）
+- ファームウェアとツール: **MIT**（[LICENSE](LICENSE)）
+- ハードウェア設計（筐体を含む）: **CERN-OHL-S-2.0**（[LICENSES/CERN-OHL-S-2.0.txt](LICENSES/CERN-OHL-S-2.0.txt)）
+- ドキュメント: **CC-BY-4.0**（[LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt)）
+- 「zhww」という名前: 派生版は歓迎するが、別の名前で出してほしい（[TRADEMARKS.md](TRADEMARKS.md)）
 
-Zig のソースには SPDX ヘッダ（`GPL-3.0-or-later`）を付けている。
+すべてのファイルに SPDX ヘッダか [REUSE.toml](REUSE.toml) でライセンスを明記し、CI で検査している
+（`git ls-files -z | zig run tools/license_check.zig`）。2026-10-14 まではファームウェアが
+GPL-3.0-or-later、筐体が CC-BY-SA-4.0 だった。
 第三者ソフトウェアとテストデータの出典は [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)、
 方針の詳細は [LICENSE-POLICY.md](LICENSE-POLICY.md) を参照。
 

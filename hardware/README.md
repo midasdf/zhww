@@ -21,7 +21,7 @@ hardware/
 | Published artifacts (if a PCB is made) | The complete KiCad project, Gerber / drill files, BOM (LCSC / Mouser part numbers), interactive BOM, assembly drawing |
 | Enclosure | Publish both STL and STEP (STEP is easier to modify) |
 | Certification | Obtain **OSHWA certification** ([certification.oshwa.org](https://certification.oshwa.org/)) only if a custom PCB is made |
-| License | Schematics and board data: CERN-OHL-S-2.0 / enclosure: CC-BY-SA-4.0 |
+| License | CERN-OHL-S-2.0 for the schematics, the board data and the enclosure |
 
 ## Design constraints (ease of assembly)
 

@@ -10,7 +10,8 @@
 //!
 //! References: https://eips.ethereum.org/EIPS/eip-191
 //!             https://eips.ethereum.org/EIPS/eip-712 (typed data; unsupported in v0.1)
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const hashes = @import("../../core/crypto/hashes.zig");

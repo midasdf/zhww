@@ -140,8 +140,9 @@ Understanding that you do so at your own risk, at a minimum follow the rules bel
 - This software and documentation are provided **as is**.
 - **No warranty of any kind** is given, whether express or implied (including merchantability, fitness for a particular purpose, accuracy and safety).
 - **The authors and contributors accept no liability whatsoever** for any damage arising from the use of this project (including loss of cryptocurrency).
-- The license is **GPL-3.0-or-later** ([LICENSE](LICENSE)), and its "no warranty" clause applies.
-  See [LICENSE-POLICY.md](LICENSE-POLICY.md) for the licenses of the hardware design and the documentation.
+- The firmware and tools are **MIT** ([LICENSE](LICENSE)), the hardware design is **CERN-OHL-S-2.0** and
+  the documentation is **CC-BY-4.0**; the "no warranty" clause of each applies.
+  See [LICENSE-POLICY.md](LICENSE-POLICY.md) for which licence covers which file.
 
 ---
 

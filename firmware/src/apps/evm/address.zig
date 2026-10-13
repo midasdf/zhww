@@ -8,7 +8,8 @@
 //!
 //! References: https://github.com/ethereum/ercs/blob/master/ERCS/erc-55.md
 //!             https://ethereum.org/en/developers/docs/accounts/
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
+// SPDX-License-Identifier: MIT
 
 const std = @import("std");
 const Error = @import("../../core/errors.zig").Error;
