@@ -53,6 +53,12 @@ jobs:
           # which does not assume Linux.
           zig build pico --summary all
 
+      - name: Provisional Cortex-M33 memory inventory and reader tests
+        run: |
+          python3 -m unittest discover -s tools/tests -v
+          cd firmware
+          zig build memory --summary all
+
       - name: Build the CLI and check it runs
         working-directory: firmware
         run: |

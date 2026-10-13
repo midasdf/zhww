@@ -25,6 +25,14 @@ pub fn build(b: *std.Build) void {
 
     const pico_step = b.step("pico", "Check that the core compiles for the Pico family (RP2040 / RP2350)");
 
+    // Compile target ABI sizes into an ELF constant and inspect it without execution.
+    // Stack/HAL entries are provisional reserves, not a linked-image fit guarantee.
+    const memory_cmd = b.addSystemCommand(&.{"python3"});
+    memory_cmd.addFileArg(b.path("../tools/check_memory_layout.py"));
+    memory_cmd.addArgs(&.{ "--zig", b.graph.zig_exe });
+    const memory_step = b.step("memory", "Check the provisional Cortex-M33 SRAM inventory (requires Python 3)");
+    memory_step.dependOn(&memory_cmd.step);
+
     // Development CLI (a way to check things before building the on-device screen UI)
     const cli_module = b.createModule(.{
         .root_source_file = b.path("src/cli/main.zig"),

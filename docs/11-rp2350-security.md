@@ -73,6 +73,7 @@ Files under `firmware/src/security/`:
 | `secret_session.zig` | Pointer-owned backing storage, bounded reservation, full-capacity secure erasure, borrow-memory tests | Does not erase caller copies, stacks, registers, C contexts or power-loss remanence |
 | `signing_session.zig` | Boot-policy check → seed ownership → review → approval → callback → unconditional wipe; no callback on invalid approval | Generic trusted callback, now used by the separate approved BTC workflow; not a physical HAL or secure gateway |
 | `rng.zig` | Nonblocking status/read interface, bounded poll budget, full-output erasure and terminal failure latch | Mock-tested only; provider status is not hardware attestation or an entropy-quality test |
+| `workspace.zig` / `memory_budget.zig` | Measured fixed buffer with no fallback, reset erasure and provisional target ABI inventory | Host workload peaks and target type sizes, not a full linked-image/transitive-stack proof; see [memory budget](12-rp2350-memory-budget.md) |
 
 The approval flow binds exact request bytes and rendered page bytes. It does **not** establish that
 those page bytes are a complete or correct interpretation of the transaction. The BTC integration below constructs bounded pages from a frozen request and refuses unsupported
@@ -195,8 +196,9 @@ continue signing after a retry. Hardware reset/power removal does not prove all 
 
 Encrypted boot is optional, **not a substitute for signed boot**. Public open-source firmware
 usually gains little from confidentiality alone. Executing authenticated code/assets from Secure
-SRAM can reduce external-flash substitution risks, but the 520 KB SRAM budget, secp tables,
-framebuffers, request copy and scratch usage need measurement. Do not claim signed XIP code
+SRAM can reduce external-flash substitution risks, but the complete linked-image/stack budget
+and SRAM-resident secp tables still need measurement. The [new provisional inventory and fixed
+workspace tests](12-rp2350-memory-budget.md) do not establish an SRAM-resident-code fit. Do not claim signed XIP code
 is continuously authenticated after boot. Investigate a SRAM-resident trusted core versus
 load/decrypt/re-sign before deciding; no boot-decryption secret is provisioned today.
 
@@ -209,6 +211,7 @@ zig build test -Doptimize=ReleaseSafe --summary all
 zig build test -Doptimize=ReleaseFast --summary all
 zig build test -Doptimize=ReleaseSmall --summary all
 zig build pico --summary all
+zig build memory --summary all  # provisional ABI inventory, not actual stack/image bounds
 ```
 
 New modules are included in the full host suite. The Pico smoke check references the orchestrator

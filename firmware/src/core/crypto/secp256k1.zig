@@ -176,7 +176,7 @@ pub fn ContextOwner(comptime capacity: usize) type {
     };
 }
 
-const context_capacity = 4096;
+pub const context_capacity = 4096;
 var global_owner: ContextOwner(context_capacity) = .{};
 var signing_context_active = false;
 

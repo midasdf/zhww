@@ -106,6 +106,128 @@ test "approved BTC workflow produces the pinned Core final transaction and wipes
     try testing.expectError(error.InvalidState, signTest(&w, a, f.raw, 1103));
 }
 
+test "approved BTC signs using only the fixed workspace and resets without accumulation" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    var memory: [zhww.memory_budget.workspace_bytes]u8 align(64) = undefined;
+    var workspace = zhww.workspace.Workspace.init(&memory);
+    defer workspace.reset();
+    var expected_peak: ?usize = null;
+    for (0..3) |_| {
+        var w: Workflow = .{};
+        const fixed = workspace.allocator();
+        try w.begin(fixed, evidence(), &f.seed, f.raw, .regtest, 0);
+        const prepare_peak = workspace.peak;
+        try approve(&w);
+        const outcome = try signTest(&w, fixed, f.raw, 1102);
+        try testing.expectEqualSlices(u8, f.expected_tx, outcome.result.final_tx.?);
+        try testing.expectEqual(@as(usize, 0), workspace.failures);
+        if (expected_peak) |peak| try testing.expectEqual(peak, workspace.peak) else {
+            expected_peak = workspace.peak;
+            std.debug.print("\nApproved BTC fixed workspace (host ABI): prepare peak {d}, combined peak {d}, capacity {d} bytes\n", .{ prepare_peak, workspace.peak, memory.len });
+        }
+        try wiped(&w);
+        // Output borrows expire here, never inspect outcome after reset.
+        workspace.reset();
+        for (memory) |byte| try testing.expectEqual(@as(u8, 0), byte);
+    }
+}
+
+test "largest padded request fits the fixed workspace for the pinned transaction" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    var parsed = try zhww.btc_psbt.Psbt.parse(a, f.raw);
+    const padding = try a.alloc(u8, review_mod.max_request_bytes - f.raw.len - 5);
+    @memset(padding, 0xab);
+    var global = std.ArrayList(u8).empty;
+    try global.appendSlice(a, parsed.global_raw);
+    try global.appendSlice(a, &.{ 1, 0xfa }); // unknown global key, preserved verbatim
+    try zhww.btc_transaction.writeVarBytes(&global, a, padding);
+    parsed.global_raw = try global.toOwnedSlice(a);
+    const padded = try zhww.btc_psbt.Psbt.serializeWith(a, parsed, &.{&.{}});
+    try testing.expectEqual(@as(usize, review_mod.max_request_bytes), padded.len);
+    var memory: [zhww.memory_budget.workspace_bytes]u8 align(64) = undefined;
+    var workspace = zhww.workspace.Workspace.init(&memory);
+    defer workspace.reset();
+    var w: Workflow = .{};
+    try w.begin(workspace.allocator(), evidence(), &f.seed, padded, .regtest, 0);
+    const prepare_peak = workspace.peak;
+    try approve(&w);
+    const outcome = try signTest(&w, workspace.allocator(), padded, 1102);
+    try testing.expectEqualSlices(u8, f.expected_tx, outcome.result.final_tx.?);
+    try testing.expectEqual(@as(usize, 0), workspace.failures);
+    try testing.expect(std.mem.indexOf(u8, outcome.signed_psbt, padding) != null);
+    std.debug.print("Approved BTC padded 64 KiB (host ABI): prepare peak {d}, combined peak {d} bytes\n", .{ prepare_peak, workspace.peak });
+    try wiped(&w);
+}
+
+test "workspace exhaustion during prepare and post-approval revalidation wipes the session" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    var tiny: [1]u8 = undefined;
+    var workspace = zhww.workspace.Workspace.init(&tiny);
+    var w: Workflow = .{};
+    try testing.expectError(error.OutOfMemory, w.begin(workspace.allocator(), evidence(), &f.seed, f.raw, .regtest, 0));
+    try wiped(&w);
+    workspace.reset();
+    var memory: [zhww.memory_budget.workspace_bytes]u8 align(64) = undefined;
+    workspace = zhww.workspace.Workspace.init(&memory);
+    defer workspace.reset();
+    w = .{};
+    try w.begin(workspace.allocator(), evidence(), &f.seed, f.raw, .regtest, 0);
+    try approve(&w);
+    _ = try workspace.allocator().alloc(u8, memory.len - workspace.fba.end_index);
+    var mock: MockEntropy = .{};
+    var rng = mock.rng();
+    try testing.expectError(error.OutOfMemory, w.sign(workspace.allocator(), f.raw, 1102, &rng));
+    try testing.expectEqual(@as(usize, 0), mock.calls);
+    try testing.expect(workspace.failures > 0);
+    try wiped(&w);
+}
+
+test "allocation failure after entropy acquisition releases the signing context and seed" {
+    const ExhaustOnEntropy = struct {
+        workspace: *zhww.workspace.Workspace,
+        calls: usize = 0,
+        fn read(raw: *anyopaque) error{Unavailable}!zhww.rng.Word {
+            const self: *@This() = @ptrCast(@alignCast(raw));
+            self.calls += 1;
+            if (self.calls == 8) {
+                const available = self.workspace.fba.buffer.len - self.workspace.fba.end_index;
+                _ = self.workspace.allocator().alloc(u8, available) catch return error.Unavailable;
+            }
+            return .{ .ready = @intCast(self.calls) }; // test-only fault injection
+        }
+    };
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    var memory: [zhww.memory_budget.workspace_bytes]u8 align(64) = undefined;
+    var workspace = zhww.workspace.Workspace.init(&memory);
+    defer workspace.reset();
+    var w: Workflow = .{};
+    try w.begin(workspace.allocator(), evidence(), &f.seed, f.raw, .regtest, 0);
+    try approve(&w);
+    var mock: ExhaustOnEntropy = .{ .workspace = &workspace };
+    var rng: zhww.rng.Rng = .{ .source = .{ .context = &mock, .read_word = ExhaustOnEntropy.read } };
+    try testing.expectError(error.OutOfMemory, w.sign(workspace.allocator(), f.raw, 1102, &rng));
+    try testing.expectEqual(@as(usize, 8), mock.calls);
+    try wiped(&w);
+    var lease = try zhww.secp256k1.SigningLease.begin(&@as([32]u8, @splat(0x77)));
+    lease.end();
+}
+
 test "no signature before all pages and physical event sequence" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

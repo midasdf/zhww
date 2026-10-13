@@ -10,6 +10,8 @@
 //!   I-3 the sighash is computed independently by apps and by core (dual-computation principle)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+pub const workspace = @import("security/workspace.zig");
+pub const memory_budget = @import("security/memory_budget.zig");
 pub const rng = @import("security/rng.zig");
 pub const boot_policy = @import("security/boot_policy.zig");
 pub const approval = @import("security/approval.zig");
@@ -59,6 +61,8 @@ pub const evm_abi = @import("apps/evm/abi.zig");
 pub const evm_clear_signing = @import("apps/evm/clear_signing.zig");
 
 test {
+    _ = workspace;
+    _ = memory_budget;
     _ = rng;
     _ = boot_policy;
     _ = approval;

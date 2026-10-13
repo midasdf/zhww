@@ -1,5 +1,30 @@
 # Next-session handoff
 
+## Latest bounded-memory work
+
+Remote `main` was confirmed synchronized at `1794466` before continuing. New work adds
+`security/workspace.zig` (fixed allocator, high-water/failure counters and whole-buffer reset),
+`security/memory_budget.zig`, compile-only `memory_layout.zig` and dependency-free Python
+ELF inventory reader/tests. `zig build memory` reads Cortex-M33 target ABI sizes; CI checks it.
+See [12-rp2350-memory-budget.md](12-rp2350-memory-budget.md).
+
+Provisional target inventory: 493,104 bytes counted including unvalidated stack/HAL reserves,
+39,376 bytes unallocated margin. This is NOT a linked-image fit or transitive stack proof. Place
+large workflow/ingress/workspace/framebuffer objects in dedicated stable storage, not the target
+stack. The compile-only smoke helper is not a real main loop/memory layout.
+
+Host approved-BTC workload checks use only a 128 KiB fixed workspace for request processing
+and result allocations. Peaks: 2,244 bytes for the small pinned Core request; 99,722 bytes for that
+transaction padded to exactly 64 KiB. Results match the pinned transaction; unknown padding is
+preserved. Repeated reset sessions do not accumulate allocations, and the whole buffer is erased.
+OOM at prepare, post-approval revalidation and post-entropy signer allocation wipes the owned
+session and returns no result. These workloads are not a worst-case bound for every 64 KiB PSBT.
+
+Verification: 432 Zig tests in four modes, four Python reader tests, Pico compile checks, target
+inventory and CLI build. Still no real target/OTP/HAL/TRNG/security attribution. Next: actual
+Secure/NS link/map and Zig/C/IRQ stack upper bounds, independent signing-plan validation,
+explicit-context isolation and hardware drivers. Development remains reflashable.
+
 ## Latest entropy/context/key-lifecycle hardening
 
 Follow-up to `6a263ec` adds `security/rng.zig`, mandatory RNG injection in approved BTC

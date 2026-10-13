@@ -20,11 +20,12 @@
 | Implemented (transport) | **BC-UR** (Bytewords standard/uri/minimal, CRC-32, single-part and multi-part encode/decode, reconstruction from out-of-order parts with duplicates) |
 | Implemented (EVM) | RLP encoding and decoding / EIP-55 checksummed addresses / **EIP-155 (legacy) and EIP-1559 (type 2) signing** (both are signed and then verified) / EIP-191 `personal_sign` / **EIP-712 typed data** (dependency sorting for encodeType, arrays, nesting, domain inference) / **ABI decoding** (canonical form only) / **ERC-7730 clear signing** (descriptor parsing, function matching, generation of human-readable display items, warnings for dangerous patterns) |
 | Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, single-use signing-session orchestration, and bounded entropy interface. Approved BTC signing requires explicit entropy for context blinding and erases preallocated C-context backing memory. `btc_approved_sign.Workflow` connects canonical bounded review to actual P2WPKH-input PSBT signing, tested against the pinned Core vector with synthetic trusted events. **Not integrated with CLI signing or target HAL/TrustZone**. See [RP2350 security design](../docs/11-rp2350-security.md). |
-| Tests | **All 425 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall (412 previous tests plus 13 RNG/context/key-wipe and failure-integration tests). They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
+| Tests | **All 432 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall (425 previous tests plus 7 workspace/inventory and bounded-memory integration tests). They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
 | Not implemented | Target HAL and device main loop; physical display/approval/sign gate; session-wide secret erasure; P2TR/P2WSH integration in the normal PSBT workflow; EVM clear-signing integration; real-hardware Signet/Sepolia flow; MUR fountain recovery. |
 
 ```bash
-zig build test     # 425 tests, including vectors, approved BTC, entropy failure and wipe
+zig build test     # 432 tests, including bounded-workspace and memory-failure tests
+zig build memory   # provisional Cortex-M33 SRAM inventory; NOT a linked fit/stack proof
 ```
 
 ## Dependencies
@@ -37,6 +38,17 @@ zig build test     # 425 tests, including vectors, approved BTC, entropy failure
 > RIPEMD-160 is not in the Zig standard library and may not be available on the
 > target either (Raspberry Pi OS + OpenSSL 3), so it is **implemented here**
 > (`src/core/crypto/ripemd160.zig`). Verified against official test vectors.
+
+## Bounded memory checks
+
+The approved BTC workflow is tested with a **128 KiB fixed workspace**, without allocator
+fallback, including a pinned Core request padded to exactly 64 KiB. Failure during prepare,
+post-approval revalidation and post-entropy signing allocation leaves no returned result and wipes
+the owned session. Workspace reset erases all backing bytes after output borrows expire.
+
+`zig build memory` compiles and reads a Cortex-M33 ABI inventory without target execution.
+Its stack/HAL reservations are **not measured upper bounds**; real linked-image/stack verification
+is still a release blocker. See [RP2350 memory budget](../docs/12-rp2350-memory-budget.md).
 
 ## Module layout
 

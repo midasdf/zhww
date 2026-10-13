@@ -57,6 +57,7 @@ or hardware-wallet flow is done. The remaining architecture work is tracked in t
 | I-2 key isolation and I-3 independent hash comparison | ⬜ Not started |
 | Session-wide secret erasure | 🧩 Owned seed/master/intermediate-key and preallocated C-context backing erasure tested; caller-copy, by-value API, C internal stacks/registers and target-spill erasure remain open |
 | Secure entropy / context blinding | 🧩 Bounded RNG interface, mandatory approved-BTC context blinding and randomized/verified BIP340 primitive tested with mocks; actual TRNG HAL and approved Taproot integration remain open |
+| SRAM/stack budget | 🧩 Fixed 128 KiB workspace and failure tests; Cortex-M33 ABI inventory is reproducible with `zig build memory`. Linked image, transitive Zig/C/IRQ stacks and HAL/camera buffers remain open ([details](12-rp2350-memory-budget.md)) |
 | On-device screen UI and QR send/receive | ⬜ Not started (HAL and hardware verification required) |
 | Development CLI | ✅ Implemented as a development tool; signing commands sign immediately and are not the device flow |
 | CI (build and tests on Linux) | ✅ Done (GitHub Actions. On the same Linux as the device it verifies the tests, the CLI, Core-vector signing, the UR round trip and the FAT32 microSD handoff on every run) |
