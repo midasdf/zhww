@@ -50,12 +50,12 @@ or hardware-wallet flow is done. The remaining architecture work is tracked in t
 | EIP-712 (typed data) | 🧩 Hash/sign library matches known and independent values; not integrated with approval UI |
 | ERC-7730 (clear signing) and ABI decoding | 🧩 Renderer tests pass; not connected to EVM signing or authenticated descriptor provisioning |
 | **EVM transaction signing (Legacy / EIP-1559)** | 🧩 Signatures match independent values; CLI has no approval gate |
-| Screen UI layer (layouts, QR encoder, PNG preview) | 🧩 Rendering components and host previews pass; there is no approval state machine |
+| Screen UI layer (layouts, QR encoder, PNG preview) | 🧩 Rendering components and host previews pass; not yet connected to the approval gate |
 | Mutation and fuzz tests on broken input | ✅ Present; the 2026-10-13 review still found additional issues |
 | Sending on the real device (signet) | ⬜ Not started (hardware required) |
-| Immutable prepare → display → physical approval → sign state machine | ⬜ Not started (architecture work; can be developed and tested on the host first) |
+| Immutable prepare → display → physical approval → sign state machine | 🧩 Host-tested owned-input/page gate and mock-signer orchestration; canonical BTC/EVM display/sign and physical HAL integration remain open ([design](11-rp2350-security.md)) |
 | I-2 key isolation and I-3 independent hash comparison | ⬜ Not started |
-| Session-wide secret erasure | ⬜ Not started |
+| Session-wide secret erasure | 🧩 Owned backing-memory erasure tested; derived-key, caller-copy, C-context and target-stack erasure remain open |
 | On-device screen UI and QR send/receive | ⬜ Not started (HAL and hardware verification required) |
 | Development CLI | ✅ Implemented as a development tool; signing commands sign immediately and are not the device flow |
 | CI (build and tests on Linux) | ✅ Done (GitHub Actions. On the same Linux as the device it verifies the tests, the CLI, Core-vector signing, the UR round trip and the FAT32 microSD handoff on every run) |
@@ -66,7 +66,7 @@ The next tasks do not require target hardware and must precede HAL work.
 
 | What remains | Type | Reason |
 |---|---|---|
-| Approval state machine and immutable approved request | **Release blocker** | Signing must be impossible before complete display and physical approval |
+| Integrate approval prototype with canonical display and signing | **Release blocker** | Mock-signer tests do not prevent direct BTC/EVM signing or establish display completeness |
 | Key isolation and independent signing-hash comparison | **Release blocker** | The documented I-2/I-3 boundaries do not exist in the current code |
 | Session-wide secret erasure | **Release blocker** | Temporary buffer wipes do not erase master/derived/session copies |
 | Integrate P2TR/P2WSH into PSBT | **Required feature integration** | Current Core tests call standalone modules |

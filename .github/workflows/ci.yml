@@ -39,10 +39,12 @@ jobs:
         working-directory: firmware
         run: zig build test
 
-      - name: Tests in ReleaseSafe too
+      - name: Tests in every release optimization mode (including approval and wipe)
         working-directory: firmware
         run: |
-          zig test tests.zig -OReleaseSafe $(pkg-config --cflags --libs libsecp256k1) -lc
+          for MODE in ReleaseSafe ReleaseFast ReleaseSmall; do
+            zig build test -Doptimize="$MODE" --summary all
+          done
 
       - name: Compile check for Pico (RP2040 / RP2350)
         working-directory: firmware

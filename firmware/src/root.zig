@@ -10,6 +10,10 @@
 //!   I-3 the sighash is computed independently by apps and by core (dual-computation principle)
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+pub const boot_policy = @import("security/boot_policy.zig");
+pub const approval = @import("security/approval.zig");
+pub const secret_session = @import("security/secret_session.zig");
+pub const signing_session = @import("security/signing_session.zig");
 pub const errors = @import("core/errors.zig");
 pub const base58 = @import("core/encoding/base58.zig");
 pub const bech32 = @import("core/encoding/bech32.zig");
@@ -52,6 +56,10 @@ pub const evm_abi = @import("apps/evm/abi.zig");
 pub const evm_clear_signing = @import("apps/evm/clear_signing.zig");
 
 test {
+    _ = boot_policy;
+    _ = approval;
+    _ = secret_session;
+    _ = signing_session;
     _ = base58;
     _ = bech32;
     _ = hashes;

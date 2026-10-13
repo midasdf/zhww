@@ -18,6 +18,30 @@
 const std = @import("std");
 const zhww = @import("src/root.zig");
 
+/// Compile the security orchestration on both MCUs. Synthetic events and a hash-only
+/// callback: this is NOT an actual hardware approval or signature implementation.
+export fn zhww_smoke_security(evidence: *const zhww.boot_policy.Evidence, seed: *const [64]u8) usize {
+    var session: zhww.signing_session.SigningSession(128, 4) = .{};
+    defer session.abort();
+    session.begin(evidence.*, seed, "request", &.{"review page"}, 0) catch return 0;
+    session.displayed(0, "review page", 1) catch return 0;
+    session.button(false, 2) catch return 0;
+    session.button(true, 3) catch return 0;
+    session.poll(1002) catch return 0;
+    session.button(false, 1003) catch return 0;
+    var sink: SecuritySmokeSink = .{};
+    session.sign("request", 1004, &sink) catch return 0;
+    return sink.digest[0];
+}
+
+const SecuritySmokeSink = struct {
+    digest: [32]u8 = undefined,
+    pub fn sign(self: *@This(), request: []const u8, seed: []const u8) !void {
+        _ = seed;
+        std.crypto.hash.sha2.Sha256.hash(request, &self.digest, .{});
+    }
+};
+
 /// Reference address generation (BIP84) through PSBT signing so that real code gets generated.
 export fn zhww_smoke(
     mnemonic_ptr: [*]const u8,

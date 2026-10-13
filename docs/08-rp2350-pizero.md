@@ -6,6 +6,15 @@
 
 ---
 
+## Production security prerequisites
+
+The hardware-free [RP2350 security architecture](11-rp2350-security.md) now defines an
+**A4-only production candidate**, signed boot, TrustZone isolation, debug/unused boot-interface
+lockdown, glitch detection and stateless Secure-SRAM secrets. Board branding does not establish
+silicon stepping. Verify the actual chip before production provisioning. The policy and approval
+prototypes pass host tests, but no OTP configuration, Secure/Non-secure image or HAL is implemented.
+Development UF2 drag-and-drop must not be confused with the planned locked production update path.
+
 ## 1. Why this board
 
 It achieves both "no wireless" and "no soldering" while avoiding the stock shortage of the Pi Zero 1.3 and the soldering of a pin header.
@@ -216,7 +225,7 @@ It has been confirmed that a confirmation screen showing "destination, amount an
 
 ## 6. What does not need changing
 
-- `core/` and `apps/` (BIP39/BIP32, addresses, PSBT, signing, EVM, ERC-7730, UR) stay **as they are**
+- Cryptographic/encoding components can be reused, but the key boundary and authoritative display/sign flow **must change** for TrustZone isolation; see [security architecture](11-rp2350-security.md)
 - The 391 tests, including the official test vectors, continue to run on the host to prevent regressions
 - The development CLI stays as it is too (used for host-side verification and vector generation)
 

@@ -1,5 +1,25 @@
 # Next-session handoff
 
+## Latest hardware-free RP2350 security work
+
+The base review fixes are committed in `1fbcc39`. Subsequent local work adds four modules under
+`firmware/src/security/`: semantic boot policy, owned-request/page approval gate, erasable secret
+session, and mock-signer orchestration. See [11-rp2350-security.md](11-rp2350-security.md).
+No push, target provisioning, signed UF2, hardware execution or real-funds operation was performed.
+
+Verification: **405/405** tests passed in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall;
+RP2040/RP2350 compile checks (including the new orchestration) and CLI build passed on macOS.
+Use installed Zig 0.17.0 (`/opt/homebrew/bin/zig`) in `/Users/midasdf/OSHWW/firmware` on this machine.
+
+Next: integrate the prototype with a frozen canonical BTC request and complete display traversal,
+then a trusted signer with signature verification and full key/context wipe. The existing CLI still
+signs immediately. Collect boot evidence and GPIO/display events only from a future Secure HAL;
+caller-supplied booleans and mock events are not hardware security. Target prerequisites include
+A4 verification, Secure/NS linked images, SRAM/stack budget, TRNG, signed update/rollback policy,
+OTP readback and deliberate NS/DMA access rejection. Do not provision OTP before recovery review.
+
+The snapshot below is historical context from the previous internal review.
+
 ## State snapshot
 
 - Date: 2026-10-13
