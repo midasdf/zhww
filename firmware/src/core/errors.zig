@@ -32,6 +32,8 @@ pub const Error = error{
     NoMatchingKey,
     /// Signature verification failed
     SignatureInvalid,
+    /// Independently prepared messages disagree with primary signer computation.
+    SigningPlanMismatch,
     /// Memory allocation failed (parsing layer only; never happens in key-handling core code)
     OutOfMemory,
 };

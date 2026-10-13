@@ -30,7 +30,7 @@ CI runs both the reader tests and target inventory.
 
 | Term | Bytes | Basis |
 |---|---:|---|
-| Owned BTC workflow | 78,800 | Target ABI type size, includes frozen request, page commitments, seed backing and review pages |
+| Owned BTC workflow | 78,856 | Target ABI type size, includes frozen request, page/plan commitments, seed backing and review pages/totals |
 | Fixed workspace control | 20 | Target ABI type size |
 | RNG control | 12 | Target ABI type size; hardware-provider state is not included |
 | Preallocated secp256k1 context owner | 4,160 | Target ABI size for the 4,096-byte capacity plus pointer/alignment padding |
@@ -39,12 +39,14 @@ CI runs both the reader tests and target inventory.
 | One 240×240 RGB565 framebuffer | 115,200 | 240 × 240 × 2; no double buffering |
 | **Stack reserve — unvalidated** | 65,536 | Future Zig/C/interrupt stacks combined; NOT compiler-measured maximum |
 | **HAL reserve — unvalidated** | 32,768 | Future driver/DMA/transport/control state; NOT an implemented HAL |
-| **Planned total** | **493,104** | Sum of the counted terms |
-| **Unallocated margin** | **39,376** | 532,480 − 493,104 (about 38.5 KiB) |
+| **Planned total** | **493,160** | Sum of the counted terms |
+| **Unallocated margin** | **39,320** | 532,480 − 493,160 (about 38.4 KiB) |
 
-The review object is 11,024 bytes **inside** the workflow. It is reported for visibility but must
+The review object is 11,048 bytes **inside** the workflow. It is reported for visibility but must
 not be counted twice. Additional automatic/local review copies do use stack and are not covered
-by that embedded size alone.
+by that embedded size alone. The [independent P2WPKH guard](13-independent-p2wpkh-guard.md)
+also uses bounded temporary reader/maps/plan state on stack; these must be included in the
+future transitive stack measurement, not assumed free because the guard allocates no heap.
 
 The workflow, ingress, workspace and framebuffer must be **dedicated stable storage**, not
 large local stack objects in the final main loop. The compile-only Pico smoke helper still uses
@@ -102,8 +104,8 @@ assert the fixed capacity, not historical exact values.
 
 **This is not a worst-case PSBT bound.** Many-input/output maps, non-witness transactions,
 unknown-field distributions and allocation fragmentation can cost more than one large padding
-field. The approved input policy is still P2WPKH/SIGHASH_ALL/known amounts/at most 64 review
-pages. A syntactically valid request under the 64 KiB file limit may still be refused for workspace
+field. The approved input policy is native-P2WPKH/SIGHASH_ALL/witness_utxo-only known amounts/
+at most 64 review pages, with the independent guard's additional map-field limits. A syntactically valid request under the 64 KiB file limit may still be refused for workspace
 exhaustion. Never silently truncate a request, a destination, a warning or an output to make it fit.
 
 ## 5. Failure checks

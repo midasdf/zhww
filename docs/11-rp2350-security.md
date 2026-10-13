@@ -58,8 +58,9 @@ Do not retain NS pointers across validation, review and signing. Gate/session ob
 must live in Secure memory: ordinary Zig fields and function visibility provide no isolation.
 
 The current BTC/EVM APIs still receive private keys. The prototype does **not** satisfy I-2 or
-I-3: a small gate cannot replace canonical validation, independent sighash computation or
-chain-specific display/sign integration. Large PSBT/FAT32/QR code should not all become trusted
+project-wide I-3. The approved native-P2WPKH path now has an [independent wire-parser/BIP143
+guard](13-independent-p2wpkh-guard.md), but other inputs/EVM/direct APIs and actual key/NS
+isolation remain open. Large PSBT/FAT32/QR code should not all become trusted
 merely to avoid implementing a gateway.
 
 ## 4. Implemented without hardware
@@ -73,6 +74,7 @@ Files under `firmware/src/security/`:
 | `secret_session.zig` | Pointer-owned backing storage, bounded reservation, full-capacity secure erasure, borrow-memory tests | Does not erase caller copies, stacks, registers, C contexts or power-loss remanence |
 | `signing_session.zig` | Boot-policy check → seed ownership → review → approval → callback → unconditional wipe; no callback on invalid approval | Generic trusted callback, now used by the separate approved BTC workflow; not a physical HAL or secure gateway |
 | `rng.zig` | Nonblocking status/read interface, bounded poll budget, full-output erasure and terminal failure latch | Mock-tested only; provider status is not hardware attestation or an entropy-quality test |
+| `p2wpkh_guard.zig` | Independent, allocation-free PSBTv0/native-P2WPKH/SIGHASH_ALL wire parsing and streaming BIP143 messages; numeric totals/fee cross-check | Narrow subset, shared SHA/compiler/CPU, no target isolation or independent address rendering ([scope](13-independent-p2wpkh-guard.md)) |
 | `workspace.zig` / `memory_budget.zig` | Measured fixed buffer with no fallback, reset erasure and provisional target ABI inventory | Host workload peaks and target type sizes, not a full linked-image/transitive-stack proof; see [memory budget](12-rp2350-memory-budget.md) |
 
 The approval flow binds exact request bytes and rendered page bytes. It does **not** establish that
@@ -99,11 +101,12 @@ no command-line flag that turns it into a physically approved hardware wallet.
 ### Approved BTC workflow (host prototype)
 
 `firmware/src/apps/btc/review.zig` and `approved_sign.zig` now connect the gate to the real
-pointer-borrowing `signPsbtWithKeys` entry point, with integration tests in
+independent-plan-checked `signPsbtWithPlan` entry point, with integration tests in
 `firmware/tests/approved_btc_test.zig`. Legacy `signPsbtBytes` remains a compatibility wrapper.
 
 - Freeze at most 64 KiB before parsing. Retain no transport pointer in the workflow.
-- Initially accept only non-finalized **P2WPKH inputs**, SIGHASH_ALL, and known amounts.
+- Accept only non-finalized **native P2WPKH inputs**, SIGHASH_ALL, and known witness_utxo
+  amounts. Redundant non_witness_utxo is deliberately outside the independent guard's policy.
   Other input types, unknown amounts, excess pages, unknown output scripts and invalid totals
   are refused before seed ownership. No partial-signing output is published.
 - Show network, version, locktime, input/output counts, sighash policy, every input txid/vout/
@@ -115,16 +118,20 @@ pointer-borrowing `signPsbtWithKeys` entry point, with integration tests in
 - A Secure-selected network is displayed and committed; PSBTs do not authenticate networks.
   Witness UTXO amounts are host-supplied and **not independently checked against a blockchain**;
   review pages explicitly warn about this.
-- Immediately before signing, rebuild the review from owned bytes and compare the ordered-page
-  digest. Then run the existing signer (which verifies each generated ECDSA signature), require
-  signatures for every input and check the fee. Consume approval before the operation, return
+- Before approval and again before signing, independently parse the wire request and compute
+  each BIP143 message; compare counts/totals/fee with primary review and commit the plan.
+  Before entropy, rebuild/compare both presentation and independent plan from owned bytes.
+  The primary signer preflights EVERY message before key lookup/signatures, then compares the
+  actual key-derived message again directly before C signing and verifies every ECDSA result.
+  Require signatures for every input and the reviewed fee. Consume approval before the operation, return
   output only after success, and wipe session-owned seed/input plus the adapter's master-key
   backing copy on all exits. Result allocations belong to a caller-owned arena, discarded on error.
 - The pinned Core transaction matches byte-for-byte after synthetic review/approval. Tests also
   exercise pre-approval refusal, request mutation, network changes, media removal, timeout,
   wrong wallet, multiple outputs, unsupported schemes and rendering on both screen sizes.
 
-This is **same-parser revalidation, not I-3 independent sighash computation**. Owned master,
+Presentation revalidation still uses the primary parser; [independent message validation](13-independent-p2wpkh-guard.md)
+now protects only the approved native-P2WPKH subset, not project-wide I-3 or physical isolation. Owned master,
 derivation intermediates and C-context backing storage are erased, but by-value parameters,
 compiler spills/registers and C internal temporary stacks are still not proven erased. TrustZone, physical HAL, seed entry,
 periodic polling and result transport are still pending. Direct CLI signing remains separate.

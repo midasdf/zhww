@@ -9,11 +9,13 @@ const boot = @import("../../security/boot_policy.zig");
 const session_mod = @import("../../security/signing_session.zig");
 const rng_mod = @import("../../security/rng.zig");
 const secp256k1 = @import("../../core/crypto/secp256k1.zig");
+const guard = @import("../../security/p2wpkh_guard.zig");
 
 pub const Workflow = struct {
     session: session_mod.SigningSession(review_mod.max_request_bytes, review_mod.max_pages) = .{},
     review: review_mod.Review = .{},
     review_digest: [32]u8 = @splat(0),
+    plan_digest: [32]u8 = @splat(0),
     network: address.Network = .mainnet,
 
     /// Secure caller must choose the network (PSBT does not authenticate a network),
@@ -28,6 +30,9 @@ pub const Workflow = struct {
         defer arena.deinit();
         const frozen = try arena.allocator().dupe(u8, raw);
         try self.review.build(arena.allocator(), frozen, network);
+        const plan = try guard.Plan.fromPsbt(frozen);
+        try compareReview(&self.review, &plan);
+        self.plan_digest = plan.digest();
         self.review_digest = self.review.digest();
         self.network = network;
         var pages: [review_mod.max_pages][]const u8 = undefined;
@@ -62,6 +67,7 @@ pub const Workflow = struct {
             .allocator = allocator,
             .network = self.network,
             .expected_digest = self.review_digest,
+            .expected_plan_digest = self.plan_digest,
             .rng = rng,
         };
         try self.session.sign(raw, now, &adapter);
@@ -72,23 +78,35 @@ pub const Workflow = struct {
         self.session.abort();
         self.review = .{};
         std.crypto.secureZero(u8, &self.review_digest);
+        std.crypto.secureZero(u8, &self.plan_digest);
     }
 };
+
+fn compareReview(review: *const review_mod.Review, plan: *const guard.Plan) !void {
+    if (review.input_count != plan.count or review.output_count != plan.output_count or
+        review.total_input != plan.total_input or review.total_output != plan.total_output or
+        review.fee != plan.fee) return error.SigningPlanMismatch;
+}
 
 const Adapter = struct {
     allocator: std.mem.Allocator,
     network: address.Network,
     expected_digest: [32]u8,
+    expected_plan_digest: [32]u8,
     rng: *rng_mod.Rng,
     output: ?signing.SignedPsbt = null,
 
     pub fn sign(self: *Adapter, frozen: []const u8, seed: []const u8) !void {
-        // Reparse ONLY owned input and compare the complete presentation before signing.
-        // Same parser, NOT I-3 independent computation. Never infer chain security from this.
+        // Reparse ONLY owned input. Presentation still uses the primary parser, while
+        // the guard separately scans raw wire bytes and streams BIP143 messages.
         var review: review_mod.Review = .{};
         try review.build(self.allocator, frozen, self.network);
         if (!std.crypto.timing_safe.eql([32]u8, review.digest(), self.expected_digest))
             return error.ReviewMismatch;
+        const plan = try guard.Plan.fromPsbt(frozen);
+        try compareReview(&review, &plan);
+        if (!std.crypto.timing_safe.eql([32]u8, plan.digest(), self.expected_plan_digest))
+            return error.SigningPlanMismatch;
         var blinding_seed: [32]u8 = undefined;
         defer std.crypto.secureZero(u8, &blinding_seed);
         try self.rng.fill(&blinding_seed);
@@ -96,7 +114,7 @@ const Adapter = struct {
         defer lease.end();
         var keys = try signing.KeySource.fromSeed(seed);
         defer keys.wipe();
-        const outcome = try signing.signPsbtWithKeys(self.allocator, frozen, &keys);
+        const outcome = try signing.signPsbtWithPlan(self.allocator, frozen, &keys, plan.hashes[0..plan.count]);
         if (outcome.result.unsigned_inputs.len != 0 or
             outcome.result.partial_sigs.len != review.input_count) return error.NoMatchingKey;
         if (outcome.result.fee == null or outcome.result.fee.? != review.fee)

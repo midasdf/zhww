@@ -1,15 +1,16 @@
 //! Public API of the zhww firmware.
 //!
-//! Layer separation (docs/02-architecture.md):
-//!   core/  chain-agnostic: the final authority over keys, randomness, signing and display.
-//!   apps/  chain-specific: never holds key material.
+//! Target layer separation (docs/02-architecture.md), not current hardware guarantees:
+//!   core/  chain-agnostic primitives; apps/ chain-specific logic still receives keys.
 //!
-//! Invariants:
-//!   I-1 core knows nothing about any chain
-//!   I-2 apps never hold key material
-//!   I-3 the sighash is computed independently by apps and by core (dual-computation principle)
+//! I-1 core knows nothing about any chain.
+//! I-2 key isolation is pending. I-3 is not enforced project-wide: the separate
+//! approved native-P2WPKH workflow compares independently parsed/computed messages,
+//! but other BTC/EVM/development APIs are unguarded and there is no TrustZone HAL.
+//! See docs/13-independent-p2wpkh-guard.md for the precise implemented subset.
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+pub const p2wpkh_guard = @import("security/p2wpkh_guard.zig");
 pub const workspace = @import("security/workspace.zig");
 pub const memory_budget = @import("security/memory_budget.zig");
 pub const rng = @import("security/rng.zig");
@@ -61,6 +62,7 @@ pub const evm_abi = @import("apps/evm/abi.zig");
 pub const evm_clear_signing = @import("apps/evm/clear_signing.zig");
 
 test {
+    _ = p2wpkh_guard;
     _ = workspace;
     _ = memory_budget;
     _ = rng;

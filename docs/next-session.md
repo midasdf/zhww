@@ -1,5 +1,33 @@
 # Next-session handoff
 
+## Latest independent P2WPKH guard
+
+Follow-up to `7ac030a` adds `security/p2wpkh_guard.zig`, importing only std (CI dependency
+tripwire). It independently scans raw PSBTv0/canonical transaction bytes and streams BIP143
+hashes, without application parsers/serializers/hash helpers or allocation. Scope: native P2WPKH,
+SIGHASH_ALL, witness_utxo-only, 31 inputs/62 outputs/128 fields per map/64 KiB. Non-witness
+UTXO metadata (even redundant), finalized inputs and other schemes are rejected. See
+[13-independent-p2wpkh-guard.md](13-independent-p2wpkh-guard.md).
+
+Approved workflow compares independent counts/totals/fee with primary review, commits the
+plan before approval, and rebuilds it before entropy. `signPsbtWithPlan` checks EVERY primary
+message before input-key discovery/signatures, then rechecks the actual key-derived message
+immediately before C signing. Direct legacy APIs remain unguarded development paths.
+
+Verification: 443 Zig tests in four modes, five Python tool/dependency tests, Pico compile checks,
+target memory inventory, CLI build and BIP84/Core/fee-display/BC-UR/EIP-1559 CLI regressions.
+Official BIP143 hash and pinned Core final transaction
+match. Differential mutations: 468/512 accepted and all matched primary hashes; other mutations
+refused. Plan-corruption test refuses before entropy and wipes; malformed/truncated/duplicate/
+noncanonical/oversized input tests and all-input preflight test pass. Fixed workspace peaks remain
+2,244 / 99,722 bytes for the small/padded Core requests. Target provisional total is now 493,160
+bytes; margin 39,320. Guard temporaries are stack-resident, with transitive stack bounds still open.
+
+This is partial I-3 software diversity, NOT project-wide I-3, I-2, independent SHA/compiler/CPU,
+full BIP174/independent address rendering, actual physical approval or fault-injection resistance.
+Next: actual Secure/NS link and constrained gateway, explicit-context/key ownership boundaries,
+Zig/C/IRQ stack bounds and hardware HAL. No OTP changes; development remains reflashable.
+
 ## Latest bounded-memory work
 
 Remote `main` was confirmed synchronized at `1794466` before continuing. New work adds

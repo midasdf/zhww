@@ -16,7 +16,7 @@
 - **初期スコープ**: Bitcoin + EVM (Ethereum / ERC-20 / 主要L2)
 - **ハードウェア**: SeedSigner 互換の既成部品（**半田付け不要**、既製品を載せるだけ）
 - **想定コスト**: 1台あたり ¥8,000〜12,000 程度
-- **現状**: プロトコル処理と PC 用の開発ツールは実装済み（テスト **391 件**）。承認状態機械、実機 HAL、端から端までのデバイスファームウェアは未実装
+- **現状**: PC 上では、承認付き native P2WPKH 署名と独立した BIP143 検証経路まで実装済み（テスト **443 件**）。物理承認、実機 HAL／TrustZone、端から端までのデバイスファームウェアは未実装で、対象ボードでは未実行
 
 ---
 
@@ -92,15 +92,18 @@ zhww/
 
 | 項目 | 状態 |
 |---|---|
-| 設計ドキュメント | 作成済み（要求仕様・アーキテクチャ・BOM・チェーン対応・脅威モデル・ロードマップ・実機手順） |
+| 設計ドキュメント | 要求仕様・アーキテクチャ・BOM・チェーン対応・脅威モデル・ロードマップ・実機手順の草案あり。セキュリティ、メモリ、独立検証の設計とリリース条件は検証・更新中。 |
 | ファームウェア（Zig + libsecp256k1） | **Bitcoin**: BIP39、BIP32、アドレス生成、トランザクションと PSBT の解析、Legacy・BIP143 の署名と最終化、手数料とお釣りの判定、BC-UR、画面描画、QR エンコード・デコード、FAT32。**Taproot と 2-of-3 P2WSH は単独モジュールと相互運用テストのみで、`signPsbtBytes` には未統合。** **EVM**: RLP、EIP-55、EIP-155・EIP-1559、EIP-191、EIP-712、ABI、ERC-7730 の各モジュール。実機の承認フローには未統合。 |
-| テスト | **391 件すべて成功**（2026-10-13 レビュー後）。BTC の署名と単独のマルチシグ・Taproot 相互運用ベクタ、EVM の公式・独立ベクタ、転送、QR、FAT32、mutation/fuzz テストを含む。結果と限界は[レビュー報告](docs/10-security-audit-2026-10-13.md)を参照。 |
-| CI | GitHub Actions で Linux（実機と同じ環境）のビルド・テスト・CLI 動作を毎回検証。microSD の受け渡しは mtools と fsck.fat で端から端まで確認 |
+| セキュリティ基盤 | PC 上の承認付き native P2WPKH／SIGHASH_ALL フロー、所有する秘密情報と暗号コンテキストの消去、乱数・固定メモリの異常系、別パーサーによる BIP143 ハッシュ照合を実装。物理承認と実機の隔離は未実装。[設計](docs/11-rp2350-security.md)・[メモリ予算](docs/12-rp2350-memory-budget.md)・[独立検証の範囲](docs/13-independent-p2wpkh-guard.md)を参照。 |
+| テスト | **443 件すべて成功**（4つの最適化モード）。既存の署名・相互運用ベクタに加え、承認・消去・乱数／メモリ不足・独立検証・入力改変を検査。実機での動作や安全性の証明ではない。現在の詳細は[firmware](firmware/README.md)、過去の内部レビューは[報告書](docs/10-security-audit-2026-10-13.md)を参照。 |
+| CI | Linux ホストでの回帰テスト、Pico 向けコンパイル、Cortex-M33 の暫定メモリ予算、検査ツールと依存関係のチェックを実行。microSD イメージの受け渡しも mtools／fsck.fat で検査する。RP2350 実機での実行ではない。 |
 | 実機 | Linux 構成（**Pi Zero 2 WH**）は組立 [docs/03](docs/03-hardware-bom.md)・初期設定 [docs/07](docs/07-zero2w-setup.md)。**v0.2 の本命は無線なしの [RP2350-PiZero](docs/08-rp2350-pizero.md)**（Pi Zero 同寸・40pin 互換・microSD・**電池を積まない外部給電**・UF2） |
-| 次の作業 | 表示・承認・署名を分離する状態機械とセッション秘密情報の消去境界を実装し、P2TR/P2WSH と EVM clear signing を統合する。その後に RP2350 HAL と実機検証へ進む。 |
+| 次の作業 | Secure／Non-secure イメージのリンクと鍵へのアクセス制限、Zig／C／割り込みのスタック上限、物理画面・ボタン・TRNG・SD の HAL。その後に P2TR／P2WSH／EVM の承認・検証フローと実機テストを進める。 |
 
 ```bash
-cd firmware && zig build test
+cd firmware && zig build test      # 443 件
+zig build pico                     # コンパイル確認。実機では未実行
+zig build memory                   # 暫定の型サイズ・予約量。実機に収まることの証明ではない
 ```
 
 ---

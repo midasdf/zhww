@@ -19,12 +19,12 @@
 | Implemented (CLI) | `address` / `sign` / `show` (confirmation display before signing) / `screen` (preview of the device screen) / `walkthrough` (screen flow) / `card` (FAT32 image operations) / `mnemonic` (dice verification) / `ur` / `ur-decode` / `evm-sign` / `evm-show` |
 | Implemented (transport) | **BC-UR** (Bytewords standard/uri/minimal, CRC-32, single-part and multi-part encode/decode, reconstruction from out-of-order parts with duplicates) |
 | Implemented (EVM) | RLP encoding and decoding / EIP-55 checksummed addresses / **EIP-155 (legacy) and EIP-1559 (type 2) signing** (both are signed and then verified) / EIP-191 `personal_sign` / **EIP-712 typed data** (dependency sorting for encodeType, arrays, nesting, domain inference) / **ABI decoding** (canonical form only) / **ERC-7730 clear signing** (descriptor parsing, function matching, generation of human-readable display items, warnings for dangerous patterns) |
-| Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, single-use signing-session orchestration, and bounded entropy interface. Approved BTC signing requires explicit entropy for context blinding and erases preallocated C-context backing memory. `btc_approved_sign.Workflow` connects canonical bounded review to actual P2WPKH-input PSBT signing, tested against the pinned Core vector with synthetic trusted events. **Not integrated with CLI signing or target HAL/TrustZone**. See [RP2350 security design](../docs/11-rp2350-security.md). |
-| Tests | **All 432 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall (425 previous tests plus 7 workspace/inventory and bounded-memory integration tests). They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
+| Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, single-use signing-session orchestration, and bounded entropy interface. Approved BTC signing requires explicit entropy for context blinding and erases preallocated C-context backing memory. `btc_approved_sign.Workflow` connects bounded review to actual witness_utxo-only native-P2WPKH/SIGHASH_ALL signing and an allocation-free independent wire-parser/BIP143 guard. All messages are compared before signatures, then rechecked at the C signing boundary. See [guard scope](../docs/13-independent-p2wpkh-guard.md). **Not integrated with CLI signing or target HAL/TrustZone**. See [RP2350 security design](../docs/11-rp2350-security.md). |
+| Tests | **All 443 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall (432 previous tests plus 11 independent-guard and signing-boundary tests). They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
 | Not implemented | Target HAL and device main loop; physical display/approval/sign gate; session-wide secret erasure; P2TR/P2WSH integration in the normal PSBT workflow; EVM clear-signing integration; real-hardware Signet/Sepolia flow; MUR fountain recovery. |
 
 ```bash
-zig build test     # 432 tests, including bounded-workspace and memory-failure tests
+zig build test     # 443 tests, including independent BIP143 guard and mismatch refusal
 zig build memory   # provisional Cortex-M33 SRAM inventory; NOT a linked fit/stack proof
 ```
 
@@ -97,8 +97,11 @@ firmware/
 
 ## Target invariants (not yet enforced end to end)
 
-The current host-side implementation does not yet satisfy I-2 or I-3. Application modules receive
-private keys, and there is no independent second signing-hash computation. See the
+The implementation does not yet satisfy I-2 or project-wide I-3. Application modules still receive
+private keys. The separate approved native-P2WPKH path now performs independent wire parsing/
+BIP143 message construction and all-input/signing-boundary comparison, but there is no target
+key isolation and other BTC/EVM/direct development APIs are unguarded. See the
+[guard scope](../docs/13-independent-p2wpkh-guard.md) and historical
 [2026-10-13 review](../docs/10-security-audit-2026-10-13.md).
 
 | ID | Target property |

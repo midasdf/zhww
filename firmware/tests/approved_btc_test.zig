@@ -69,6 +69,7 @@ fn wiped(w: *Workflow) !void {
     try testing.expectEqualSlices(u8, &@as([64]u8, @splat(0)), &w.session.secret.memory);
     for (w.session.gate.request) |b| try testing.expectEqual(@as(u8, 0), b);
     try testing.expectEqual(@as(usize, 0), w.review.count);
+    try testing.expectEqualSlices(u8, &@as([32]u8, @splat(0)), &w.plan_digest);
 }
 
 // Re-encode only the known global unsigned transaction for mutation tests.
@@ -303,6 +304,23 @@ test "approved BTC entropy failures consume approval and wipe without output" {
         try testing.expectError(error.InvalidState, w.sign(a, f.raw, 1103, &rng));
         try testing.expectEqual(calls, mock.calls);
     }
+}
+
+test "independent plan commitment mismatch refuses signing before entropy" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    var w: Workflow = .{};
+    try w.begin(a, evidence(), &f.seed, f.raw, .regtest, 0);
+    try approve(&w);
+    w.plan_digest[0] ^= 1; // trusted-state corruption simulation, not a public setter
+    var mock: MockEntropy = .{};
+    var rng = mock.rng();
+    try testing.expectError(error.SigningPlanMismatch, w.sign(a, f.raw, 1102, &rng));
+    try testing.expectEqual(@as(usize, 0), mock.calls);
+    try wiped(&w);
 }
 
 test "entropy is not requested before valid approval or after request mutation" {

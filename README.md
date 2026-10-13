@@ -16,7 +16,7 @@
 - **Initial scope**: Bitcoin + EVM (Ethereum / ERC-20 / major L2s)
 - **Hardware**: SeedSigner-compatible commodity parts, assembled without soldering
 - **Target cost**: roughly ¥8,000–13,000 (USD 55–90) per unit
-- **Status**: protocol primitives and host-side development tools are implemented and tested; the approval state machine, target HAL, and end-to-end device firmware are **not implemented**, and the firmware has **not yet run on the target hardware**
+- **Status**: protocol primitives and host tools are tested, including a separate approved native-P2WPKH workflow with an independent BIP143 guard. Physical approval, target HAL/TrustZone and end-to-end device firmware are **not implemented**, and the firmware has **not yet run on the target hardware**
 
 ---
 
@@ -97,16 +97,18 @@ zhww/
 
 | Item | State |
 |---|---|
-| Design documents | Complete (requirements, architecture, BOM, chain support, threat model, roadmap, device setup, port plan) |
+| Design documents | Working drafts present (requirements, architecture, BOM, chain support, threat model, roadmap, setup and port plan); security/memory/guard design and release blockers remain under review |
 | Firmware (Zig + libsecp256k1) | **Bitcoin**: BIP39 (incl. dice entropy), BIP32, address generation, transaction/PSBT parsing, legacy and BIP143 signing/finalization, fee/change analysis, BC-UR, screen rendering, QR encode/decode, and FAT32. **Taproot and 2-of-3 P2WSH are standalone signing modules with interoperability tests; they are not integrated into `signPsbtBytes`.** **EVM**: RLP, EIP-55, EIP-155/EIP-1559 signing, EIP-191 hashing, EIP-712, ABI decoding, and ERC-7730 rendering exist as separate modules; they are not connected by an on-device approval flow. |
-| Tests | **391 passing** after the 2026-10-13 review (BTC signatures and separate single-sig/multisig/Taproot interoperability vectors; EVM official and independent vectors; transport/QR/FAT32; mutation/fuzz tests). See the [review report](docs/10-security-audit-2026-10-13.md) for commands, results, and what these tests do not prove. |
-| CI | GitHub Actions builds and tests on Linux (the same environment as the target) on every push, including a full microSD round-trip verified with `mtools` and `fsck.fat` |
+| Security prototypes | Host approved native-P2WPKH/SIGHASH_ALL flow, owned secret/context erasure, mandatory bounded entropy, fixed-workspace tests and independent wire/BIP143 message comparison. No actual TrustZone/HAL or physical approval. See [security](docs/11-rp2350-security.md), [memory](docs/12-rp2350-memory-budget.md) and [guard scope](docs/13-independent-p2wpkh-guard.md). |
+| Tests | **443 passing** in four optimization modes, including the previous crypto/interoperability vectors plus approval, wipe, RNG/workspace failure, independent guard and mutation checks. Tests are not a target execution or security proof; see [firmware details](firmware/README.md) and the historical [review report](docs/10-security-audit-2026-10-13.md). |
+| CI | GitHub Actions runs Linux host regressions, bare-metal Pico compile checks, Cortex-M33 memory inventory and tool/dependency checks, plus the microSD image round-trip with `mtools`/`fsck.fat`. This is not RP2350 hardware execution. |
 | Hardware | Linux build: **Raspberry Pi Zero 2 WH** (assembly [docs/03](docs/03-hardware-bom.md), setup [docs/07](docs/07-zero2w-setup.md)). Main v0.2 target: **[Waveshare RP2350-PiZero](docs/08-rp2350-pizero.md)** — Pi Zero footprint, 40-pin header, microSD, no wireless, no onboard battery |
-| Next | Implement an immutable display/approval/sign state machine and secret-session wipe boundary, then integrate P2TR/P2WSH and EVM clear signing; after that, build the RP2350 HAL (SPI display, buttons, camera, TRNG, SD) and test on hardware. |
+| Next | Secure/NS linked images and constrained key gateway, actual Zig/C/IRQ stack bounds, physical display/input and TRNG/SD HAL; then guarded P2TR/P2WSH/EVM integration and real-hardware tests. |
 
 ```bash
-cd firmware && zig build test      # 391 tests
-zig build pico                     # check the core compiles for RP2040 / RP2350
+cd firmware && zig build test      # 443 tests
+zig build pico                     # compile checks, not hardware execution
+zig build memory                   # provisional Cortex-M33 inventory, not a full fit proof
 ```
 
 ### Try it on your PC (no hardware required)

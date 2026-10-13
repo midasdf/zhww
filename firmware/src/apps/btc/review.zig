@@ -78,6 +78,9 @@ pub const Review = struct {
     pages: [max_pages]Page = @splat(.{}),
     count: usize = 0,
     input_count: usize = 0,
+    output_count: usize = 0,
+    total_input: u64 = 0,
+    total_output: u64 = 0,
     fee: u64 = 0,
 
     fn add(self: *Review) !*Page {
@@ -105,6 +108,7 @@ pub const Review = struct {
         const tx = parsed.unsigned_tx;
         if (tx.inputs.len == 0 or tx.outputs.len == 0) return error.InvalidRequest;
         self.input_count = tx.inputs.len;
+        self.output_count = tx.outputs.len;
         // 1 summary, 2 pages per input, 1 per output, 1 totals page.
         if (tx.inputs.len > (max_pages - 2) / 2 or
             tx.outputs.len > max_pages - 2 - 2 * tx.inputs.len) return error.TooManyPages;
@@ -158,6 +162,8 @@ pub const Review = struct {
             try payment.format("Sats: {d}", .{output.value});
         }
         if (total_output > total_input) return error.InvalidRequest;
+        self.total_input = total_input;
+        self.total_output = total_output;
         self.fee = total_input - total_output;
         const totals = try self.add();
         try totals.format("In: {d} sats", .{total_input});

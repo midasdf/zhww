@@ -54,7 +54,7 @@ or hardware-wallet flow is done. The remaining architecture work is tracked in t
 | Mutation and fuzz tests on broken input | ✅ Present; the 2026-10-13 review still found additional issues |
 | Sending on the real device (signet) | ⬜ Not started (hardware required) |
 | Immutable prepare → display → physical approval → sign state machine | 🧩 Host gate now connects bounded canonical BTC review to actual P2WPKH-input PSBT signing, with a pinned Core-vector test. Physical HAL, key isolation, other BTC inputs and EVM remain open ([design](11-rp2350-security.md)) |
-| I-2 key isolation and I-3 independent hash comparison | ⬜ Not started |
+| I-2 key isolation and I-3 independent hash comparison | 🧩 Approved native-P2WPKH path has independent wire/BIP143 messages with all-input preflight and C-boundary checks; I-2/TrustZone and other inputs/EVM remain open ([scope](13-independent-p2wpkh-guard.md)) |
 | Session-wide secret erasure | 🧩 Owned seed/master/intermediate-key and preallocated C-context backing erasure tested; caller-copy, by-value API, C internal stacks/registers and target-spill erasure remain open |
 | Secure entropy / context blinding | 🧩 Bounded RNG interface, mandatory approved-BTC context blinding and randomized/verified BIP340 primitive tested with mocks; actual TRNG HAL and approved Taproot integration remain open |
 | SRAM/stack budget | 🧩 Fixed 128 KiB workspace and failure tests; Cortex-M33 ABI inventory is reproducible with `zig build memory`. Linked image, transitive Zig/C/IRQ stacks and HAL/camera buffers remain open ([details](12-rp2350-memory-budget.md)) |
@@ -69,7 +69,7 @@ The next tasks do not require target hardware and must precede HAL work.
 | What remains | Type | Reason |
 |---|---|---|
 | Complete approved-flow/physical HAL integration | **Release blocker** | Host BTC integration is separate from direct CLI signing; no real button/display or isolated key gateway exists yet |
-| Key isolation and independent signing-hash comparison | **Release blocker** | The documented I-2/I-3 boundaries do not exist in the current code |
+| Key isolation and full guarded signing coverage | **Release blocker** | Native-P2WPKH dual software calculation exists, but actual isolated key/NS boundaries and other BTC/EVM guards do not |
 | Session-wide secret erasure | **Release blocker** | Temporary buffer wipes do not erase master/derived/session copies |
 | Integrate P2TR/P2WSH into PSBT | **Required feature integration** | Current Core tests call standalone modules |
 | Integrate EVM parsing, ERC-7730/EIP-712 display, and signing | **Required feature integration** | Current modules and CLI are separate |

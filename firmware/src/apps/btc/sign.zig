@@ -140,10 +140,10 @@ pub fn sign(
 ) Error!SignResult {
     var owned_keys = keys;
     defer owned_keys.wipe();
-    return signOwned(allocator, psbt, &owned_keys);
+    return signOwned(allocator, psbt, &owned_keys, null);
 }
 
-fn signOwned(allocator: std.mem.Allocator, psbt: psbt_mod.Psbt, keys: *const KeySource) Error!SignResult {
+fn signOwned(allocator: std.mem.Allocator, psbt: psbt_mod.Psbt, keys: *const KeySource, expected: ?[]const [32]u8) Error!SignResult {
     const tx = psbt.unsigned_tx;
     var partial_sigs = std.ArrayList(PartialSignature).empty;
     errdefer partial_sigs.deinit(allocator);
@@ -154,6 +154,24 @@ fn signOwned(allocator: std.mem.Allocator, psbt: psbt_mod.Psbt, keys: *const Key
     const resolved = try allocator.alloc(?ResolvedUtxo, tx.inputs.len);
     for (resolved, 0..) |*entry, i| {
         entry.* = try resolveUtxo(allocator, psbt, i);
+    }
+
+    // Check EVERY primary message before any signature is created. The approved
+    // native-P2WPKH path supplies independent wire-parser hashes, never host hashes.
+    if (expected) |messages| {
+        if (messages.len != tx.inputs.len) return error.SigningPlanMismatch;
+        for (resolved, 0..) |entry, i| {
+            const utxo = entry orelse return error.SigningPlanMismatch;
+            if (detectScriptKind(utxo.script_pubkey) != .p2wpkh) return error.SigningPlanMismatch;
+            const input = psbt.inputs[i];
+            if (input.final_script_sig != null or input.final_script_witness != null or
+                (input.sighash_type != null and input.sighash_type.? != SIGHASH_ALL))
+                return error.SigningPlanMismatch;
+            const code = sighash.p2wpkhScriptCode(utxo.script_pubkey[2..22].*);
+            const primary = try sighash.segwitV0Sighash(allocator, tx, i, &code, utxo.amount, SIGHASH_ALL);
+            if (!std.crypto.timing_safe.eql([32]u8, primary, messages[i]))
+                return error.SigningPlanMismatch;
+        }
     }
 
     // Sign each input
@@ -183,6 +201,7 @@ fn signOwned(allocator: std.mem.Allocator, psbt: psbt_mod.Psbt, keys: *const Key
 
         // Find the key
         var found = try findKeyForInput(allocator, psbt, keys, index, utxo, kind) orelse {
+            if (expected != null) return error.NoMatchingKey;
             try unsigned.append(allocator, index);
             continue;
         };
@@ -198,6 +217,11 @@ fn signOwned(allocator: std.mem.Allocator, psbt: psbt_mod.Psbt, keys: *const Key
             found.public_key,
         );
 
+        // Check the actual key-derived message too, immediately at the C signing boundary.
+        if (expected) |messages| {
+            if (!std.crypto.timing_safe.eql([32]u8, message, messages[index]))
+                return error.SigningPlanMismatch;
+        }
         const signature = try secp256k1.sign(message, found.private_key);
         // A signature is only accepted after it verifies
         if (!(try secp256k1.verify(&signature, message, found.public_key))) {
@@ -651,15 +675,31 @@ pub fn signPsbtBytes(
     return signPsbtWithKeys(allocator, psbt_bytes, &owned_keys);
 }
 
-/// Pointer-borrowing entry point used by approved signing. Caller owns and erases
-/// the master/raw-key storage; no key pointer is retained in the returned result.
+/// Pointer-borrowing development entry point. Caller owns/erases master/raw-key
+/// storage; no key pointer is retained. Approved signing must use signPsbtWithPlan.
 pub fn signPsbtWithKeys(
     allocator: std.mem.Allocator,
     psbt_bytes: []const u8,
     keys: *const KeySource,
 ) Error!SignedPsbt {
+    return signPsbtChecked(allocator, psbt_bytes, keys, null);
+}
+
+/// Trusted approved-path entry point. `messages` must come from the independent
+/// guard over owned request bytes, NEVER from transport/NS/caller-supplied hashes.
+/// Legacy development APIs intentionally do not enforce this plan.
+pub fn signPsbtWithPlan(
+    allocator: std.mem.Allocator,
+    psbt_bytes: []const u8,
+    keys: *const KeySource,
+    messages: []const [32]u8,
+) Error!SignedPsbt {
+    return signPsbtChecked(allocator, psbt_bytes, keys, messages);
+}
+
+fn signPsbtChecked(allocator: std.mem.Allocator, psbt_bytes: []const u8, keys: *const KeySource, expected: ?[]const [32]u8) Error!SignedPsbt {
     const psbt = try psbt_mod.Psbt.parse(allocator, psbt_bytes);
-    const result = try signOwned(allocator, psbt, keys);
+    const result = try signOwned(allocator, psbt, keys, expected);
 
     // Collect the additional signatures for each input.
     // The public key points into `result.partial_sigs` (stable storage), so
