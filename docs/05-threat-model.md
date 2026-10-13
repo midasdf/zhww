@@ -101,6 +101,33 @@ See the [2026-10-13 internal review](10-security-audit-2026-10-13.md).
 
 ### 4-4. Firmware integrity (T-3, T-4)
 
+**Standard build (RP2350-PiZero).** The design is in [11-rp2350-security.md](11-rp2350-security.md);
+**none of it is implemented or provisioned yet**.
+
+| Threat | Detail |
+|---|---|
+| Firmware replacement | A modified image is flashed (a UF2 over USB, or the external flash rewritten) that leaks the seed — for example through the QR codes it shows — or signs something other than what it displays |
+| Rollback | An older, validly signed image with a known flaw is reinstalled; secure boot alone accepts it |
+| Interfaces left open | SWD debug, RISC-V selection, unused boot-ROM interfaces or USB data stay enabled on a production device |
+
+**Countermeasures (planned)**
+- RP2350 **signed boot**, with the boot-key fingerprints in OTP, on A4 silicon only ([11](11-rp2350-security.md) §1, §6)
+- An **anti-rollback** policy within the OTP's version capacity, with key rotation defined before provisioning (§6 there)
+- Production locks — debug, RISC-V, unused boot interfaces and USB data disabled — only after a signed recovery path has been tested (§1, §6 there)
+- Updates authenticate the complete image and its read-only assets; **no SD-card updates** (§6 there; card exchange is ruled out, [03-hardware-bom.md](03-hardware-bom.md) §2.4)
+- Reproducible builds + signed releases (NFR-07): build the image yourself and compare the hash
+
+**Residual risk**: until that is provisioned, **the board runs whatever UF2 it is given** — holding BOOT
+while plugging in USB is enough — so a moment of physical access is enough to replace the firmware.
+Even afterwards, signed XIP code is not continuously authenticated after boot, the antifuse array has a
+readout risk, and the glitch detectors are not comprehensive fault protection (§2, §6 there). Keeping
+the device in your own possession and powering it from a power-only cable reduce the opportunities; the
+clear case reveals added hardware but not changed firmware, so when in doubt re-flash an image you
+built yourself.
+
+**Earlier Linux build (Raspberry Pi Zero 2 WH, [07-zero2w-setup.md](07-zero2w-setup.md)).** Kept for
+host-side work; it boots from an SD card.
+
 | Threat | Detail |
 |---|---|
 | Firmware replacement | Replaced with a version that sends signatures outside |
@@ -112,7 +139,7 @@ See the [2026-10-13 internal review](10-security-audit-2026-10-13.md).
 - Unmount the SD card after boot (cutting off the write path)
 - Run a self-check at boot (signature verification, integrity check) and display the result on the screen
 
-**Residual risk**: **the Raspberry Pi Zero has no secure boot**. Because there is no hardware root of trust, malicious code can run if the SD card is swapped. The countermeasure is "being able to notice", not "being able to prevent". During use, compensate through operations such as managing the SD card yourself, keeping the device in your own possession, and looking it over through the clear enclosure before each use.
+**Residual risk**: **the Raspberry Pi Zero has no secure boot**. Because there is no hardware root of trust, malicious code can run if the SD card is swapped. The countermeasure is "being able to notice", not "being able to prevent". During use, compensate by managing the SD card yourself and keeping the device in your own possession.
 
 ### 4-5. Randomness quality
 

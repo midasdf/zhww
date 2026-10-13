@@ -48,7 +48,8 @@ readable diff. CI regenerates them and fails if the committed copies differ.
 
 ```bash
 cd hardware/enclosure
-zig test case.zig solidcraft.zig      # the checks and the script writer
+zig test case.zig                     # the checks (and, through its import, the script writer's tests)
+zig test solidcraft.zig               # the script writer on its own
 zig run case.zig -- write             # prints the stack-up and every check, then writes the three scripts
 zig run case.zig -- check             # what CI runs: the checks, and the scripts are up to date
 ```
@@ -58,6 +59,7 @@ on the [releases page](https://github.com/bherbruck/solidcraft/releases); check 
 
 ```bash
 solidcraft-cli run zhww-case-export.json                               # writes the STEP and the three STLs here
+mkdir -p build                                                         # ignored by git; holds local results
 solidcraft-cli run zhww-case-check.json --results > build/results.json  # SolidCraft's interference check
 zig run case.zig -- verify build/results.json                          # passes only if nothing overlaps
 ```
