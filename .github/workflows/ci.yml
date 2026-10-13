@@ -10,11 +10,19 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Tests execute repository-controlled build scripts. Keep the automatic token
+# read-only and do not leave its credential in the checkout for those scripts.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Zig 0.17.0
         run: |

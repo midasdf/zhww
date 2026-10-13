@@ -1,5 +1,15 @@
 # Next-session handoff
 
+## Latest security review and boundary hardening
+
+Internal follow-up review: [15-security-audit-2026-10-14.md](15-security-audit-2026-10-14.md).
+The offline target harness now rejects zero/oversized ABI lengths before constructing raw-pointer
+slices, erases the fixed workspace after failed preparation, and fail-closes the session on render
+errors. GitHub Actions now has an explicit read-only token, no persisted checkout credential, and a
+job timeout. Common secret markers were not found in tracked history. These are defense-in-depth
+changes: the exports are still not CMSE gateways, raw-pointer provenance is not established, and
+all previously documented hardware/release blockers remain.
+
 ## Latest offline target links, fatal-stack prototype and bounded discovery
 
 Follow-up to `3c1d716`: see [14-target-link-and-fault-prototype.md](14-target-link-and-fault-prototype.md).

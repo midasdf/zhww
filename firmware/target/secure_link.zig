@@ -79,13 +79,32 @@ var workspace = zhww.workspace.Workspace.init(&zhww_secure_workspace);
 
 // Internal reachability exports, NOT CMSE entry points. Do not expose to NS.
 export fn zhww_link_only_prepare(evidence: *const zhww.boot_policy.Evidence, seed: *const [64]u8, raw: [*]const u8, len: usize) u32 {
-    zhww_secure_workflow.begin(workspace.allocator(), evidence.*, seed, raw[0..len], .regtest, 0) catch return 1;
+    // Validate the untrusted ABI length before constructing a slice from a raw pointer.
+    if (len == 0 or len > zhww.btc_review.max_request_bytes) return 1;
+    zhww_secure_workflow.begin(workspace.allocator(), evidence.*, seed, raw[0..len], .regtest, 0) catch {
+        // begin() invalidates the workflow; reclaim and erase parser allocations too.
+        workspace.reset();
+        return 1;
+    };
     return 0;
 }
 export fn zhww_link_only_render(index: usize) u32 {
-    var fb = zhww.ui_framebuffer.Framebuffer.init(&zhww_secure_framebuffer, 240, 240) catch return 1;
-    const page = zhww_secure_workflow.review.page(index) catch return 1;
-    page.render(&fb) catch return 1;
+    var fb = zhww.ui_framebuffer.Framebuffer.init(&zhww_secure_framebuffer, 240, 240) catch {
+        zhww_secure_workflow.abort();
+        workspace.reset();
+        return 1;
+    };
+    const page = zhww_secure_workflow.review.page(index) catch {
+        zhww_secure_workflow.abort();
+        workspace.reset();
+        return 1;
+    };
+    page.render(&fb) catch {
+        // A renderer/transfer failure must never leave an approvable session alive.
+        zhww_secure_workflow.abort();
+        workspace.reset();
+        return 1;
+    };
     return 0; // NO physical receipt; rendering alone never approves
 }
 export fn zhww_link_only_sign(raw: [*]const u8, len: usize, now: u64, rng: *zhww.rng.Rng) u32 {
@@ -93,6 +112,8 @@ export fn zhww_link_only_sign(raw: [*]const u8, len: usize, now: u64, rng: *zhww
         zhww_secure_workflow.abort();
         workspace.reset();
     }
+    // Reject at the ABI boundary, before raw[0..len] can describe arbitrary memory.
+    if (len == 0 or len > zhww.btc_review.max_request_bytes) return 1;
     _ = zhww_secure_workflow.sign(workspace.allocator(), raw[0..len], now, rng) catch return 1;
     return 0;
 }

@@ -48,7 +48,6 @@ rpc eth_chainId '[]' | grep -q "$(printf '0x%x' "$CHAIN_ID")" \
 [ -x "$CLI" ] || fail "$CLI not found (run: zig build)"
 
 # --- our key derivation must match the node's account 0 ----------------------------------------
-DERIVED=$("$CLI" address --mnemonic "$MNEMONIC" 2>/dev/null || true)
 SIGNER=$("$CLI" evm-sign --mnemonic "$MNEMONIC" <<< \
     "{\"chainId\":$CHAIN_ID,\"nonce\":0,\"gasPrice\":2000000000,\"gasLimit\":21000,\"to\":\"$ACCOUNT1\",\"value\":1,\"data\":\"0x\"}" \
     2>&1 >/dev/null | grep -o '0x[0-9a-fA-F]\{40\}' | head -1)
