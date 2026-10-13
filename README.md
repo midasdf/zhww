@@ -14,8 +14,8 @@
 **An attempt at a fully open-source, multi-chain hardware wallet that anyone can assemble from commodity parts — no soldering.**
 
 - **Initial scope**: Bitcoin + EVM (Ethereum / ERC-20 / major L2s)
-- **Hardware**: SeedSigner-compatible commodity parts, assembled without soldering
-- **Target cost**: roughly ¥8,000–13,000 (USD 55–90) per unit
+- **Hardware**: Waveshare RP2350-PiZero (no wireless) + Adafruit Mini PiTFT + ArduCam UC-805 (HM01B0) camera, in a clear 3D-printed case — off-the-shelf parts, no soldering
+- **Target cost**: roughly ¥8,000–11,000 (USD 55–75) per unit
 - **Status**: protocol primitives and host tools are tested, including a separate approved native-P2WPKH workflow with an independent BIP143 guard. Physical approval, target HAL/TrustZone and end-to-end device firmware are **not implemented**, and the firmware has **not yet run on the target hardware**
 
 ---
@@ -30,7 +30,7 @@ Existing open-source hardware wallets fall into three groups.
 | Multi-chain, but hardware/firmware closed | Ledger and others | Not "fully open source" |
 | Multi-chain with open firmware | Trezor, BitBox02, Keystone | Hardware design closed, or not self-buildable |
 
-This project aims at the intersection: **buildable by anyone from commodity parts** × **multi-chain** × **fully open source**. The hardware reuses the proven SeedSigner parts list; the software is written from scratch to support BTC + EVM.
+This project aims at the intersection: **buildable by anyone from commodity parts** × **multi-chain** × **fully open source**. The hardware follows SeedSigner's shape — a camera on the back, a screen and buttons on the front, no radio, no battery — on a microcontroller board with secure-boot features; the software is written from scratch to support BTC + EVM.
 
 ---
 
@@ -78,9 +78,9 @@ zhww/
 │   ├── 04-chain-support.md    ← BTC/EVM implementation matrix
 │   ├── 05-threat-model.md     ← threat model and residual risks
 │   ├── 06-roadmap.md          ← milestones and definitions of done
-│   ├── 07-zero2w-setup.md     ← Raspberry Pi Zero 2 W/WH setup (disabling wireless)
-│   ├── 08-rp2350-pizero.md    ← plan for the RP2350-PiZero port
-│   ├── 09-light-audio-input.md ← using light or sound as an input channel (proposal)
+│   ├── 07-zero2w-setup.md     ← Raspberry Pi Zero 2 W/WH setup (the earlier Linux build; host-side use)
+│   ├── 08-rp2350-pizero.md    ← the RP2350-PiZero port: pins, power, flash, HAL plan
+│   ├── 09-light-audio-input.md ← light as an optional input channel (not in the standard build)
 │   └── 10-security-audit-2026-10-13.md ← internal source review, fixes, and release blockers
 ├── firmware/                  ← Zig implementation
 │   ├── build.zig
@@ -104,9 +104,9 @@ zhww/
 | Security prototypes | Host approved native-P2WPKH/SIGHASH_ALL flow, owned secret/context erasure, mandatory bounded entropy, fixed-workspace tests and independent wire/BIP143 message comparison. No actual TrustZone/HAL or physical approval. See [security](docs/11-rp2350-security.md), [memory](docs/12-rp2350-memory-budget.md) and [guard scope](docs/13-independent-p2wpkh-guard.md). |
 | Tests | **449 passing** in four optimization modes (normal host library and selected target C arithmetic configuration), including the previous crypto/interoperability vectors plus approval, wipe, RNG/workspace failure, independent guard and mutation checks. Tests are not a target execution or security proof; see [firmware details](firmware/README.md) and the historical [review report](docs/10-security-audit-2026-10-13.md). |
 | CI | GitHub Actions runs Linux host regressions, bare-metal Pico compile checks, Cortex-M33 memory inventory and tool/dependency checks, plus the microSD image round-trip with `mtools`/`fsck.fat`. This is not RP2350 hardware execution. |
-| Hardware | Linux build: **Raspberry Pi Zero 2 WH** (assembly [docs/03](docs/03-hardware-bom.md), setup [docs/07](docs/07-zero2w-setup.md)). Main v0.2 target: **[Waveshare RP2350-PiZero](docs/08-rp2350-pizero.md)** — Pi Zero footprint, 40-pin header, microSD, no wireless, no onboard battery |
+| Hardware | Parts decided (2026-10-14): **[Waveshare RP2350-PiZero](docs/08-rp2350-pizero.md)** + **Adafruit Mini PiTFT #4393** + **ArduCam UC-805 (HM01B0)** camera, USB power only ([BOM and wiring](docs/03-hardware-bom.md)). Enclosure: a clear 92.8 × 35.1 × 19.7 mm case, generated from Zig and built in SolidCraft, every clearance checked ([hardware/enclosure](hardware/enclosure/README.md)). Nothing has been bought or measured yet |
 | Target link prototype | Actual offline Secure/NS links with pinned C crypto and static frames, retained large storage and separate-stack fatal wipe prototype. No boot/startup, real attribution or NS gateway ([scope](docs/14-target-link-and-fault-prototype.md)). |
-| Next | Actual boot/SDK/CMSE gateway and attribution, transitive Zig/C/IRQ stack bounds, physical display/input and TRNG/SD HAL; then guarded P2TR/P2WSH/EVM integration and real-hardware tests. |
+| Next | Actual boot/SDK/CMSE gateway and attribution, transitive Zig/C/IRQ stack bounds, physical display/buttons, camera capture and TRNG HAL; then guarded P2TR/P2WSH/EVM integration and real-hardware tests. |
 
 ```bash
 cd firmware && zig build test      # 449 tests
@@ -147,13 +147,13 @@ The recommended reading order:
 
 1. [Requirements](docs/01-requirements.md) — what is built, and what is not
 2. [Hardware BOM](docs/03-hardware-bom.md) — what to buy
-3. [Device setup](docs/07-zero2w-setup.md) — setup and disabling wireless
+3. [Enclosure](hardware/enclosure/README.md) — the case, the wiring and the assembly
 4. [Architecture](docs/02-architecture.md) — how it fits together
 5. [Chain support](docs/04-chain-support.md) — the specs implemented for BTC/EVM
 6. [Threat model](docs/05-threat-model.md) — what is protected, and what is not
 7. [Roadmap](docs/06-roadmap.md) — the order of work
 8. [Internal security review](docs/10-security-audit-2026-10-13.md) — fixed findings and remaining release blockers
-9. [Light and sound input](docs/09-light-audio-input.md) — alternative input channel research
+9. [Light and sound input](docs/09-light-audio-input.md) — the optional light channel (not in the standard build)
 
 ---
 

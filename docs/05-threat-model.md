@@ -90,6 +90,10 @@ See the [2026-10-13 internal review](10-security-audit-2026-10-13.md).
 **Countermeasures**
 - Buy from authorized distributors (avoid used units and grey-market personal imports)
 - Disassemble and inspect on arrival, and confirm that there are no chips that are not in the datasheet
+- **Print the enclosure in a clear material** (recommended, see [hardware/enclosure](../hardware/enclosure/README.md)):
+  every board, cable and part stays visible, so the inside can be compared with the assembly photos
+  before each use without opening the case. Tamper-evident seals are **not** part of the design: each
+  user builds and opens their own device, so a seal would only prove that its owner closed it
 - **Always build the release image yourself and compare the hash against the distributed value** (NFR-07). Do not flash an image someone else built
 - Verify the PGP signature
 
@@ -108,7 +112,7 @@ See the [2026-10-13 internal review](10-security-audit-2026-10-13.md).
 - Unmount the SD card after boot (cutting off the write path)
 - Run a self-check at boot (signature verification, integrity check) and display the result on the screen
 
-**Residual risk**: **the Raspberry Pi Zero has no secure boot**. Because there is no hardware root of trust, malicious code can run if the SD card is swapped. The countermeasure is "being able to notice", not "being able to prevent". During use, compensate through operations such as managing the SD card yourself and physically sealing it.
+**Residual risk**: **the Raspberry Pi Zero has no secure boot**. Because there is no hardware root of trust, malicious code can run if the SD card is swapped. The countermeasure is "being able to notice", not "being able to prevent". During use, compensate through operations such as managing the SD card yourself, keeping the device in your own possession, and looking it over through the clear enclosure before each use.
 
 ### 4-5. Randomness quality
 

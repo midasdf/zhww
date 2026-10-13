@@ -14,8 +14,8 @@
 **できるだけ簡単に組み立てられる、完全オープンソースのマルチチェーン・ハードウェアウォレット（を目指して開発中のもの）。**
 
 - **初期スコープ**: Bitcoin + EVM (Ethereum / ERC-20 / 主要L2)
-- **ハードウェア**: SeedSigner 互換の既成部品（**半田付け不要**、既製品を載せるだけ）
-- **想定コスト**: 1台あたり ¥8,000〜12,000 程度
+- **ハードウェア**: Waveshare RP2350-PiZero（無線なし）＋ Adafruit Mini PiTFT ＋ ArduCam UC-805（HM01B0）カメラを、3D プリントの透明ケースに収める。既製品だけで組め、**半田付けは不要**
+- **想定コスト**: 1台あたり ¥8,000〜11,000 程度
 - **現状**: PC 上では、承認付き native P2WPKH 署名と独立した BIP143 検証経路まで実装済み（テスト **449 件**）。物理承認、実機 HAL／TrustZone、端から端までのデバイスファームウェアは未実装で、対象ボードでは未実行
 
 ---
@@ -30,7 +30,7 @@
 | マルチチェーンだがハード/ファームが非公開 | Ledger 等 | 「完全オープンソース」にならない |
 | マルチチェーンでファームはオープン | Trezor, BitBox02, Keystone | ハード設計が非公開、または自作できない |
 
-本プロジェクトは **「既成部品で誰でも組める」×「マルチチェーン」×「完全オープンソース」** の交点を狙う。ハードは実績のある SeedSigner の部品構成を流用し、ソフトウェアを BTC + EVM 対応で自作する。
+本プロジェクトは **「既成部品で誰でも組める」×「マルチチェーン」×「完全オープンソース」** の交点を狙う。ハードは SeedSigner と同じ形（背面にカメラ、前面に画面とボタン、無線なし、電池なし）を、セキュアブート機能のあるマイコンボードで組む。ソフトウェアは BTC + EVM 対応で自作する。
 
 ---
 
@@ -77,8 +77,8 @@ zhww/
 │   ├── 04-chain-support.md    ← BTC/EVM 実装マトリクス・仕様
 │   ├── 05-threat-model.md     ← 脅威モデル・残存リスク
 │   ├── 06-roadmap.md          ← マイルストーンと Done 定義
-│   ├── 07-zero2w-setup.md     ← Raspberry Pi Zero 2 W/WH の初期設定（無線の無効化）
-│   ├── 08-rp2350-pizero.md    ← RP2350-PiZero への移植計画（v0.2 の本命）
+│   ├── 07-zero2w-setup.md     ← Raspberry Pi Zero 2 W/WH の初期設定（以前の Linux 構成。ホスト側の作業用）
+│   ├── 08-rp2350-pizero.md    ← RP2350-PiZero への移植（ピン、電源、フラッシュ、HAL の計画）
 │   └── 10-security-audit-2026-10-13.md ← 内部コードレビューと未解決事項
 ├── firmware/                  ← Zig 実装（BTC 署名一式 + 公式テストベクタ）
 │   ├── build.zig
@@ -97,9 +97,9 @@ zhww/
 | セキュリティ基盤 | PC 上の承認付き native P2WPKH／SIGHASH_ALL フロー、所有する秘密情報と暗号コンテキストの消去、乱数・固定メモリの異常系、別パーサーによる BIP143 ハッシュ照合を実装。物理承認と実機の隔離は未実装。[設計](docs/11-rp2350-security.md)・[メモリ予算](docs/12-rp2350-memory-budget.md)・[独立検証の範囲](docs/13-independent-p2wpkh-guard.md)を参照。 |
 | テスト | **449 件すべて成功**（通常のホストライブラリと、対象用32bit整数演算のC構成、それぞれ4つの最適化モード）。既存の署名・相互運用ベクタに加え、承認・消去・乱数／メモリ不足・独立検証・入力改変を検査。実機での動作や安全性の証明ではない。現在の詳細は[firmware](firmware/README.md)、過去の内部レビューは[報告書](docs/10-security-audit-2026-10-13.md)を参照。 |
 | CI | Linux ホストでの回帰テスト、Pico 向けコンパイル、Cortex-M33 の暫定メモリ予算、検査ツールと依存関係のチェックを実行。microSD イメージの受け渡しも mtools／fsck.fat で検査する。RP2350 実機での実行ではない。 |
-| 実機 | Linux 構成（**Pi Zero 2 WH**）は組立 [docs/03](docs/03-hardware-bom.md)・初期設定 [docs/07](docs/07-zero2w-setup.md)。**v0.2 の本命は無線なしの [RP2350-PiZero](docs/08-rp2350-pizero.md)**（Pi Zero 同寸・40pin 互換・microSD・**電池を積まない外部給電**・UF2） |
+| 実機 | 部品は決定済み（2026-10-14）。**[RP2350-PiZero](docs/08-rp2350-pizero.md)** ＋ **Mini PiTFT #4393** ＋ **ArduCam UC-805（HM01B0）**、USB 給電のみ（[部品表と配線](docs/03-hardware-bom.md)）。筐体は 92.8 × 35.1 × 19.7 mm の透明ケースで、Zig から生成して SolidCraft で組み立て、すべてのすき間を検査している（[hardware/enclosure](hardware/enclosure/README.md)）。部品の購入・実測はまだ |
 | ターゲット向け試作 | 固定バージョンのC暗号ライブラリで Secure／Non-secure 領域を実際にリンクし、関数単体のスタック使用量を取得。別スタックに切り替えて既知の領域を消去する異常終了経路もコンパイル・命令検査済み。ただし起動可能なファームウェア、実機の隔離、NS用ゲートウェイではない（[範囲と限界](docs/14-target-link-and-fault-prototype.md)）。 |
-| 次の作業 | 実際の起動／SDK／CMSEとアクセス制限、呼出し先と割り込みを含むスタック上限、物理画面・ボタン・TRNG・SD の HAL。その後に P2TR／P2WSH／EVM の承認・検証フローと実機テストを進める。 |
+| 次の作業 | 実際の起動／SDK／CMSEとアクセス制限、呼出し先と割り込みを含むスタック上限、物理画面・ボタン・カメラ取り込み・TRNG の HAL。その後に P2TR／P2WSH／EVM の承認・検証フローと実機テストを進める。 |
 
 ```bash
 cd firmware && zig build test      # 449 件
@@ -113,7 +113,7 @@ zig build memory                   # 暫定の型サイズ・予約量。実機�
 
 1. [要求仕様](docs/01-requirements.md) — 何を作り、何を作らないか
 2. [ハードウェア BOM](docs/03-hardware-bom.md) — 何を買えばよいか
-3. [実機セットアップ（Zero 2 W）](docs/07-zero2w-setup.md) — 手元の実機を使う手順と無線の無効化
+3. [筐体](hardware/enclosure/README.md) — ケース、配線、組み立て
 4. [アーキテクチャ](docs/02-architecture.md) — どう組み立てるか
 5. [チェーン対応表](docs/04-chain-support.md) — BTC/EVM で実装すべき仕様
 6. [脅威モデル](docs/05-threat-model.md) — 何を守れて、何を守れないか
