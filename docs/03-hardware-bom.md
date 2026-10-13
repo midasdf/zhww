@@ -15,7 +15,7 @@
 | 3 | Camera | **ArduCam UC-805** = Arducam **B0315** "HM01B0 Monochrome QVGA Camera Module for Raspberry Pi Pico" — Himax HM01B0, 320 × 320 monochrome, 60° fixed-focus lens, 1×8 right-angle header | ¥2,589 (Amazon.co.jp, 2026-10-14, low stock) / US$15.99 (UCTRONICS) | [Amazon.co.jp B093KBQB1C](https://www.amazon.co.jp/dp/B093KBQB1C), [UCTRONICS](https://www.uctronics.com/arducam-hm01b0-qvga-spi-camera-module-for-raspberry-pi-pico.html) |
 | 4 | Camera power / I²C cable | **Adafruit STEMMA QT to female sockets, 150 mm** (#4397) | price unconfirmed | Adafruit and its distributors |
 | 5 | Camera signal wires | **4 × female–female jumper wires, 10 cm**, plus ~4 cm of Φ2 mm heat-shrink (or polyimide tape) | ~¥300 | Any electronics shop |
-| 6 | Enclosure | 3D printed in a **clear** material ([hardware/enclosure](../hardware/enclosure/README.md)), 4 × M2 × 16 flat-head screws, 4 × Φ8 bumper feet | ¥0–2,000 | Self-printed or a print service |
+| 6 | Enclosure | 3D printed in a **clear** material ([hardware/enclosure](../hardware/enclosure/README.md)), 7 × M2 × 16 flat-head screws | ¥0–2,000 | Self-printed or a print service |
 | 7 | Power | **Not onboard.** A USB-C cable (power-only recommended) and a power source you already own | ¥0–3,000 | — |
 
 **Estimated total: about ¥8,000–11,000** (about USD 55–75), plus the cable in #4 and printing if
@@ -89,8 +89,8 @@ degrades, swells or leaks while it waits, and "plug it in to use it" has no stat
 ### 2.6 Enclosure
 
 Our own parametric design, generated from Zig and built in SolidCraft:
-[hardware/enclosure/README.md](../hardware/enclosure/README.md). 92.8 × 35.1 × 19.7 mm, two shells,
-four screws from underneath.
+[hardware/enclosure/README.md](../hardware/enclosure/README.md). 97.2 × 38.6 × 19.7 mm, two shells,
+seven screws from underneath: one in each corner, one in the middle of the rear edge, two through the board.
 
 - **Clear, not sealed** (owner decision, 2026-10-14). Every user builds and opens their own device,
   so a tamper-evident seal would prove nothing; a clear case lets you compare the inside with your
@@ -163,7 +163,7 @@ The full steps, with the case, are in
    above the display and make the case 25 mm thick
 3. Plug the other ends and the #4397's sockets onto the camera's header (§3)
 4. Lay the board and the camera (lens down) in the printed base, photograph the inside, close the
-   top and drive in four M2 × 16 screws from underneath
+   top and drive in seven M2 × 16 screws from underneath
 5. Copy the firmware's UF2 file to the board (hold BOOT while plugging in USB)
 
 ## 5. Verification (after assembly, before use)

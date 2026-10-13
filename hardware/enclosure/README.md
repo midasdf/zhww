@@ -3,7 +3,7 @@
 - **Hardware**: Waveshare RP2350-PiZero (65 × 30 mm) + **Adafruit Mini PiTFT 135×240 (#4393)** on the
   left 24 pins of the 40-pin header + **ArduCam UC-805** (Arducam B0315, Himax HM01B0 monochrome
   camera) at the right-hand end, **looking out through the floor**. USB power only.
-- **Size**: **92.8 × 35.1 × 19.7 mm** outside (feet add about 1.5 mm)
+- **Size**: **97.2 × 38.6 × 19.7 mm** outside
 - **CAD**: [SolidCraft](https://github.com/bherbruck/solidcraft) 0.8.0 (MIT OR Apache-2.0). The source is
   [case.zig](case.zig): it holds every dimension, computes the clearances, and writes the SolidCraft
   command scripts in this directory
@@ -16,8 +16,9 @@
 |---|---|
 | ![Top](../../docs/images/case-top.png) | ![Bottom](../../docs/images/case-bottom.png) |
 
-*Top: the display window, the two button caps, and the aiming ring over the lens. Bottom: four
-countersunk screws, four foot pockets, the lens opening and the engraved name and licence.*
+*Top: the display window and the two button caps. Bottom: four
+countersunk screws (one in each corner, one in the middle of the rear edge and two through the
+board) and the lens opening.*
 
 ![Opened over the parts](../../docs/images/case-exploded.png)
 
@@ -118,16 +119,36 @@ display. So the four header-side ends lose their plastic housing and get heat-sh
 [Assembly](#assembly)). They are **chequered across the two header rows** (pins 29, 32, 33, 36), so no
 two of them stand side by side at 2.54 mm.
 
-**Screws from underneath, nothing on top.** Four M2 × 16 flat-head screws come up through the floor:
-two through the board's own front-left and rear-right holes, two through the camera board's holes,
-into blind pilots in bosses hanging from the top. The camera is clamped between its posts and those
-bosses, and a rib on the top presses its header edge down. The board's other two holes take
-locating pins. The front-left boss passes beside the Mini PiTFT's front edge and is flattened on that
-side.
+**Screws from underneath, nothing on top.** Seven M2 × 16 flat-head screws come up through the floor
+into blind pilots in bosses hanging from the top: one in each corner, one in the middle of the rear
+edge, and two through the board's own front-left and rear-right holes.
+
+- **The four corner screws** stand **4.5 mm in from both edges** they are near, so they form one
+  rectangle on the bottom face. That 4.5 mm is set by the front-right one, which passes through the
+  camera board's own front hole (2.2 mm from the camera board's edge, plus its 0.5 mm clearance and
+  the 1.8 mm wall). The other three stand in columns of their own — a post in the base, a boss in
+  the top — clear of the walls, because a boss merged into a wall would hit the base's wall and lip
+  below the parting line.
+- **The rear-middle screw** stands on the rear row, halfway between the rear corners, in a slimmer
+  column (Φ3.2) just behind the board's rear edge. It and the board screws hold the long sides
+  against twisting. Nothing can be fastened in the middle of the front edge: the board reaches the
+  front wall, and that wall has to stay close to the board for the USB-C plug to seat.
+- **The two board screws** clamp base, board and top together. The front-left boss passes beside
+  the Mini PiTFT's front edge and is flattened on that side. The board's other two holes, under the
+  camera housings and under the display, take locating pins.
+- **The camera** is clamped by its front-hole screw, a pin and a pressing boss at its rear hole, and
+  a rib on the top over its header edge.
+
+**The lens by the golden ratio.** The lens sits on the camera board's centre line, 10.25 mm behind
+its front hole, so its distance from the front edge (14.75 mm) is fixed by the camera and the corner
+inset. The case's depth is chosen to match: the lens divides it **1 : φ** from the front edge
+(14.75 : 23.87 mm), and the checks hold it there. That is what makes the case 38.6 mm deep, which also
+leaves room for the rear-middle column; the left-hand columns are what make it 97.2 mm long.
 
 **Commercial details.** Both shells are cut from the same rounded outline (R5 in plan, R1.5 along the
 top, R0.8 along the bottom), so they meet without a step; a 0.4 mm V-groove on the parting line hides
-the joint; a 1.2 mm lip on the base locates the top all round and blocks the gap. The display window
+the joint; a 2.07 mm lip on the base (as tall as it can be below the Mini PiTFT's board) locates the
+top all round, locks the two shells against each other when the case is twisted, and blocks the gap. The display window
 is rounded and chamfered, the button caps are captive (a flange in a counterbore under the top
 plate) and stand 0.4 mm proud, and the power USB-C opening is a stadium with a shallow pocket so an
 overmoulded plug seats fully. Only that one connector is open: the mini HDMI and the PIO-USB stay
@@ -158,8 +179,8 @@ Any opaque material works mechanically; it just gives up the inspection.
 | `zhww-case-top.stl` | **Outside face on the bed** (exported turned over) | None: the bosses point up |
 | `zhww-case-cap.stl` × 2 | Pressing end on the bed | None (a 1.1 mm flange overhang) |
 
-0.2 mm layers or finer. The engraving and the lens countersink are on the bed side of the base; the
-display window's chamfer and the aiming ring are on the bed side of the top. A printer that runs
+0.2 mm layers or finer. The lens countersink is on the bed side of the base; the
+display window's chamfer is on the bed side of the top. A printer that runs
 large tolerances should loosen `lip_gap`, `cap_hole_d` and `clearance` in `case.zig` rather than the
 STL.
 
@@ -168,8 +189,7 @@ STL.
 | Qty | Part | Note |
 |---|---|---|
 | 1 each | Printed base, top; 2 × printed button cap | Clear material recommended |
-| 4 | M2 × 16 flat-head (countersunk) screws | Thread straight into the printed Φ1.6 pilots |
-| 4 | Self-adhesive bumper feet, Φ8 mm (e.g. 3M Bumpon SJ5302) | In the four pockets underneath |
+| 7 | M2 × 16 flat-head (countersunk) screws | Thread straight into the printed Φ1.6 pilots |
 | 4 | Female–female jumper wires, 10 cm | Camera signals; one end of each is unhoused (below) |
 | 1 | Adafruit STEMMA QT to female sockets, 150 mm (#4397) | Camera power, I²C and ground from the Mini PiTFT |
 | ~4 cm | Heat-shrink tube, Φ2 mm (or polyimide / Kapton tape) | Insulates the four bare terminals |
@@ -211,33 +231,32 @@ its XCLK pin (it is on the unfitted even row anyway). One-bit data mode; the I²
    Mini PiTFT. Take a photo of the inside now: it is what you will compare against later.
 6. Drop the two button caps into the top from inside, hold them there, and lower the top over the
    base's lip.
-7. Turn it over and drive in the four M2 × 16 screws — gently, they cut their own thread. Stick on
-   the feet.
+7. Turn it over and drive in the seven M2 × 16 screws — gently, they cut their own thread.
 
 ## The checks (`zig run case.zig -- check`)
 
 ```
-zhww-case: outside 92.8 x 35.1 x 19.7 mm (parting line at z 11.73: base 11.73, top 7.97)
+zhww-case: outside 97.2 x 38.616 x 19.7 mm (parting line at z 11.73: base 11.73, top 7.97)
 zhww-case: stack-up: floor 0..1.8 | board 3.8..5.4 | header to 7.9 | Mini PiTFT 13.9..15.5 | glass/buttons to 17.5 | terminals+wires to 17.6 | top plate 18.1..19.7
-zhww-case: camera: board 8.1..9.7 (component side down), lens tip 5.12, housings 9.7..12.24; lens at case x 85.2 y 14.9
+zhww-case: camera: board 8.1..9.7 (component side down), lens tip 5.12, housings 9.7..12.24; lens at case x 89.6 y 14.75
 zhww-case: check display window inside the Mini PiTFT board (left): 7.37 mm (>= 0.5)  PASS
 zhww-case: check display window inside the Mini PiTFT board (right): 4.83 mm (>= 0.5)  PASS
 zhww-case: check display window inside the Mini PiTFT board (front/rear): 1.6 mm (>= 0.5)  PASS
 zhww-case: check button-cap counterbore to the display window: 1.17 mm (>= 0.6)  PASS
-zhww-case: check button-cap counterbore to the inner wall: 0.14 mm (>= 0)  PASS
+zhww-case: check button-cap counterbore to the inner wall: 4.54 mm (>= 0)  PASS
 zhww-case: check button caps clear of each other: 2.15 mm (>= 0.8)  PASS
 zhww-case: check top plate above the display and the buttons: 0.6 mm (>= 0.2)  PASS
-zhww-case: check Mini PiTFT clear of the rear wall (with the .brd's 0.75 mm overhang): 0.37 mm (>= 0.2)  PASS
+zhww-case: check Mini PiTFT clear of the rear wall (with the .brd's 0.75 mm overhang): 3.886 mm (>= 0.2)  PASS
 zhww-case: check front-left boss flat: material left beside the pilot: 0.88 mm (>= 0.6)  PASS
 zhww-case: check USB-C pocket below the parting groove: 0.8 mm (>= 0.6)  PASS
 zhww-case: check USB-C receptacle fits the opening if it stands out into it: 0.66 mm (>= 0.4)  PASS
 zhww-case: check USB-C plug: overmould seat to the receptacle mouth: 0.5 mm (<= 1)  PASS
 zhww-case: check closed receptacles clear of the front wall (relief): 0.6 mm (>= 0.2)  PASS
 zhww-case: check camera board beyond the main board: 0.5 mm (>= 0.3)  PASS
-zhww-case: check camera board inside the front wall: 0.65 mm (>= 0.3)  PASS
-zhww-case: check camera board inside the rear wall: 5.95 mm (>= 0.3)  PASS
+zhww-case: check camera board inside the front wall: 0.5 mm (>= 0.3)  PASS
+zhww-case: check camera board inside the rear wall: 9.616 mm (>= 0.3)  PASS
 zhww-case: check camera housings above the BAT connector: 0.3 mm (>= 0.2)  PASS
-zhww-case: check camera housings in front of the 40-pin header: 0.33 mm (>= 0.2)  PASS
+zhww-case: check camera housings in front of the 40-pin header: 0.48 mm (>= 0.2)  PASS
 zhww-case: check camera housings below the top plate: 5.86 mm (>= 2)  PASS
 zhww-case: check camera parts above the floor: 3.32 mm (>= 1)  PASS
 zhww-case: check lens view through the floor: at the floor's top: 0.733 mm (>= 0)  PASS
@@ -246,13 +265,19 @@ zhww-case: check lens view through the floor: at the bottom face: 0.494 mm (>= 0
 zhww-case: check camera post clear of the lens module: 4.166 mm (>= 0.5)  PASS
 zhww-case: check camera clamp rib clear of the screw bosses: 16.6 mm (>= 1)  PASS
 zhww-case: check bare terminals and their wires below the top plate: 0.5 mm (>= 0.2)  PASS
-zhww-case: check bare terminals clear of the camera housings: 0.2 mm (>= 0.2)  PASS
+zhww-case: check bare terminals clear of the camera housings: 0.35 mm (>= 0.2)  PASS
 zhww-case: check bare terminals clear of each other: 0.792 mm (>= 0.5)  PASS
 zhww-case: check bare terminals right of the Mini PiTFT: 3.79 mm (>= 0.3)  PASS
-zhww-case: check rear-right boss clear of the camera housings: 1.14 mm (>= 0.3)  PASS
+zhww-case: check rear-right boss clear of the camera housings: 1.29 mm (>= 0.3)  PASS
+zhww-case: check the four corner screws all stand the corner inset from both edges: 0 mm (<= 0.01)  PASS
+zhww-case: check columns clear of the walls, the board, the Mini PiTFT, the terminals, the caps and the camera: 0.3 mm (>= 0.2)  PASS
+zhww-case: check countersunk heads clear of the outer faces: 2.35 mm (>= 1.5)  PASS
+zhww-case: check lens divides the depth in the golden ratio, from the front edge (0.382 is golden): 0 mm (<= 0.001)  PASS
+zhww-case: check rear-middle screw centred between the rear corner screws: 0 mm (<= 0.01)  PASS
+zhww-case: check lens opening clear of the screw heads: 4.559 mm (>= 1)  PASS
+zhww-case: check countersunk heads clear of each other: 1.427 mm (>= 1)  PASS
 zhww-case: check screw thread engaged in every boss: 6.3 mm (>= 4)  PASS
 zhww-case: check every pilot ends below the top plate: 1.1 mm (>= 0.5)  PASS
-zhww-case: check feet clear of the lens opening and the screw heads: 1.261 mm (>= 1)  PASS
 ```
 
 A parameter that pushes any of these past its limit stops `write` and fails CI, instead of producing
@@ -266,7 +291,7 @@ or a choice, and `MEASURED` for the ones to confirm first. In order of how much 
 
 | Parameter | What to measure |
 |---|---|
-| `cam_w`, `cam_d`, `cam_hole_inset`, `cam_hole_d`, `cam_lens_from_far` | **The UC-805**: no drawing of the carrier board is published, only photos. Its outline, its two holes, and where the lens sits. The posts, the screws, the lens opening and the aiming ring all follow them |
+| `cam_w`, `cam_d`, `cam_hole_inset`, `cam_hole_d`, `cam_lens_from_far` | **The UC-805**: no drawing of the carrier board is published, only photos. Its outline, its two holes, and where the lens sits. The posts, the screws and the lens opening all follow them |
 | `lens_h` | The lens tip below the board's component side, **glue included** (the module is stuck on) |
 | `bat_x0`, `bat_h` | **The BAT connector**: the camera's housings pass only 0.3 mm above it |
 | `cam_pin_out`, `housing_len`, `housing_on_pin` | The camera's right-angle pins, and your jumper housings |

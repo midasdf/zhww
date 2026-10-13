@@ -11,10 +11,14 @@
 //!
 //! The case is two shells split at one horizontal parting line, so their outer faces, corner radii
 //! and the parting groove run continuously round the part: a **base** (floor, board standoffs,
-//! camera posts, the lens opening, the power USB-C opening, foot pockets) and a **top** (display
-//! window, two button caps, screw bosses, an aiming mark over the lens). Four countersunk M2 screws
-//! come in from underneath: two through the board's own mounting holes and two through the
-//! camera board's, so the camera is clamped by the case and nothing shows on the face you look at.
+//! camera posts, the lens opening, the power USB-C opening) and a **top** (display window, two
+//! button caps, bosses). Four countersunk M2 screws come in from
+//! underneath, one in each corner, all the same distance from both edges they are near; the
+//! front-right one passes through the camera board's own hole. Bosses in the top press the board
+//! and the camera's other hole down without screws, and nothing shows on the face you look at.
+//!
+//! The lens is placed by the golden ratio: it divides the space between the two right-hand screws
+//! 1 : φ, which is what sets the case's depth.
 //!
 //! Why the camera sits beside the board rather than under it: under the board it would add about
 //! 6 mm to the height; beside it, the case stays as thin as the display stack (about 20 mm) and
@@ -140,9 +144,10 @@ const housing_len: f64 = 14.0; // [E]
 const housing_on_pin: f64 = 6.0; // [E] how much of the pin a housing swallows
 const cam_pins = 8; // [D] VCC SCL SDA VSYNC HREF PCLK D0 GND, odd row of the 2×8 footprint
 const cam_gap: f64 = 0.5; // [E] main board edge → camera board edge
-/// Camera centre line, in board y: as far forward as the housings must be to clear the 40-pin
-/// header, and as far back as the board must be to clear the front wall (both checked).
-const cam_cy: f64 = 12.7; // [E]
+/// Camera centre line, in board y. Its front hole is the front-right corner screw, so the camera
+/// sits where that hole lands `corner_inset` from the front edge; the checks confirm that this
+/// keeps its housings in front of the 40-pin header and its board inside the front wall.
+const cam_cy = corner_inset - board_y0 + (cam_w / 2 - cam_hole_inset);
 
 // The four camera signals land on the 40-pin header (RP2350-PiZero GPIO numbers): HREF on pin 29
 // (GPIO15), D0 on pin 32 (GPIO9), PCLK on pin 33 (GPIO13), VSYNC on pin 36 (GPIO16). They are
@@ -158,8 +163,7 @@ const wire_bend: f64 = 1.2; // [E] the wire turning flat above it
 const wall: f64 = 1.8; // [E] side walls (uniform, for a clear print)
 const floor_t: f64 = 1.8; // [E]
 const top_t: f64 = 1.6; // [E] top plate
-const clearance: f64 = 0.4; // [E] board edge → inner wall (left and front)
-const clearance_rear: f64 = 1.1; // [E] rear: the Mini PiTFT may overhang the board (its .brd)
+const clearance: f64 = 0.4; // [E] board edge → inner wall (front)
 const cam_clearance: f64 = 0.5; // [E] camera board → right inner wall
 const corner_r: f64 = 5.0; // [E] outer corner radius in plan
 const inner_r: f64 = 1.0; // [E] inner corner radius (keeps square module corners clear)
@@ -168,7 +172,9 @@ const bottom_edge_r: f64 = 0.8; // [E] round-over along the bottom
 const parting_groove: f64 = 0.4; // [E] chamfer on both sides of the parting line: a V reveal
 const lid_gap: f64 = 0.5; // [E] air above the tallest thing under the top plate
 const lip_t: f64 = 0.8; // [E] locating lip on the base: the inner part of the wall, standing up
-const lip_h: f64 = 1.2; // [E]
+/// As tall as it can be while its top stays below the Mini PiTFT's board: it locks the shells
+/// against each other in torsion (it was 1.2 mm).
+const lip_h = @min(2.5, tft_pcb_z - parting_z - 0.1);
 const lip_gap: f64 = 0.15; // [E] lip → top-shell clearance
 
 const standoff_d: f64 = 5.5; // [E] inside the Φ6 keep-out round the board's holes
@@ -181,7 +187,13 @@ const cam_rest_from_side: f64 = 1.25; // [E]
 const clamp_t: f64 = 1.2; // [E] rib from the top plate onto the camera header's plastic
 const clamp_gap: f64 = 0.2; // [E]
 
-// Screws: four M2 × 16 flat heads from underneath, into blind pilots in the top shell.
+// Screws: four M2 × 16 flat heads from underneath, one in each corner, into blind pilots in the
+// top shell. All four stand `corner_inset` in from both edges they are near. That inset is set by
+// the front-right one, which is the camera board's own front hole: its distance from the camera's
+// edge, plus the camera's clearance to the wall, plus the wall. The other three stand in columns
+// of their own (a post in the base, a boss in the top), clear of the walls: a boss merged into the
+// wall would hit the base's wall and lip below the parting line. The board and the camera's rear
+// hole are held by bosses that press on them without a screw.
 const screw_clear_d: f64 = 2.4; // [E] M2 clearance
 const screw_head_d: f64 = 4.0; // [D] ISO 10642 M2 head (3.8)
 const screw_pilot_d: f64 = 1.6; // [E] M2 into printed plastic
@@ -189,6 +201,21 @@ const screw_len: f64 = 16.0; // [E] M2 × 16
 const boss_d: f64 = 5.0; // [E]
 /// The front-left boss runs beside the Mini PiTFT's front edge, so it is flattened on that side.
 const boss_flat_keepout: f64 = 0.3; // [E] air between that flat and the module's front edge
+const corner_inset = cam_hole_inset + cam_clearance + wall;
+const column_d: f64 = 3.6; // [E] a corner column round a Φ1.6 pilot: 1.0 mm of wall
+const column_gap_board: f64 = 0.3; // [E] the left columns → the board's left edge (and the Mini PiTFT's)
+const column_gap_wall = corner_inset - wall - column_d / 2; // the left columns → the left inner wall
+/// The rear-middle column stands behind the board's rear edge, on the rear row, at the case's
+/// centre; it is slimmer so it clears that edge.
+const rear_column_d: f64 = 3.2; // [E] round a Φ1.6 pilot: 0.8 mm of wall
+
+/// The golden ratio sets the case's depth: the lens divides it 1 : φ from the front edge (the lens's
+/// own distance from the front edge is fixed by the camera board and the corner inset). The rear
+/// clearance is whatever that leaves; the checks confirm the Mini PiTFT fits and the rear-middle
+/// column clears the board.
+const phi = (1.0 + @sqrt(5.0)) / 2.0;
+const golden_minor = 1.0 - 1.0 / phi; // 0.382: the smaller part of a golden division
+const lens_from_front = corner_inset + (cam_w / 2 - cam_hole_inset);
 
 // Display window and buttons
 const window_margin: f64 = 1.0; // [E] window = active area + this on every side
@@ -209,22 +236,14 @@ const usb_pocket_w: f64 = 12.6; // [E] fits most overmoulded plugs  MEASURED wit
 const usb_pocket_h: f64 = 7.0; // [E]
 const usb_wall_left: f64 = 0.6; // [E] wall left at the bottom of the pocket
 
-// Lens opening in the floor (countersunk from below) and the aiming mark above it
+// Lens opening in the floor (countersunk from below)
 const lens_hole_d: f64 = 6.4; // [E]
 const lens_cs_d: f64 = 8.0; // [E] 90° countersink at the bottom face
-const aim_d: f64 = 9.0; // [E] a ring engraved in the top, over the lens
-const aim_w: f64 = 0.6; // [E]
-const aim_depth: f64 = 0.3; // [E]
-
-// Feet: four self-adhesive bumpers in shallow pockets
-const foot_d: f64 = 8.0; // [E] e.g. 3M Bumpon SJ5302 (Φ7.9)
-const foot_pocket: f64 = 0.6; // [E]
-const foot_inset_x: f64 = 14.0; // [E] from the short ends
-const foot_inset_y: f64 = 8.0; // [E] from the long sides
 
 // ---------------------------------------------------------------- derived layout
 
-const board_x0 = wall + clearance;
+const clearance_left = column_gap_wall + column_d + column_gap_board; // board edge → left inner wall
+const board_x0 = wall + clearance_left;
 const board_y0 = wall + clearance;
 const board_z = floor_t + under_board; // board underside
 const board_top = board_z + board_t;
@@ -260,7 +279,8 @@ const cam_holes = [2]XY{
 const top_inner = @max(tft_tallest, header_top + terminal_h + wire_bend) + lid_gap;
 const outer_h = top_inner + top_t;
 const outer_w = board_x0 + cam_x1 + cam_clearance + wall;
-const outer_d = board_y0 + board_d + clearance_rear + wall;
+const outer_d = lens_from_front / golden_minor;
+const clearance_rear = outer_d - wall - board_y0 - board_d; // board's rear edge → rear inner wall
 
 const lcd_x = tft_sock_cx + tft_lcd_dx;
 const lcd_y = tft_sock_cy - tft_lcd_dy;
@@ -283,17 +303,35 @@ const hole_fr = XY{ board_w - hole_inset, hole_inset };
 const hole_rr = XY{ board_w - hole_inset, board_d - hole_inset };
 const hole_rl = XY{ hole_inset, board_d - hole_inset };
 
-const Screw = struct {
+/// A boss hanging from the top plate. With `screw`, a screw comes up from underneath into it;
+/// without, it only presses the part below it down.
+const Boss = struct {
     at: XY, // board coordinates
     seat: f64, // z of the face the boss presses on (the board's top, or the camera's back)
     under: f64, // z of that part's underside, where the clearance hole from below ends
+    screw: bool,
     flat: bool = false, // flattened toward the Mini PiTFT
+    d: f64 = boss_d,
+    post: bool = false, // a corner column: the base has a post of its own under the boss
+    corner: bool = false, // one of the four corner screws, all `corner_inset` from their edges
 };
-const screws = [4]Screw{
-    .{ .at = hole_fl, .seat = board_top, .under = board_z, .flat = true },
-    .{ .at = hole_rr, .seat = board_top, .under = board_z },
-    .{ .at = cam_holes[0], .seat = cam_top, .under = cam_bottom },
-    .{ .at = cam_holes[1], .seat = cam_top, .under = cam_bottom },
+// The corner screws, in board coordinates
+const column_left = -(column_gap_board + column_d / 2);
+const column_right = cam_holes[0][0];
+const row_front = cam_holes[0][1];
+const row_rear = outer_d - corner_inset - board_y0;
+const column_middle = outer_w / 2 - board_x0;
+const bosses = [_]Boss{
+    .{ .at = .{ column_left, row_front }, .seat = board_top, .under = board_top, .screw = true, .d = column_d, .post = true, .corner = true },
+    .{ .at = .{ column_left, row_rear }, .seat = board_top, .under = board_top, .screw = true, .d = column_d, .post = true, .corner = true },
+    .{ .at = cam_holes[0], .seat = cam_top, .under = cam_bottom, .screw = true, .corner = true },
+    .{ .at = .{ column_right, row_rear }, .seat = board_top, .under = board_top, .screw = true, .d = column_d, .post = true, .corner = true },
+    // the middle of the rear row, behind the board
+    .{ .at = .{ column_middle, row_rear }, .seat = board_top, .under = board_top, .screw = true, .d = rear_column_d, .post = true },
+    // two more through the board's own holes: they clamp base, board and top together
+    .{ .at = hole_fl, .seat = board_top, .under = board_z, .screw = true, .flat = true },
+    .{ .at = hole_rr, .seat = board_top, .under = board_z, .screw = true },
+    .{ .at = cam_holes[1], .seat = cam_top, .under = cam_bottom, .screw = false },
 };
 
 fn caseX(bx: f64) f64 {
@@ -372,8 +410,8 @@ fn writeBase(s: *sc.Script) !void {
     try roundedBox(s, "BaseCavity", .{ wall, wall, floor_t }, .{ outer_w - 2 * wall, outer_d - 2 * wall, parting_z + lip_h }, inner_r);
     try cutWith(s, "Base", "BaseCavity");
 
-    // Board standoffs: the front-right and rear-left ones carry locating pins, the other two are
-    // drilled for the screws.
+    // Board standoffs: the front-left and rear-right ones are drilled for screws, the front-right
+    // and rear-left ones (under the camera housings and under the display) carry locating pins
     for ([_]XY{ hole_fl, hole_fr, hole_rr, hole_rl }) |h| {
         try s.cylinder("Standoff", .{ caseX(h[0]), caseY(h[1]), floor_t - 0.01 }, standoff_d, under_board + 0.01, up, .new);
         try joinWith(s, "Base", "Standoff");
@@ -383,19 +421,30 @@ fn writeBase(s: *sc.Script) !void {
         try joinWith(s, "Base", "Pin");
     }
 
-    // Camera: two posts under its holes (drilled for the screws) and two rests under the
-    // corners of its header edge
+    // The posts under the three corner columns
+    for (bosses) |b| {
+        if (!b.post) continue;
+        try s.cylinder("ColumnPost", .{ caseX(b.at[0]), caseY(b.at[1]), floor_t - 0.01 }, b.d, b.seat - floor_t + 0.01, up, .new);
+        try joinWith(s, "Base", "ColumnPost");
+    }
+
+    // Camera: two posts under its holes (the front one drilled for its screw, the rear one with a
+    // locating pin) and two rests under the corners of its header edge
     for (cam_holes) |h| {
         try s.cylinder("CamPost", .{ caseX(h[0]), caseY(h[1]), floor_t - 0.01 }, cam_post_d, cam_bottom - floor_t + 0.01, up, .new);
         try joinWith(s, "Base", "CamPost");
     }
+    try s.cylinder("Pin", .{ caseX(cam_holes[1][0]), caseY(cam_holes[1][1]), cam_bottom - 0.01 }, pin_d, pin_h + 0.01, up, .new);
+    try joinWith(s, "Base", "Pin");
     for ([_]f64{ cam_y0 + cam_rest_from_side, cam_y1 - cam_rest_from_side }) |y| {
         try s.cylinder("CamRest", .{ caseX(cam_x0 + cam_rest_from_edge), caseY(y), floor_t - 0.01 }, cam_rest_d, cam_bottom - floor_t + 0.01, up, .new);
         try joinWith(s, "Base", "CamRest");
     }
 
     // Screw holes from underneath, countersunk
-    for (screws) |sw| try screwHole(s, "Base", caseX(sw.at[0]), caseY(sw.at[1]), sw.under + 0.5);
+    for (bosses) |b| {
+        if (b.screw) try screwHole(s, "Base", caseX(b.at[0]), caseY(b.at[1]), b.under + 0.5);
+    }
 
     // The lens looks out through the floor
     try s.cmd("solid.hole", "\"body\": \"Base\", \"position\": {f}, \"direction\": [0, 0, 1], \"diameter\": {f}, \"depth\": {f}, \"type\": \"countersink\", \"cs_diameter\": {f}, \"cs_angle\": \"90 deg\"", .{
@@ -413,31 +462,8 @@ fn writeBase(s: *sc.Script) !void {
         try cutWith(s, "Base", "FrontRelief");
     }
 
-    for (feet) |f| {
-        try s.cylinder("FootPocket", .{ f[0], f[1], -1 }, foot_d + 0.3, foot_pocket + 1, up, .new);
-        try cutWith(s, "Base", "FootPocket");
-    }
-
-    // The name and the licence, engraved underneath. The sketch faces down with its "up" toward
-    // the front edge, so it reads correctly once the case is turned over toward you.
-    try s.cmd("sketch.create", "\"plane\": {{\"origin\": {f}, \"x_dir\": [1, 0, 0], \"y_dir\": [0, -1, 0]}}, \"name\": \"Marking\"", .{sc.p3(outer_w / 2, outer_d / 2, -1)});
-    try s.cmd("sketch.text", "\"text\": \"zhww\", \"at\": [-8.7, 1], \"height\": 5", .{});
-    try s.cmd("sketch.text", "\"text\": \"CERN-OHL-S-2.0\", \"at\": [-11, -3.5], \"height\": 2", .{});
-    try s.cmd("sketch.finish", "", .{});
-    // cut from 1 mm below the bottom face, so the tool crosses it instead of touching it
-    try s.cmd("solid.extrude", "\"sketch\": \"Marking\", \"profiles\": \"all\", \"distance\": {f}, \"direction\": \"negative\", \"operation\": \"cut\", \"targets\": [\"Base\"]", .{sc.n(1 + marking_depth)});
-
     try s.chamfer("Base", &.{.{ outer_w / 2, 0, parting_z }}, parting_groove);
 }
-
-const marking_depth: f64 = 0.4; // [E]
-
-const feet = [4]XY{
-    .{ foot_inset_x, foot_inset_y },
-    .{ outer_w - foot_inset_x, foot_inset_y },
-    .{ outer_w - foot_inset_x, outer_d - foot_inset_y },
-    .{ foot_inset_x, outer_d - foot_inset_y },
-};
 
 fn writeTop(s: *sc.Script) !void {
     try roundedBox(s, "Top", .{ 0, 0, parting_z }, .{ outer_w, outer_d, outer_h - parting_z }, corner_r);
@@ -449,17 +475,19 @@ fn writeTop(s: *sc.Script) !void {
     try roundedBox(s, "LipRelief", .{ relief, relief, parting_z - 1 }, .{ outer_w - 2 * relief, outer_d - 2 * relief, lip_h + lip_gap + 1 }, corner_r - relief); // concentric: an even skin round the corners
     try cutWith(s, "Top", "LipRelief");
 
-    // Screw bosses, from the underside of the top plate down onto the board or the camera
-    for (screws) |sw| {
-        const x = caseX(sw.at[0]);
-        const y = caseY(sw.at[1]);
-        try s.cylinder("Boss", .{ x, y, sw.seat }, boss_d, top_inner - sw.seat + 0.01, up, .new);
-        if (sw.flat) {
-            try s.box("BossFlat", .{ x - boss_d, caseY(tft_y0 - boss_flat_keepout), sw.seat - 1 }, .{ 2 * boss_d, boss_d, top_inner - sw.seat + 2 }, .new);
+    // Bosses, from the underside of the top plate down onto the board, the camera or a corner
+    // post; the four with a screw get a blind pilot
+    for (bosses) |b| {
+        const x = caseX(b.at[0]);
+        const y = caseY(b.at[1]);
+        try s.cylinder("Boss", .{ x, y, b.seat }, b.d, top_inner - b.seat + 0.01, up, .new);
+        if (b.flat) {
+            try s.box("BossFlat", .{ x - b.d, caseY(tft_y0 - boss_flat_keepout), b.seat - 1 }, .{ 2 * b.d, b.d, top_inner - b.seat + 2 }, .new);
             try cutWith(s, "Boss", "BossFlat");
         }
         try joinWith(s, "Top", "Boss");
-        try s.cylinder("Pilot", .{ x, y, sw.seat - 0.01 }, screw_pilot_d, pilotDepth(sw.seat), up, .new);
+        if (!b.screw) continue;
+        try s.cylinder("Pilot", .{ x, y, b.seat - 0.01 }, screw_pilot_d, pilotDepth(b.seat), up, .new);
         try cutWith(s, "Top", "Pilot");
     }
 
@@ -480,12 +508,6 @@ fn writeTop(s: *sc.Script) !void {
         try s.cylinder("CapCounterbore", .{ caseX(b[0]), caseY(b[1]), top_inner - 1 }, cap_flange_d + 0.4, cap_counterbore + 1, up, .new);
         try cutWith(s, "Top", "CapCounterbore");
     }
-
-    // The aiming mark: a ring engraved in the top, straight above the lens
-    try s.cylinder("AimRing", .{ caseX(lens_x), caseY(cam_cy), outer_h - aim_depth }, aim_d, aim_depth + 1, up, .new);
-    try s.cylinder("AimInside", .{ caseX(lens_x), caseY(cam_cy), outer_h - aim_depth - 1 }, aim_d - 2 * aim_w, aim_depth + 3, up, .new);
-    try cutWith(s, "AimRing", "AimInside");
-    try cutWith(s, "Top", "AimRing");
 
     try s.chamfer("Top", &.{.{ outer_w / 2, 0, parting_z }}, parting_groove);
 }
@@ -643,15 +665,101 @@ const Check = struct {
 
 fn minPilotMargin() f64 {
     var m: f64 = std.math.inf(f64);
-    for (screws) |sw| m = @min(m, top_inner - (sw.seat + pilotDepth(sw.seat)));
+    for (bosses) |b| {
+        if (b.screw) m = @min(m, top_inner - (b.seat + pilotDepth(b.seat)));
+    }
     return m;
 }
 
 fn minThread() f64 {
     var m: f64 = std.math.inf(f64);
-    for (screws) |sw| m = @min(m, pilotDepth(sw.seat) - 1.0);
+    for (bosses) |b| {
+        if (b.screw) m = @min(m, pilotDepth(b.seat) - 1.0);
+    }
     return m;
 }
+
+/// How far the four corner screws stray from `corner_inset` (from the nearer short end and the
+/// nearer long side, measured on the outside of the case).
+fn cornerInsetError() f64 {
+    var m: f64 = 0;
+    for (bosses) |b| {
+        if (!b.corner) continue;
+        const x = caseX(b.at[0]);
+        const y = caseY(b.at[1]);
+        m = @max(m, @abs(@min(x, outer_w - x) - corner_inset));
+        m = @max(m, @abs(@min(y, outer_d - y) - corner_inset));
+    }
+    return m;
+}
+
+/// Every column against the inner walls; the left-hand ones against the board's left edge and the
+/// button caps; the rear-middle one against the board's rear edge, the Mini PiTFT (with its
+/// possible overhang) and the bare terminals; the rear-right one against the camera board.
+fn columnClearance() f64 {
+    var m: f64 = std.math.inf(f64);
+    for (bosses) |b| {
+        if (!b.post) continue;
+        const r = b.d / 2;
+        // inner walls, in board coordinates
+        m = @min(m, (b.at[0] - r) + clearance_left);
+        m = @min(m, (cam_x1 + cam_clearance) - (b.at[0] + r));
+        m = @min(m, (b.at[1] - r) + clearance);
+        m = @min(m, (board_d + clearance_rear) - (b.at[1] + r));
+        if (b.at[0] < 0) {
+            m = @min(m, -(b.at[0] + r)); // the board's left edge (and the Mini PiTFT's, which is further in)
+            for (buttons) |c| m = @min(m, std.math.hypot(c[0] - b.at[0], c[1] - b.at[1]) - (cap_flange_d + 0.4) / 2 - r);
+        } else if (b.at[0] < board_w) {
+            m = @min(m, (b.at[1] - r) - board_d); // the board's rear edge
+            m = @min(m, @max((b.at[0] - r) - tft_x1, (b.at[1] - r) - (tft_y1 + 0.75)));
+            for (signal_pins) |p| {
+                const at = pinXY(p);
+                m = @min(m, std.math.hypot(at[0] - b.at[0], at[1] - b.at[1]) - terminal / 2 - r);
+            }
+        } else {
+            m = @min(m, (b.at[1] - r) - cam_y1);
+        }
+    }
+    return m;
+}
+
+/// Every countersunk head stays clear of the outer faces it is near.
+fn countersinkToOutside() f64 {
+    var m: f64 = std.math.inf(f64);
+    for (bosses) |b| {
+        if (!b.screw) continue;
+        const x = caseX(b.at[0]);
+        const y = caseY(b.at[1]);
+        const r = (screw_head_d + 0.3) / 2;
+        m = @min(m, @min(x, outer_w - x) - r);
+        m = @min(m, @min(y, outer_d - y) - r);
+    }
+    return m;
+}
+
+fn screwHeadsApart() f64 {
+    var m: f64 = std.math.inf(f64);
+    for (bosses, 0..) |a, i| {
+        if (!a.screw) continue;
+        for (bosses[i + 1 ..]) |b| {
+            if (!b.screw) continue;
+            m = @min(m, std.math.hypot(a.at[0] - b.at[0], a.at[1] - b.at[1]) - (screw_head_d + 0.3));
+        }
+    }
+    return m;
+}
+
+fn lensToScrewHeads() f64 {
+    var m: f64 = std.math.inf(f64);
+    for (bosses) |b| {
+        if (!b.screw) continue;
+        m = @min(m, std.math.hypot(b.at[0] - lens_x, b.at[1] - cam_cy) - lens_cs_d / 2 - (screw_head_d + 0.3) / 2);
+    }
+    return m;
+}
+
+/// Where the lens divides the case's depth, from the front edge (0.382 is golden).
+const lens_division = caseY(cam_cy) / outer_d;
 
 fn terminalsToHousings() f64 {
     // the terminals stand behind the housings' rear edge, or beside their end
@@ -673,18 +781,6 @@ fn terminalsApart() f64 {
             const pa = pinXY(a);
             const pb = pinXY(b);
             m = @min(m, std.math.hypot(pa[0] - pb[0], pa[1] - pb[1]) - terminal);
-        }
-    }
-    return m;
-}
-
-fn feetClearance() f64 {
-    var m: f64 = std.math.inf(f64);
-    for (feet) |f| {
-        const lens = XY{ caseX(lens_x), caseY(cam_cy) };
-        m = @min(m, std.math.hypot(f[0] - lens[0], f[1] - lens[1]) - (foot_d + 0.3) / 2 - lens_cs_d / 2);
-        for (screws) |sw| {
-            m = @min(m, std.math.hypot(f[0] - caseX(sw.at[0]), f[1] - caseY(sw.at[1])) - (foot_d + 0.3) / 2 - (screw_head_d + 0.3) / 2);
         }
     }
     return m;
@@ -727,10 +823,16 @@ const checks = blk: {
         .{ .name = "bare terminals clear of each other", .value = terminalsApart(), .limit = 0.5 },
         .{ .name = "bare terminals right of the Mini PiTFT", .value = pinXY(signal_pins[0])[0] - terminal / 2 - tft_x1, .limit = 0.3 },
         .{ .name = "rear-right boss clear of the camera housings", .value = (hole_rr[1] - boss_d / 2) - (cam_cy + housing_half), .limit = 0.3 },
-        // screws, feet
+        // screws and the bottom face
+        .{ .name = "the four corner screws all stand the corner inset from both edges", .value = cornerInsetError(), .limit = 0.01, .at_least = false },
+        .{ .name = "columns clear of the walls, the board, the Mini PiTFT, the terminals, the caps and the camera", .value = columnClearance(), .limit = 0.2 },
+        .{ .name = "countersunk heads clear of the outer faces", .value = countersinkToOutside(), .limit = 1.5 },
+        .{ .name = "lens divides the depth in the golden ratio, from the front edge (0.382 is golden)", .value = @abs(lens_division - golden_minor), .limit = 0.001, .at_least = false },
+        .{ .name = "rear-middle screw centred between the rear corner screws", .value = @abs((column_middle - column_left) - (column_right - column_middle)), .limit = 0.01, .at_least = false },
+        .{ .name = "lens opening clear of the screw heads", .value = lensToScrewHeads(), .limit = 1.0 },
+        .{ .name = "countersunk heads clear of each other", .value = screwHeadsApart(), .limit = 1.0 },
         .{ .name = "screw thread engaged in every boss", .value = minThread(), .limit = 4.0 },
         .{ .name = "every pilot ends below the top plate", .value = minPilotMargin(), .limit = 0.5 },
-        .{ .name = "feet clear of the lens opening and the screw heads", .value = feetClearance(), .limit = 1.0 },
     };
 };
 
