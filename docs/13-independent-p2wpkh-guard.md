@@ -39,6 +39,7 @@ independent cryptographic implementations or resistance to an instruction skip/m
 | Sighash | Absent/default ALL or explicit `0x00000001`; no NONE/SINGLE/ANYONECANPAY |
 | Outputs | 1–62; every canonical value/script is included in hashOutputs |
 | Map fields | At most 128 per map, canonical key/value lengths and no duplicate full keys |
+| Input key metadata | If supplied, at most eight compressed BIP84 candidates, exact five-level path; no arbitrary-depth/legacy/EVM paths |
 | Amounts | Values and totals bounded by 21 million BTC; outputs cannot exceed inputs |
 
 The approved workflow also applies its primary display policy: standard address outputs and
@@ -46,8 +47,9 @@ at most 64 explicit review pages. The independent guard's output hashing does no
 addresses or prove a destination is supported by the display.
 
 Irrelevant metadata/unknown fields are length-bounded, duplicate-checked and skipped, not fully
-interpreted. This is **not a second complete BIP174 validator**. The primary parser remains
-responsible for formats such as derivation/xpub/partial-signature metadata. Unknown fields are
+interpreted. Input derivation key/path shape has the stricter bound above; point validity and
+xpub/partial-signature metadata remain primary-parser responsibilities. This is **not a second
+complete BIP174 validator**. Unknown fields are
 still preserved by the primary signed-PSBT serializer. A request the development CLI can sign
 may be refused by the narrower approved workflow; refusal must not silently fall back to the CLI.
 
@@ -74,7 +76,9 @@ warnings remain. No independent previous-transaction/txid handling is claimed fo
    until after earlier signatures are generated.
 8. For each matched key, compute the actual key-derived message and compare it again directly
    before `secp256k1.sign`. Verify every resulting ECDSA signature.
-9. Require a signature for every input and the reviewed fee. Return output only after success;
+9. Explicit key metadata mismatch never triggers broad fallback. Without metadata, search only
+   BIP84 account 0, coin 0/1, branch 0/1, indices 0–20. Do not run change-discovery scans or infer
+   hidden change. Require a signature for every input and the reviewed fee. Return output only after success;
    consume/wipe the session on every exit and destroy/erase the owned signing context.
 
 The approved adapter uses `signPsbtWithPlan`, not the unchecked compatibility API. The plan
@@ -114,6 +118,8 @@ python3 -m unittest discover -s tools/tests -v
   non-witness data; the exact 128-field boundary is also checked.
 - Wrong expected message/count is rejected before input-key discovery. A two-input test with
   valid first hash and corrupted second hash proves all-input preflight precedes the first key lookup.
+- Bounded BIP84 metadata/candidate-count and discovery-cap checks; explicit fingerprint
+  mismatch refuses without fallback, and guarded results never infer change.
 - Deterministic 512-case transaction-byte mutation differential check: currently 468 are accepted
   by the guard and every accepted case matches primary messages. Other mutations are refused,
   not signed. This is a regression corpus, not an exhaustive parser/sighash proof.
@@ -123,15 +129,16 @@ The approved-workflow tests additionally corrupt the stored plan commitment afte
 are wiped. Existing pinned final-transaction, single-use approval, RNG and workspace-failure tests
 continue to run against the now-guarded real signer.
 
-Guard state/temporary maps use stack, not workspace allocation. The Cortex-M33 provisional
-inventory now measures the extra persistent plan digest/review totals, but **does not establish a
-transitive stack bound**. The host fixed-workspace peaks remain 2,244 bytes for the small Core
+Guard state/temporary maps use stack, not workspace allocation. The [offline target link/frame
+harness](14-target-link-and-fault-prototype.md) now measures individual frames (guard 6,032 bytes)
+and real partial-image storage, but **does not establish a transitive stack bound**. The host fixed-workspace peaks remain 2,244 bytes for the small Core
 request and 99,722 bytes for the padded 64 KiB request. See [12](12-rp2350-memory-budget.md).
 
 ## 5. Still required before release
 
 - Separate Secure/NS images, constrained NS gateway, Secure memory/display/button ownership,
-  DMA attribution and guarded target stacks.
+  DMA attribution and runtime-validated target stacks. Offline linking/fatal-stack compilation
+  now exists but is not a bootable or attributed wallet image.
 - Independent review of both implementations and adversarial target tests. Protect guard/plan
   state and rejection logic against fault injection using the actual RP2350 facilities, rather than
   assuming two software comparisons cannot both be bypassed.

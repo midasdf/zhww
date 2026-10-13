@@ -33,6 +33,26 @@ pub fn build(b: *std.Build) void {
     const memory_step = b.step("memory", "Check the provisional Cortex-M33 SRAM inventory (requires Python 3)");
     memory_step.dependOn(&memory_cmd.step);
 
+    // Real bare-metal links with pinned C sources; no boot/startup/CMSE/HAL yet.
+    // Download requires explicit -Dtarget-fetch=true on a fresh checkout.
+    const target_fetch = b.option(bool, "target-fetch", "Allow SHA256-pinned secp256k1 source download") orelse false;
+    inline for (.{ false, true }) |host_tests| {
+        const cmd = b.addSystemCommand(&.{"python3"});
+        cmd.setCwd(b.path("."));
+        cmd.addFileArg(b.path("../tools/check_target_link.py"));
+        cmd.addArgs(&.{ "--zig", b.graph.zig_exe });
+        if (target_fetch) cmd.addArg("--fetch");
+        if (host_tests) {
+            cmd.addArg("--host-tests");
+            cmd.addArgs(&.{ "--out", "zig-out/target-config-test" });
+        }
+        const step = b.step(if (host_tests) "target-config-test" else "target-link", if (host_tests)
+            "Link target harness and test selected 32-bit C crypto configuration on host in all modes"
+        else
+            "Link/check offline Cortex-M33 Secure/NS harness and static frame metadata (NOT boot firmware)");
+        step.dependOn(&cmd.step);
+    }
+
     // Development CLI (a way to check things before building the on-device screen UI)
     const cli_module = b.createModule(.{
         .root_source_file = b.path("src/cli/main.zig"),

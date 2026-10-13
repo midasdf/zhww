@@ -39,6 +39,38 @@ fn approve(w: *Workflow) !void {
     try w.button(false, 1101);
 }
 
+fn twoInputs(a: std.mem.Allocator, raw: []const u8, foreign_second: bool) ![]u8 {
+    var psbt = try zhww.btc_psbt.Psbt.parse(a, raw);
+    const original = psbt.inputs[0];
+    const original_map = psbt.input_raw[0];
+    const inputs = try a.alloc(zhww.btc_transaction.TxIn, 2);
+    inputs[0] = psbt.unsigned_tx.inputs[0];
+    inputs[1] = inputs[0];
+    inputs[1].prevout.vout += 1; // different outpoint; synthetic UTXO data, not a chain proof
+    psbt.unsigned_tx.inputs = inputs;
+    psbt.inputs = try a.alloc(zhww.btc_psbt.Input, 2);
+    @memset(psbt.inputs, original);
+    var second_map: []const u8 = original_map;
+    if (foreign_second) {
+        var value: [31]u8 = @splat(0xff);
+        std.mem.writeInt(u64, value[0..8], original.witness_utxo.?.value, .little);
+        value[8] = 22;
+        value[9] = 0;
+        value[10] = 20;
+        var map = std.ArrayList(u8).empty;
+        try map.appendSlice(a, &.{ 1, 1 });
+        try zhww.btc_transaction.writeVarBytes(&map, a, &value);
+        second_map = map.items;
+    }
+    psbt.input_raw = &.{ original_map, second_map };
+    const tx = try psbt.unsigned_tx.serialize(a, false);
+    var global = std.ArrayList(u8).empty;
+    try global.appendSlice(a, &.{ 1, 0 });
+    try zhww.btc_transaction.writeVarBytes(&global, a, tx);
+    psbt.global_raw = global.items;
+    return zhww.btc_psbt.Psbt.serializeWith(a, psbt, &.{ &.{}, &.{} });
+}
+
 const MockEntropy = struct {
     const Mode = enum { ready, unhealthy, stalled, unavailable };
     calls: usize = 0,
@@ -166,6 +198,59 @@ test "largest padded request fits the fixed workspace for the pinned transaction
     try testing.expect(std.mem.indexOf(u8, outcome.signed_psbt, padding) != null);
     std.debug.print("Approved BTC padded 64 KiB (host ABI): prepare peak {d}, combined peak {d} bytes\n", .{ prepare_peak, workspace.peak });
     try wiped(&w);
+}
+
+test "two-input 64 KiB request signs completely inside the fixed workspace" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    const raw = try twoInputs(a, f.raw, false);
+    var parsed = try zhww.btc_psbt.Psbt.parse(a, raw);
+    const padding = try a.alloc(u8, review_mod.max_request_bytes - raw.len - 5);
+    @memset(padding, 0xab);
+    var global = std.ArrayList(u8).empty;
+    try global.appendSlice(a, parsed.global_raw);
+    try global.appendSlice(a, &.{ 1, 0xfa });
+    try zhww.btc_transaction.writeVarBytes(&global, a, padding);
+    parsed.global_raw = global.items;
+    const padded = try zhww.btc_psbt.Psbt.serializeWith(a, parsed, &.{ &.{}, &.{} });
+    try testing.expectEqual(@as(usize, review_mod.max_request_bytes), padded.len);
+    var memory: [zhww.memory_budget.workspace_bytes]u8 align(64) = undefined;
+    var workspace = zhww.workspace.Workspace.init(&memory);
+    defer workspace.reset();
+    var w: Workflow = .{};
+    try w.begin(workspace.allocator(), evidence(), &f.seed, padded, .regtest, 0);
+    try approve(&w);
+    const signed = try signTest(&w, workspace.allocator(), padded, 1102);
+    try testing.expectEqual(@as(usize, 2), signed.result.partial_sigs.len);
+    try testing.expectEqual(@as(usize, 0), signed.result.unsigned_inputs.len);
+    try testing.expectEqual(@as(usize, 0), signed.result.change_outputs.len);
+    const final = try zhww.btc_transaction.Transaction.parse(a, signed.result.final_tx.?);
+    try testing.expectEqual(@as(usize, 2), final.inputs.len);
+    for (final.inputs) |input| try testing.expectEqual(@as(usize, 2), input.witness.len);
+    try testing.expect(std.mem.indexOf(u8, signed.signed_psbt, padding) != null);
+    try testing.expectEqual(@as(usize, 0), workspace.failures);
+    std.debug.print("Approved two-input padded 64 KiB (host ABI): peak {d} bytes\n", .{workspace.peak});
+    try wiped(&w);
+}
+
+test "foreign second input cannot publish an earlier partial signature and releases context" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var f = try fixture(a);
+    defer std.crypto.secureZero(u8, &f.seed);
+    const raw = try twoInputs(a, f.raw, true);
+    var w: Workflow = .{};
+    try w.begin(a, evidence(), &f.seed, raw, .regtest, 0);
+    try approve(&w);
+    try testing.expectError(error.NoMatchingKey, signTest(&w, a, raw, 1102));
+    try wiped(&w);
+    // No output is returned even if input 0 was signed internally. Lease was retired.
+    var next = try zhww.secp256k1.SigningLease.begin(&@as([32]u8, @splat(0x44)));
+    defer next.end();
 }
 
 test "workspace exhaustion during prepare and post-approval revalidation wipes the session" {

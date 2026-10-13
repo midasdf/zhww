@@ -59,6 +59,13 @@ jobs:
           cd firmware
           zig build memory --summary all
 
+      - name: Offline Secure/NS link and selected target crypto configuration
+        working-directory: firmware
+        run: |
+          # Downloads only the SHA256-pinned secp256k1 source. Does not flash/execute ARM.
+          # Includes all four host optimization suites with target's 32-bit C arithmetic.
+          zig build target-config-test -Dtarget-fetch=true --summary all
+
       - name: Build the CLI and check it runs
         working-directory: firmware
         run: |

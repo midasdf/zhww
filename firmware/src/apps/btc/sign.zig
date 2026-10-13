@@ -200,7 +200,7 @@ fn signOwned(allocator: std.mem.Allocator, psbt: psbt_mod.Psbt, keys: *const Key
         const kind = detectScriptKind(utxo.script_pubkey);
 
         // Find the key
-        var found = try findKeyForInput(allocator, psbt, keys, index, utxo, kind) orelse {
+        var found = try findKeyForInput(allocator, psbt, keys, index, utxo, kind, expected == null) orelse {
             if (expected != null) return error.NoMatchingKey;
             try unsigned.append(allocator, index);
             continue;
@@ -266,8 +266,9 @@ fn signOwned(allocator: std.mem.Allocator, psbt: psbt_mod.Psbt, keys: *const Key
         break :blk total_input - total_output;
     } else null;
 
-    // Change detection
-    const change_outputs = try findChangeOutputsOwned(allocator, psbt, keys);
+    // Approved review labels ALL outputs payments. No unused expensive discovery
+    // scan or inferred change classification in the guarded path.
+    const change_outputs: []const usize = if (expected != null) &.{} else try findChangeOutputsOwned(allocator, psbt, keys);
 
     // Finalization (only when every input could be signed)
     var final_tx: ?[]const u8 = null;
@@ -373,6 +374,8 @@ pub fn utxoForDisplay(
     return .{ .value = resolved.amount, .script_pubkey = resolved.script_pubkey };
 }
 
+pub const approved_max_scan_index = 20;
+
 fn findKeyForInput(
     allocator: std.mem.Allocator,
     psbt: psbt_mod.Psbt,
@@ -380,6 +383,7 @@ fn findKeyForInput(
     index: usize,
     utxo: ResolvedUtxo,
     kind: ScriptKind,
+    development_search: bool,
 ) Error!?KeySource.RawKey {
     // 1) Use the PSBT's BIP32 derivation information (those whose fingerprint matches)
     for (psbt.inputs[index].bip32_derivations) |derivation| {
@@ -393,6 +397,28 @@ fn findKeyForInput(
                 return .{ .private_key = node.key.priv, .public_key = pub_key };
             }
         }
+    }
+
+    if (!development_search) {
+        // Explicit metadata mismatch must NEVER trigger a silent discovery fallback.
+        if (psbt.inputs[index].bip32_derivations.len != 0) return null;
+        // Metadata-free compatibility (e.g. pinned Core vector) is a hard-bounded
+        // BIP84-only account-0 search. Never use legacy purposes/raw private keys.
+        if (keys.master == null) return null;
+        if (keys.max_index > approved_max_scan_index) return error.InvalidPath;
+        for ([_]u32{ 0, 1 }) |coin| {
+            for ([_]u32{ 0, 1 }) |branch| {
+                for (0..@as(usize, keys.max_index) + 1) |i| {
+                    const path = [_]u32{ 84 | bip32.hardened, coin | bip32.hardened, bip32.hardened, branch, @intCast(i) };
+                    var node = keys.derive(&path) catch continue;
+                    defer node.wipe();
+                    if (!node.keyIsPrivate()) continue;
+                    const public = try node.publicKey();
+                    if (matchesKey(utxo, kind, public)) return .{ .private_key = node.key.priv, .public_key = public };
+                }
+            }
+        }
+        return null;
     }
 
     // 2) Individually supplied keys

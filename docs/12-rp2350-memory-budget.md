@@ -1,8 +1,10 @@
 # 12. RP2350 SRAM inventory and bounded-workspace validation
 
 **Experimental. This is not proof that a complete linked wallet firmware fits in SRAM.**
-No target execution, linked Secure/Non-secure image, transitive stack bound, camera buffer or
-real HAL is measured here. Stack/HAL values below are provisional reservations.
+No target execution, complete bootable Secure/Non-secure wallet, transitive stack bound, camera
+buffer or real HAL is measured here. A separate [offline link harness](14-target-link-and-fault-prototype.md)
+now measures actual partial-image sections and individual frames. Stack/HAL capacities below
+remain provisional reservations, not proven maximum consumption.
 
 ## 1. Reproduce without hardware
 
@@ -26,21 +28,23 @@ Malformed/truncated object files and inconsistent inventory sums fail the reader
 useful than inferring Arm sizes from macOS `sizeof`, but is still only a type/reservation inventory.
 CI runs both the reader tests and target inventory.
 
-## 2. Current target inventory (Zig 0.17.0)
+## 2. Current target inventory (Zig 0.17.0, schema 2)
 
 | Term | Bytes | Basis |
 |---|---:|---|
 | Owned BTC workflow | 78,856 | Target ABI type size, includes frozen request, page/plan commitments, seed backing and review pages/totals |
 | Fixed workspace control | 20 | Target ABI type size |
 | RNG control | 12 | Target ABI type size; hardware-provider state is not included |
-| Preallocated secp256k1 context owner | 4,160 | Target ABI size for the 4,096-byte capacity plus pointer/alignment padding |
+| Preallocated secp256k1 context owner | 4,160 | Target ABI size for the 4,096-byte capacity plus pointer/poison latch/alignment padding |
 | Parsing/signing/output workspace | 131,072 | Fixed 128 KiB policy allocation |
 | Incoming request buffer | 65,536 | Fixed 64 KiB maximum request allocation |
 | One 240×240 RGB565 framebuffer | 115,200 | 240 × 240 × 2; no double buffering |
-| **Stack reserve — unvalidated** | 65,536 | Future Zig/C/interrupt stacks combined; NOT compiler-measured maximum |
+| **Secure main stack — unvalidated** | 65,536 | Main Zig/C/IRQ reserve; static frames observed, NOT transitive upper bound |
+| **Secure fatal stack — unvalidated** | 8,192 | Separate fatal-wipe prototype stack; NOT measured transitive upper bound |
+| **NS stack — unvalidated** | 8,192 | Separate NS harness reservation; real NS tasks/IRQ not yet measured |
 | **HAL reserve — unvalidated** | 32,768 | Future driver/DMA/transport/control state; NOT an implemented HAL |
-| **Planned total** | **493,160** | Sum of the counted terms |
-| **Unallocated margin** | **39,320** | 532,480 − 493,160 (about 38.4 KiB) |
+| **Planned total** | **509,544** | Sum of the counted terms |
+| **Unallocated margin** | **22,936** | 532,480 − 509,544 (about 22.4 KiB) |
 
 The review object is 11,048 bytes **inside** the workflow. It is reported for visibility but must
 not be counted twice. Additional automatic/local review copies do use stack and are not covered
@@ -56,8 +60,10 @@ Do not equate the above inventory with the smoke helper's actual stack consumpti
 This assumes flash-resident public code/assets. Loading all code/secp tables into SRAM for
 anti-XIP-substitution hardening or encrypted boot needs a different budget. Extra framebuffers,
 camera capture/JPEG/QR decoding buffers, fonts copied into RAM, multicore stacks and additional
-NS-side copies are **not included**. All library/SDK globals and actual linker sections still need
-accounting; the margin is not a license to add unmeasured buffers.
+NS-side copies are **not included**. Selected crypto/rendering/signing globals are now measured
+in the partial link harness (509,584-byte combined SRAM reservation, 22,896-byte margin), but
+all SDK/HAL/gateway and complete-wallet sections still need accounting. The margin is not a
+license to add unmeasured buffers.
 
 ## 3. Fixed workspace implementation
 
@@ -95,6 +101,7 @@ Measured on the development macOS/aarch64 host with Zig 0.17.0:
 |---|---:|---:|---:|
 | Pinned Core single-input/single-output PSBT | 2,244 bytes | 2,244 bytes | 131,072 bytes |
 | Same transaction padded with an unknown global field to exactly 64 KiB | 98,366 bytes | 99,722 bytes | 131,072 bytes |
+| Synthetic two-input transaction padded to exactly 64 KiB | Reported by allocator | 100,550 bytes | 131,072 bytes |
 
 The signed transaction remains byte-for-byte equal to the pinned Bitcoin Core vector. The large
 unknown field is preserved in the signed PSBT. The small-vector flow runs three sessions with
@@ -127,15 +134,16 @@ same approval, larger heap fallback or partially published signature.
 
 ## 6. Remaining memory acceptance gates
 
-- Link the actual Secure/NS images, SDK and selected libsecp256k1 configuration. Check map files
+- Expand the offline Secure/NS link harness into actual SDK/startup/boot/gateway/HAL images. Check map files
   for `.data`, `.bss`, TLS if any, SRAM-resident code, tables, vector tables, DMA/driver buffers,
   guards, mailboxes and boot-ROM/SDK reserved SRAM.
 - Assign explicit linker regions to owned secrets, workflow, ingress, workspace, framebuffer,
   Secure/NS stacks and any IRQ stack. Prevent NS/DMA writes to Secure regions.
-- Produce per-function Zig **and C** stack measurements, including indirect callbacks, recursion,
+- Complete transitive analysis from the new individual Zig/C frame measurements, including
+  missing compiler-rt metadata, indirect callbacks, recursion,
   error unwinding, interrupt nesting and compiler-generated copies. A maximum individual frame
   is not a transitive call-chain maximum. `zig build pico` does not prove stack safety.
-- Replace the provisional 64 KiB stack/32 KiB HAL reserves with measured upper bounds. Add
+- Replace provisional 64/8/8 KiB main/fatal/NS stacks and 32 KiB HAL reserve with measured bounds. Add
   stack guards/MPU coverage and fail-closed overflow behavior on the actual target.
 - Exercise multi-input/output and adversarial PSBT structures on the exact linked target. Verify
   explicit refusal and erasure under memory pressure; measure actual runtime stack high-water

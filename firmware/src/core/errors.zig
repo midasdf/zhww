@@ -16,6 +16,8 @@ pub const Error = error{
     InvalidPath,
     /// Invalid key (out of range, point at infinity, etc.)
     InvalidKey,
+    /// Fatal context abandonment is terminal; never reconstruct or resume C.
+    ContextFaulted,
     /// Invalid tweak during BIP32 derivation (the spec says to move on to the next index)
     InvalidTweak,
     /// Output buffer is too small

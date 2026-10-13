@@ -48,6 +48,113 @@ fn wrapTransaction(allocator: std.mem.Allocator, original: []const u8, tx: []con
     return zhww.btc_psbt.Psbt.serializeWith(allocator, psbt, &.{&.{}});
 }
 
+fn explicitMetadata(a: std.mem.Allocator, original: []const u8, fields: []const zhww.btc_psbt.Psbt.Field) ![]u8 {
+    var psbt = try zhww.btc_psbt.Psbt.parse(a, original);
+    const utxo = psbt.inputs[0].witness_utxo.?;
+    var value: [31]u8 = undefined;
+    std.mem.writeInt(u64, value[0..8], utxo.value, .little);
+    value[8] = 22;
+    @memcpy(value[9..31], utxo.script_pubkey);
+    var map = std.ArrayList(u8).empty;
+    try map.appendSlice(a, &.{ 1, 1 });
+    try zhww.btc_transaction.writeVarBytes(&map, a, &value);
+    for (fields) |field| {
+        try zhww.btc_transaction.writeVarBytes(&map, a, field.key);
+        try zhww.btc_transaction.writeVarBytes(&map, a, field.value);
+    }
+    psbt.input_raw = &.{map.items};
+    return zhww.btc_psbt.Psbt.serializeWith(a, psbt, &.{&.{}});
+}
+
+fn derivation(a: std.mem.Allocator, raw: []const u8) !zhww.btc_psbt.Psbt.Field {
+    _ = raw; // Core fixture intentionally contains no BIP32 metadata.
+    const json = try std.json.parseFromSlice(std.json.Value, a, @embedFile("vectors/core_psbt.json"), .{});
+    var seed: [64]u8 = undefined;
+    defer std.crypto.secureZero(u8, &seed);
+    try zhww.bip39.mnemonicToSeed(&seed, json.value.object.get("mnemonic").?.string, "");
+    var keys = try zhww.btc_sign.KeySource.fromSeed(&seed);
+    defer keys.wipe();
+    const path = [_]u32{ 0x80000054, 0x80000000, 0x80000000, 0, 0 };
+    var node = try keys.derive(&path);
+    defer node.wipe();
+    const public = try node.publicKey();
+    const key = try std.mem.concat(a, u8, &.{ &.{6}, &public });
+    const value = try a.alloc(u8, 24);
+    @memcpy(value[0..4], &keys.master_fingerprint);
+    for (path, 0..) |index, i| std.mem.writeInt(u32, value[4 + i * 4 ..][0..4], index, .little);
+    return .{ .key = key, .value = value };
+}
+
+test "guard bounds supplied BIP84 paths and refuses long or non-wallet paths" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const raw = try core(a);
+    const d = try derivation(a, raw);
+    _ = try guard.Plan.fromPsbt(try explicitMetadata(a, raw, &.{d}));
+    _ = try guard.Plan.fromPsbt(try explicitMetadata(a, raw, &.{})); // bounded metadata-free BIP84 discovery
+    const cases = [_]struct { index: usize, value: u32 }{
+        .{ .index = 0, .value = 0x8000002c }, // BIP44
+        .{ .index = 1, .value = 0x8000003c }, // EVM coin type
+        .{ .index = 2, .value = 0 }, // non-hardened account
+        .{ .index = 3, .value = 2 }, // unknown branch
+        .{ .index = 4, .value = 0x80000000 }, // hardened address index
+    };
+    for (cases) |case| {
+        const value = try a.dupe(u8, d.value);
+        std.mem.writeInt(u32, value[4 + case.index * 4 ..][0..4], case.value, .little);
+        try testing.expectError(error.GuardUnsupported, guard.Plan.fromPsbt(try explicitMetadata(a, raw, &.{.{ .key = d.key, .value = value }})));
+    }
+    const long = try a.alloc(u8, 4 + 1024 * 4);
+    @memset(long, 0);
+    try testing.expectError(error.GuardUnsupported, guard.Plan.fromPsbt(try explicitMetadata(a, raw, &.{.{ .key = d.key, .value = long }})));
+}
+
+test "guard caps explicit derivation candidates at eight" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const raw = try core(a);
+    const d = try derivation(a, raw);
+    var fields: [guard.max_derivations_per_input + 1]zhww.btc_psbt.Psbt.Field = undefined;
+    for (&fields, 0..) |*field, i| {
+        var private: [32]u8 = @splat(0);
+        defer std.crypto.secureZero(u8, &private);
+        private[31] = @intCast(i + 1);
+        const public = try zhww.secp256k1.pubKeyCompressed(private);
+        field.* = .{ .key = try std.mem.concat(a, u8, &.{ &.{6}, &public }), .value = d.value };
+    }
+    _ = try guard.Plan.fromPsbt(try explicitMetadata(a, raw, fields[0..guard.max_derivations_per_input]));
+    try testing.expectError(error.GuardLimit, guard.Plan.fromPsbt(try explicitMetadata(a, raw, &fields)));
+}
+
+test "guarded signer caps metadata-free scan, refuses explicit mismatch fallback and never infers change" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const raw = try core(a);
+    const json = try std.json.parseFromSlice(std.json.Value, a, @embedFile("vectors/core_psbt.json"), .{});
+    var seed: [64]u8 = undefined;
+    defer std.crypto.secureZero(u8, &seed);
+    try zhww.bip39.mnemonicToSeed(&seed, json.value.object.get("mnemonic").?.string, "");
+    var keys = try zhww.btc_sign.KeySource.fromSeed(&seed);
+    defer keys.wipe();
+    const plan = try guard.Plan.fromPsbt(raw);
+    keys.max_index = zhww.btc_sign.approved_max_scan_index + 1;
+    try testing.expectError(error.InvalidPath, zhww.btc_sign.signPsbtWithPlan(a, raw, &keys, plan.hashes[0..plan.count]));
+    keys.max_index = zhww.btc_sign.approved_max_scan_index;
+    const signed = try zhww.btc_sign.signPsbtWithPlan(a, raw, &keys, plan.hashes[0..plan.count]);
+    try testing.expectEqual(@as(usize, 0), signed.result.change_outputs.len);
+    const d = try derivation(a, raw);
+    const value = try a.dupe(u8, d.value);
+    value[0] ^= 1; // wrong fingerprint, but correct script/key exists on fallback path
+    const changed = try explicitMetadata(a, raw, &.{.{ .key = d.key, .value = value }});
+    const changed_plan = try guard.Plan.fromPsbt(changed);
+    try testing.expectError(error.NoMatchingKey, zhww.btc_sign.signPsbtWithPlan(a, changed, &keys, changed_plan.hashes[0..changed_plan.count]));
+    const development = try zhww.btc_sign.signPsbtWithKeys(a, changed, &keys);
+    try testing.expectEqual(@as(usize, 1), development.result.partial_sigs.len); // compatibility still scans
+}
+
 test "independent wire calculator matches the official native P2WPKH BIP143 hash" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

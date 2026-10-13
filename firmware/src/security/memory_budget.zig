@@ -15,6 +15,8 @@ pub const workspace_bytes = 128 * 1024;
 pub const ingress_bytes = 64 * 1024;
 pub const framebuffer_bytes = 240 * 240 * @sizeOf(u16);
 pub const stack_reserve_bytes = 64 * 1024;
+pub const fault_stack_reserve_bytes = 8 * 1024;
+pub const nonsecure_stack_reserve_bytes = 8 * 1024;
 pub const hal_reserve_bytes = 32 * 1024;
 
 /// Fixed ELF-readable schema; all values are bytes except ABI width/schema.
@@ -33,6 +35,8 @@ pub const Layout = extern struct {
     ingress: u32,
     framebuffer: u32,
     stack_reserve: u32,
+    fault_stack_reserve: u32,
+    nonsecure_stack_reserve: u32,
     hal_reserve: u32,
     planned_total: u32,
     unallocated_margin: u32,
@@ -40,10 +44,10 @@ pub const Layout = extern struct {
 
 const planned_total = @sizeOf(Workflow) + @sizeOf(Workspace) + @sizeOf(Rng) +
     @sizeOf(ContextOwner) + workspace_bytes + ingress_bytes + framebuffer_bytes +
-    stack_reserve_bytes + hal_reserve_bytes;
+    stack_reserve_bytes + fault_stack_reserve_bytes + nonsecure_stack_reserve_bytes + hal_reserve_bytes;
 
 pub const layout: Layout = .{
-    .schema = 1,
+    .schema = 2,
     .pointer_bits = @bitSizeOf(usize),
     .sram = sram_bytes,
     .workflow = @sizeOf(Workflow),
@@ -55,6 +59,8 @@ pub const layout: Layout = .{
     .ingress = ingress_bytes,
     .framebuffer = framebuffer_bytes,
     .stack_reserve = stack_reserve_bytes,
+    .fault_stack_reserve = fault_stack_reserve_bytes,
+    .nonsecure_stack_reserve = nonsecure_stack_reserve_bytes,
     .hal_reserve = hal_reserve_bytes,
     .planned_total = planned_total,
     .unallocated_margin = sram_bytes - planned_total,

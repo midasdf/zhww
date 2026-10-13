@@ -16,11 +16,12 @@ import tempfile
 FIELDS = (
     "schema", "pointer_bits", "sram", "workflow", "review_in_workflow",
     "workspace_control", "rng_control", "context_owner", "workspace", "ingress",
-    "framebuffer", "stack_reserve", "hal_reserve", "planned_total", "unallocated_margin",
+    "framebuffer", "stack_reserve", "fault_stack_reserve", "nonsecure_stack_reserve",
+    "hal_reserve", "planned_total", "unallocated_margin",
 )
 COUNTED = (
     "workflow", "workspace_control", "rng_control", "context_owner", "workspace",
-    "ingress", "framebuffer", "stack_reserve", "hal_reserve",
+    "ingress", "framebuffer", "stack_reserve", "fault_stack_reserve", "nonsecure_stack_reserve", "hal_reserve",
 )
 
 
@@ -65,7 +66,7 @@ def read_layout(data: bytes) -> dict[str, int]:
     if len(found) != 1:
         raise ValueError("Expected exactly one layout symbol")
     layout = found[0]
-    if layout["schema"] != 1 or layout["pointer_bits"] != 32 or layout["sram"] != 520 * 1024:
+    if layout["schema"] != 2 or layout["pointer_bits"] != 32 or layout["sram"] != 520 * 1024:
         raise ValueError("Unsupported memory inventory schema/ABI/SRAM")
     if layout["workflow"] <= layout["review_in_workflow"]:
         raise ValueError("Embedded review inventory is inconsistent")

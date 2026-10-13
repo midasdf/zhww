@@ -1,0 +1,18 @@
+{
+  "zig": "0.17.0",
+  "secp256k1": {
+    "version": "0.8.0",
+    "commit": "6e2c8bc4ecdc6e71dbe7a368f360d8d453ce435d",
+    "url": "https://codeload.github.com/bitcoin-core/secp256k1/tar.gz/6e2c8bc4ecdc6e71dbe7a368f360d8d453ce435d",
+    "sha256": "3fe9fd705f4fdf2fe90d6e04b6c1fedd7e8f244a119315886f6468f52c2dfc33"
+  },
+  "c_defines": [
+    "USE_FORCE_WIDEMUL_INT64=1",
+    "ENABLE_MODULE_RECOVERY=1",
+    "ENABLE_MODULE_EXTRAKEYS=1",
+    "ENABLE_MODULE_SCHNORRSIG=1",
+    "ECMULT_WINDOW_SIZE=4",
+    "COMB_BLOCKS=11",
+    "COMB_TEETH=6"
+  ]
+}

@@ -11,8 +11,8 @@ from check_memory_layout import COUNTED, FIELDS, read_layout
 
 def object_file(**changes):
     values = dict(zip(FIELDS, (
-        1, 32, 520 * 1024, 80 * 1024, 12 * 1024, 40, 12, 4160,
-        128 * 1024, 64 * 1024, 240 * 240 * 2, 64 * 1024, 32 * 1024, 0, 0,
+        2, 32, 520 * 1024, 80 * 1024, 12 * 1024, 40, 12, 4160,
+        128 * 1024, 64 * 1024, 240 * 240 * 2, 64 * 1024, 8 * 1024, 8 * 1024, 32 * 1024, 0, 0,
     )))
     values["planned_total"] = sum(values[field] for field in COUNTED)
     values["unallocated_margin"] = values["sram"] - values["planned_total"]
@@ -45,15 +45,16 @@ class MemoryLayoutTest(unittest.TestCase):
                 read_layout(data[:length])
 
     def test_schema_abi_and_sum_mismatch(self):
-        for change in ({"schema": 2}, {"pointer_bits": 64}, {"planned_total": 1},
+        for change in ({"schema": 3}, {"pointer_bits": 64}, {"planned_total": 1},
                        {"unallocated_margin": 0}, {"review_in_workflow": 90 * 1024}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 read_layout(object_file(**change))
 
     def test_symbol_ranges_and_types(self):
         original = object_file()
-        for offset, fmt, value in ((112, "I", 9999), (116, "I", 9999),
-                                   (120, "I", 4), (124, "B", 0x12), (126, "H", 0)):
+        base = 52 + len(FIELDS) * 4
+        for offset, fmt, value in ((base, "I", 9999), (base + 4, "I", 9999),
+                                   (base + 8, "I", 4), (base + 12, "B", 0x12), (base + 14, "H", 0)):
             data = bytearray(original)
             struct.pack_into("<" + fmt, data, offset, value)
             with self.subTest(offset=offset), self.assertRaises(ValueError):

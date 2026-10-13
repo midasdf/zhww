@@ -75,6 +75,7 @@ Files under `firmware/src/security/`:
 | `signing_session.zig` | Boot-policy check → seed ownership → review → approval → callback → unconditional wipe; no callback on invalid approval | Generic trusted callback, now used by the separate approved BTC workflow; not a physical HAL or secure gateway |
 | `rng.zig` | Nonblocking status/read interface, bounded poll budget, full-output erasure and terminal failure latch | Mock-tested only; provider status is not hardware attestation or an entropy-quality test |
 | `p2wpkh_guard.zig` | Independent, allocation-free PSBTv0/native-P2WPKH/SIGHASH_ALL wire parsing and streaming BIP143 messages; numeric totals/fee cross-check | Narrow subset, shared SHA/compiler/CPU, no target isolation or independent address rendering ([scope](13-independent-p2wpkh-guard.md)) |
+| Target link/fatal harness | Pinned target C crypto; actual partial-image Secure/NS sections; static Zig/C frames; terminal context abandonment and compiled separate-stack fatal wipe | Not bootable, no attribution/gateway/HAL; no transitive stack/runtime/fault proof ([scope](14-target-link-and-fault-prototype.md)) |
 | `workspace.zig` / `memory_budget.zig` | Measured fixed buffer with no fallback, reset erasure and provisional target ABI inventory | Host workload peaks and target type sizes, not a full linked-image/transitive-stack proof; see [memory budget](12-rp2350-memory-budget.md) |
 
 The approval flow binds exact request bytes and rendered page bytes. It does **not** establish that
@@ -108,7 +109,10 @@ independent-plan-checked `signPsbtWithPlan` entry point, with integration tests 
 - Accept only non-finalized **native P2WPKH inputs**, SIGHASH_ALL, and known witness_utxo
   amounts. Redundant non_witness_utxo is deliberately outside the independent guard's policy.
   Other input types, unknown amounts, excess pages, unknown output scripts and invalid totals
-  are refused before seed ownership. No partial-signing output is published.
+  are refused before seed ownership. BIP32 input metadata, if supplied, is limited to eight exact
+  five-level BIP84 candidates; mismatch does not trigger broad fallback. Metadata-free requests
+  use only bounded BIP84 account-0 search (coin 0/1, branch 0/1, indices 0–20). No partial output
+  or inferred change classification is published.
 - Show network, version, locktime, input/output counts, sighash policy, every input txid/vout/
   sequence/amount, every complete destination and amount, totals and fee. All outputs are
   conservatively labeled payments: no output is hidden as presumed change.
@@ -226,7 +230,9 @@ with a synthetic review and hash-only callback, plus the actual approved BTC ada
 synthetic trusted events and an injected RNG, plus the randomized BIP340 primitive;
 all compile for Cortex-M0+ and Cortex-M33.
 Compilation on RP2040 does not give it RP2350 security features. Neither result is execution,
-a signed UF2, a linked Secure/Non-secure image or a hardware security test.
+a signed UF2, a complete bootable Secure/Non-secure wallet or a hardware security test.
+The separate [offline link/fatal harness](14-target-link-and-fault-prototype.md) now provides real
+partial-image section/frame measurements and instruction checks, not actual hardware attribution.
 
 Before any real-funds claim: actual linked target boot, measured SRAM/stack budget, trusted
 complete display and physical approval, constrained NS gateway, seed-copy/C-context erasure,

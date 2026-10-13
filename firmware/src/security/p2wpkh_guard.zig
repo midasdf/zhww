@@ -9,6 +9,7 @@ pub const Error = error{ GuardInvalid, GuardTruncated, GuardUnsupported, GuardLi
 pub const max_inputs = 31;
 pub const max_outputs = 62;
 pub const max_fields_per_map = 128;
+pub const max_derivations_per_input = 8;
 const max_bytes = 64 * 1024;
 const max_money: u64 = 21_000_000 * 100_000_000;
 
@@ -212,6 +213,7 @@ pub const Plan = struct {
         for (0..tx.inputs) |i| {
             var map: Map = .{ .reader = &r };
             var witness: ?[]const u8 = null;
+            var derivations: usize = 0;
             while (try map.next()) |field| {
                 switch (field.key[0]) {
                     0, 7, 8 => return error.GuardUnsupported, // non_witness_utxo / final stacks
@@ -224,6 +226,22 @@ pub const Plan = struct {
                     },
                     3 => if (field.key.len != 1 or field.value.len != 4 or
                         std.mem.readInt(u32, field.value[0..4], .little) != 1) return error.GuardUnsupported,
+                    6 => {
+                        derivations += 1;
+                        if (derivations > max_derivations_per_input) return error.GuardLimit;
+                        // If supplied, metadata must describe bounded fixed-depth BIP84 paths.
+                        if (field.key.len != 34 or (field.key[1] != 2 and field.key[1] != 3) or
+                            field.value.len != 24) return error.GuardUnsupported;
+                        const path = field.value[4..24]; // fingerprint followed by FIVE indices
+                        const purpose = std.mem.readInt(u32, path[0..4], .little);
+                        const coin = std.mem.readInt(u32, path[4..8], .little);
+                        const account = std.mem.readInt(u32, path[8..12], .little);
+                        const branch = std.mem.readInt(u32, path[12..16], .little);
+                        const index = std.mem.readInt(u32, path[16..20], .little);
+                        if (purpose != 0x80000054 or (coin != 0x80000000 and coin != 0x80000001) or
+                            account & 0x80000000 == 0 or branch > 1 or index & 0x80000000 != 0)
+                            return error.GuardUnsupported;
+                    },
                     else => {},
                 }
             }

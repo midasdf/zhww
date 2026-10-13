@@ -158,8 +158,10 @@ pub fn ContextOwner(comptime capacity: usize) type {
     return struct {
         memory: [capacity]u8 align(64) = @splat(0),
         ptr: ?*Context = null,
+        poisoned: bool = false,
 
         pub fn get(self: *@This()) Error!*Context {
+            if (self.poisoned) return error.ContextFaulted;
             if (self.ptr) |ctx| return ctx;
             const required = secp256k1_context_preallocated_size(context_none);
             if (required == 0 or required > capacity) return error.BufferTooSmall;
@@ -167,7 +169,18 @@ pub fn ContextOwner(comptime capacity: usize) type {
             return self.ptr.?;
         }
 
+        /// Exceptional fatal-only abandonment: never call C with a potentially
+        /// corrupt pointer/context. Erase the owned backing and permanently refuse
+        /// reuse. Caller must abandon all C borrows and halt, not return to C.
+        /// Not thread/IRQ safe; other core/re-entry must already be excluded.
+        pub fn poison(self: *@This()) void {
+            self.poisoned = true;
+            self.ptr = null;
+            std.crypto.secureZero(u8, &self.memory);
+        }
+
         /// C destruction first, then wipe ALL backing bytes including padding/tail.
+        /// Poison is terminal and is NOT cleared by normal teardown.
         pub fn deinit(self: *@This()) void {
             if (self.ptr) |ctx| secp256k1_context_preallocated_destroy(ctx);
             self.ptr = null;
@@ -188,6 +201,12 @@ pub fn context() Error!*const Context {
     return global_owner.get();
 }
 
+/// Fatal callback use only: no C destructor, no recovery/reset API. Caller must
+/// wipe its session/buffers and halt without resuming C. Does not erase C/Zig stacks.
+pub fn poisonContextAndAbandon() void {
+    global_owner.poison();
+}
+
 /// Exclusive logical signing lease for single-threaded trusted orchestration.
 /// Context blinding seed is borrowed, not copied into the lease. Lexical use only:
 /// `var lease = try SigningLease.begin(&seed); defer lease.end();` Never copy a lease.
@@ -196,6 +215,7 @@ pub const SigningLease = struct {
     live: bool = false,
 
     pub fn begin(seed: *const [32]u8) !SigningLease {
+        if (global_owner.poisoned) return error.ContextFaulted;
         if (signing_context_active) return error.ContextBusy;
         global_owner.deinit(); // retire any unrandomized development context
         errdefer global_owner.deinit();
@@ -577,6 +597,22 @@ test "preallocated context validates capacity and wipes backing memory after des
     owner.deinit();
     _ = try owner.get();
     owner.deinit();
+}
+
+test "fatal context poisoning erases without dereferencing corrupt C pointer and cannot reset" {
+    var owner: ContextOwner(context_capacity) = .{};
+    _ = try owner.get();
+    // Fault simulation ONLY: C is no longer running; never resume/destroy this pointer.
+    @memset(&owner.memory, 0xa5);
+    owner.ptr = @ptrFromInt(1);
+    owner.poison();
+    try testing.expect(owner.ptr == null and owner.poisoned);
+    try testing.expectEqualSlices(u8, &@as([context_capacity]u8, @splat(0)), &owner.memory);
+    try testing.expectError(error.ContextFaulted, owner.get());
+    owner.deinit(); // must not call C or clear the terminal latch
+    owner.poison(); // idempotent
+    try testing.expectError(error.ContextFaulted, owner.get());
+    try testing.expectEqualSlices(u8, &@as([context_capacity]u8, @splat(0)), &owner.memory);
 }
 
 test "randomized signing lease preserves deterministic signatures and rejects nesting" {

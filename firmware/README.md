@@ -20,12 +20,14 @@
 | Implemented (transport) | **BC-UR** (Bytewords standard/uri/minimal, CRC-32, single-part and multi-part encode/decode, reconstruction from out-of-order parts with duplicates) |
 | Implemented (EVM) | RLP encoding and decoding / EIP-55 checksummed addresses / **EIP-155 (legacy) and EIP-1559 (type 2) signing** (both are signed and then verified) / EIP-191 `personal_sign` / **EIP-712 typed data** (dependency sorting for encodeType, arrays, nesting, domain inference) / **ABI decoding** (canonical form only) / **ERC-7730 clear signing** (descriptor parsing, function matching, generation of human-readable display items, warnings for dangerous patterns) |
 | Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, single-use signing-session orchestration, and bounded entropy interface. Approved BTC signing requires explicit entropy for context blinding and erases preallocated C-context backing memory. `btc_approved_sign.Workflow` connects bounded review to actual witness_utxo-only native-P2WPKH/SIGHASH_ALL signing and an allocation-free independent wire-parser/BIP143 guard. All messages are compared before signatures, then rechecked at the C signing boundary. See [guard scope](../docs/13-independent-p2wpkh-guard.md). **Not integrated with CLI signing or target HAL/TrustZone**. See [RP2350 security design](../docs/11-rp2350-security.md). |
-| Tests | **All 443 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall (432 previous tests plus 11 independent-guard and signing-boundary tests). They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
+| Tests | **All 449 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall, both with the normal host library and with the pinned target's 32-bit C arithmetic/table configuration. New tests cover fatal context poisoning, bounded BIP84 discovery/metadata and two-input workspace/refusal. They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
 | Not implemented | Target HAL and device main loop; physical display/approval/sign gate; session-wide secret erasure; P2TR/P2WSH integration in the normal PSBT workflow; EVM clear-signing integration; real-hardware Signet/Sepolia flow; MUR fountain recovery. |
 
 ```bash
-zig build test     # 443 tests, including independent BIP143 guard and mismatch refusal
-zig build memory   # provisional Cortex-M33 SRAM inventory; NOT a linked fit/stack proof
+zig build test     # 449 tests, including independent guard and fatal ownership
+zig build memory   # schema-2 provisional inventory, including main/fatal/NS stack reserves
+zig build target-link -Dtarget-fetch=true  # verified first download; offline link, NOT boot firmware
+zig build target-config-test              # cached source; selected C config host tests in four modes
 ```
 
 ## Dependencies
@@ -47,8 +49,15 @@ post-approval revalidation and post-entropy signing allocation leaves no returne
 the owned session. Workspace reset erases all backing bytes after output borrows expire.
 
 `zig build memory` compiles and reads a Cortex-M33 ABI inventory without target execution.
-Its stack/HAL reservations are **not measured upper bounds**; real linked-image/stack verification
-is still a release blocker. See [RP2350 memory budget](../docs/12-rp2350-memory-budget.md).
+Its stack/HAL reservations are **not measured upper bounds**. `target-link` now links the actual
+approved signing/rendering path with pinned target-built C crypto in candidate Secure/NS regions,
+and reads static frame metadata. The ReleaseSafe harness reserves 509,584 SRAM bytes across
+both partitions, including dedicated 64/8/8 KiB main/fatal/NS stacks. Its largest individual frame
+is 14,736 bytes, NOT a transitive stack bound. The fatal-entry prototype is instruction-checked
+and uses a separate stack to erase known owned spans/designated old stack without resuming C.
+There is no startup, CMSE gateway, real attribution/HAL or target execution; this is **not bootable
+wallet firmware**. See [memory budget](../docs/12-rp2350-memory-budget.md) and
+[link/frame/fatal scope](../docs/14-target-link-and-fault-prototype.md).
 
 ## Module layout
 

@@ -1,5 +1,46 @@
 # Next-session handoff
 
+## Latest offline target links, fatal-stack prototype and bounded discovery
+
+Follow-up to `3c1d716`: see [14-target-link-and-fault-prototype.md](14-target-link-and-fault-prototype.md).
+`zig build target-link -Dtarget-fetch=true` now performs actual Cortex-M33 Secure/NS-region
+links using SHA256/commit-pinned secp256k1 0.8.0 (32-bit field/scalar arithmetic, verification
+window 4). No host crypto/heap/stdio. Default ReleaseSafe Zig IR is lowered with bundled Clang
+to obtain static frame metadata. Target ELF and archive/instruction readers have adversarial tests.
+`target-config-test` also runs ALL wallet tests on HOST with selected C settings in four modes.
+
+Stable dedicated workflow/workspace/framebuffer/NS ingress; 64 KiB main, 8 KiB fatal, 8 KiB NS
+stacks. Provisional inventory schema 2 counts all three: planned 509,544, margin 22,936 bytes.
+Actual harness combined SRAM 509,584, margin 22,896; Secure partition 435,856/450,560 bytes,
+NS 73,728/81,920. Secure flash load 198,300 bytes (ReleaseSafe) / 128,060 (ReleaseSmall).
+169/293 functions with frame metadata; largest 14,736/15,128 bytes. **NOT transitive bounds**;
+compiler-rt/indirect callback/IRQ and runtime watermarks remain open.
+
+ContextOwner fatal poison wipes fixed backing without calling C through a corrupted pointer,
+permanently refuses reuse, and survives normal teardown. Host test uses a corrupt local pointer.
+Offline target callbacks/panic dispatch use a noinline naked ARM entry: mask IRQ, switch MSP
+onto fatal stack, clear general registers/LR/APSR, then poison and erase fixed buffers/designated
+old main stack and halt. Compiled instruction/address sequence is tripwire-checked; bit mutation
+unit tests pass. No real HardFault/NMI handler, FPU/other-core/DMA protection or runtime proof.
+
+Input metadata is capped at eight compressed exact five-index BIP84 candidates (coin 0/1,
+hardened account, branch 0/1, non-hardened index). Explicit mismatch never broad-falls-back.
+Without metadata, only BIP84 account 0 / coin 0/1 / branch 0/1 / indices 0–20 are searched.
+Approved adapter sets that cap; trusted direct plan callers must also respect it. Approved signing
+skips unused change discovery and returns no inferred change. Legacy development behavior stays.
+Two-input 64 KiB request signs both witnesses, preserves padding, fixed-workspace peak 100,550.
+Foreign second input refuses whole result even after first internal signature; seed/request wiped
+and context lease released. Small/single-input padded peaks remain 2,244/99,722.
+
+Verification: 449 Zig tests, normal host library AND selected 32-bit C configuration, each in four
+modes; 19 Python tests; Pico object checks; schema-2 inventory; ReleaseSafe/Small offline links;
+CLI/vector/transport regressions. CI includes pinned-source target-config-test.
+
+NOT bootable firmware: no vectors/startup/SDK/CMSE gateway/SAU-MPU attribution/real HAL,
+real funds, OTP writing or debug/BOOTSEL lockdown. Next acceptance gates are actual boot/gateway/
+HAL composition, full transitive/IRQ stack/runtime tests, normal-return spill/caller-copy erasure,
+signed update/recovery and broader guarded BTC/EVM support. No hardware is available yet.
+
 ## Latest independent P2WPKH guard
 
 Follow-up to `7ac030a` adds `security/p2wpkh_guard.zig`, importing only std (CI dependency

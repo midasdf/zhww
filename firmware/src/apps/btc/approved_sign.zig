@@ -114,6 +114,7 @@ const Adapter = struct {
         defer lease.end();
         var keys = try signing.KeySource.fromSeed(seed);
         defer keys.wipe();
+        keys.max_index = signing.approved_max_scan_index;
         const outcome = try signing.signPsbtWithPlan(self.allocator, frozen, &keys, plan.hashes[0..plan.count]);
         if (outcome.result.unsigned_inputs.len != 0 or
             outcome.result.partial_sigs.len != review.input_count) return error.NoMatchingKey;

@@ -34,10 +34,10 @@ It achieves both "no wireless" and "no soldering" while avoiding the stock short
 
 **How it fits this project**:
 
-- **No wireless chip** — the air gap is achieved in hardware rather than in software (the residual risk of the Zero 2 WH disappears)
+- **No onboard wireless chip** — removes the onboard radio interface, not every communication/tampering risk. USB, media, optical transport and firmware still need a threat model.
 - **Same size and 40-pin compatible with the Pi Zero** — the existing [Waveshare 1.3inch LCD HAT](https://www.waveshare.com/wiki/1.3inch_LCD_HAT) (the BOM's standard display) **plugs straight in**. The enclosure needs a new STL because the port positions differ
 - **microSD is standard** — PSBTs can be handed over even without a camera
-- **LiPo power and charging circuit** — portable
+- **External power, no onboard battery/charger** — initial stateless design deliberately avoids an always-powered secret session.
 - **UF2 flashing** — onboarding for users is just "copy a file"
 - **Zig supports it officially** (Cortex-M33) — unlike the ESP32-S3's Xtensa, it can be written in current Zig
 
@@ -45,8 +45,9 @@ It achieves both "no wireless" and "no soldering" while avoiding the stock short
 
 | What was checked | Result | How to reproduce |
 |---|---|---|
-| Compilation of the core (BIP39/32, addresses, PSBT, signing path, EVM, UR) | **Succeeds** (both RP2040 and RP2350, about 64KB each) | `zig build pico` |
-| Building libsecp256k1 0.6.0 | **Succeeds** (`zig cc` + a minimal libc shim. A real port would use picolibc and remove the stdio dependency with `-DNDEBUG`) | §2.3 of [03-hardware-bom.md](03-hardware-bom.md) |
+| Compilation of core smoke paths (BIP39/32, addresses, PSBT, signing, EVM, UR) | **Succeeds**, object-only RP2040/RP2350 checks; no execution or complete size proof | `zig build pico` |
+| Pinned libsecp256k1 0.8.0 and actual Secure/NS-region linking | **Succeeds**, offline approved-BTC/rendering harness; no target heap/stdio. Not bootable or attributed firmware | `zig build target-link -Dtarget-fetch=true`; [scope](14-target-link-and-fault-prototype.md) |
+| Target static frames/fatal stack | Individual Zig/C frame metadata and separate-stack fatal entry instructions checked; no transitive/runtime proof | [frame/fault scope](14-target-link-and-fault-prototype.md) |
 | Signing speed | **Not verified** (hardware required) | — |
 | HAL (screen, SD, input, randomness) | **Not started** | — |
 

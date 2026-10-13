@@ -100,13 +100,14 @@ zhww/
 | Design documents | Working drafts present (requirements, architecture, BOM, chain support, threat model, roadmap, setup and port plan); security/memory/guard design and release blockers remain under review |
 | Firmware (Zig + libsecp256k1) | **Bitcoin**: BIP39 (incl. dice entropy), BIP32, address generation, transaction/PSBT parsing, legacy and BIP143 signing/finalization, fee/change analysis, BC-UR, screen rendering, QR encode/decode, and FAT32. **Taproot and 2-of-3 P2WSH are standalone signing modules with interoperability tests; they are not integrated into `signPsbtBytes`.** **EVM**: RLP, EIP-55, EIP-155/EIP-1559 signing, EIP-191 hashing, EIP-712, ABI decoding, and ERC-7730 rendering exist as separate modules; they are not connected by an on-device approval flow. |
 | Security prototypes | Host approved native-P2WPKH/SIGHASH_ALL flow, owned secret/context erasure, mandatory bounded entropy, fixed-workspace tests and independent wire/BIP143 message comparison. No actual TrustZone/HAL or physical approval. See [security](docs/11-rp2350-security.md), [memory](docs/12-rp2350-memory-budget.md) and [guard scope](docs/13-independent-p2wpkh-guard.md). |
-| Tests | **443 passing** in four optimization modes, including the previous crypto/interoperability vectors plus approval, wipe, RNG/workspace failure, independent guard and mutation checks. Tests are not a target execution or security proof; see [firmware details](firmware/README.md) and the historical [review report](docs/10-security-audit-2026-10-13.md). |
+| Tests | **449 passing** in four optimization modes (normal host library and selected target C arithmetic configuration), including the previous crypto/interoperability vectors plus approval, wipe, RNG/workspace failure, independent guard and mutation checks. Tests are not a target execution or security proof; see [firmware details](firmware/README.md) and the historical [review report](docs/10-security-audit-2026-10-13.md). |
 | CI | GitHub Actions runs Linux host regressions, bare-metal Pico compile checks, Cortex-M33 memory inventory and tool/dependency checks, plus the microSD image round-trip with `mtools`/`fsck.fat`. This is not RP2350 hardware execution. |
 | Hardware | Linux build: **Raspberry Pi Zero 2 WH** (assembly [docs/03](docs/03-hardware-bom.md), setup [docs/07](docs/07-zero2w-setup.md)). Main v0.2 target: **[Waveshare RP2350-PiZero](docs/08-rp2350-pizero.md)** — Pi Zero footprint, 40-pin header, microSD, no wireless, no onboard battery |
-| Next | Secure/NS linked images and constrained key gateway, actual Zig/C/IRQ stack bounds, physical display/input and TRNG/SD HAL; then guarded P2TR/P2WSH/EVM integration and real-hardware tests. |
+| Target link prototype | Actual offline Secure/NS links with pinned C crypto and static frames, retained large storage and separate-stack fatal wipe prototype. No boot/startup, real attribution or NS gateway ([scope](docs/14-target-link-and-fault-prototype.md)). |
+| Next | Actual boot/SDK/CMSE gateway and attribution, transitive Zig/C/IRQ stack bounds, physical display/input and TRNG/SD HAL; then guarded P2TR/P2WSH/EVM integration and real-hardware tests. |
 
 ```bash
-cd firmware && zig build test      # 443 tests
+cd firmware && zig build test      # 449 tests
 zig build pico                     # compile checks, not hardware execution
 zig build memory                   # provisional Cortex-M33 inventory, not a full fit proof
 ```
