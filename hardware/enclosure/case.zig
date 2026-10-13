@@ -208,6 +208,11 @@ const column_gap_wall = corner_inset - wall - column_d / 2; // the left columns 
 /// The rear-middle column stands behind the board's rear edge, on the rear row, at the case's
 /// centre; it is slimmer so it clears that edge.
 const rear_column_d: f64 = 3.2; // [E] round a Φ1.6 pilot: 0.8 mm of wall
+/// Under every column's boss, the base has a wider post that stops just below the board, so it has
+/// a thick wall round the screw's clearance hole; only the slimmer boss above passes the board's
+/// edge.
+const column_post_d: f64 = 4.6; // [E] round the Φ2.4 clearance hole: 1.1 mm of wall
+const column_seat = board_z - 0.2; // the post's top, where the boss above meets it
 
 /// The golden ratio sets the case's depth: the lens divides it 1 : φ from the front edge (the lens's
 /// own distance from the front edge is fixed by the camera board and the corner inset). The rear
@@ -312,7 +317,7 @@ const Boss = struct {
     screw: bool,
     flat: bool = false, // flattened toward the Mini PiTFT
     d: f64 = boss_d,
-    post: bool = false, // a corner column: the base has a post of its own under the boss
+    post: bool = false, // a column: the base has a post of its own (Φ`column_post_d`) under the boss
     corner: bool = false, // one of the four corner screws, all `corner_inset` from their edges
 };
 // The corner screws, in board coordinates
@@ -322,12 +327,12 @@ const row_front = cam_holes[0][1];
 const row_rear = outer_d - corner_inset - board_y0;
 const column_middle = outer_w / 2 - board_x0;
 const bosses = [_]Boss{
-    .{ .at = .{ column_left, row_front }, .seat = board_top, .under = board_top, .screw = true, .d = column_d, .post = true, .corner = true },
-    .{ .at = .{ column_left, row_rear }, .seat = board_top, .under = board_top, .screw = true, .d = column_d, .post = true, .corner = true },
+    .{ .at = .{ column_left, row_front }, .seat = column_seat, .under = column_seat, .screw = true, .d = column_d, .post = true, .corner = true },
+    .{ .at = .{ column_left, row_rear }, .seat = column_seat, .under = column_seat, .screw = true, .d = column_d, .post = true, .corner = true },
     .{ .at = cam_holes[0], .seat = cam_top, .under = cam_bottom, .screw = true, .corner = true },
-    .{ .at = .{ column_right, row_rear }, .seat = board_top, .under = board_top, .screw = true, .d = column_d, .post = true, .corner = true },
+    .{ .at = .{ column_right, row_rear }, .seat = column_seat, .under = column_seat, .screw = true, .d = column_d, .post = true, .corner = true },
     // the middle of the rear row, behind the board
-    .{ .at = .{ column_middle, row_rear }, .seat = board_top, .under = board_top, .screw = true, .d = rear_column_d, .post = true },
+    .{ .at = .{ column_middle, row_rear }, .seat = column_seat, .under = column_seat, .screw = true, .d = rear_column_d, .post = true },
     // two more through the board's own holes: they clamp base, board and top together
     .{ .at = hole_fl, .seat = board_top, .under = board_z, .screw = true, .flat = true },
     .{ .at = hole_rr, .seat = board_top, .under = board_z, .screw = true },
@@ -424,7 +429,7 @@ fn writeBase(s: *sc.Script) !void {
     // The posts under the three corner columns
     for (bosses) |b| {
         if (!b.post) continue;
-        try s.cylinder("ColumnPost", .{ caseX(b.at[0]), caseY(b.at[1]), floor_t - 0.01 }, b.d, b.seat - floor_t + 0.01, up, .new);
+        try s.cylinder("ColumnPost", .{ caseX(b.at[0]), caseY(b.at[1]), floor_t - 0.01 }, column_post_d, b.seat - floor_t + 0.01, up, .new);
         try joinWith(s, "Base", "ColumnPost");
     }
 
@@ -696,6 +701,23 @@ fn cornerInsetError() f64 {
 /// Every column against the inner walls; the left-hand ones against the board's left edge and the
 /// button caps; the rear-middle one against the board's rear edge, the Mini PiTFT (with its
 /// possible overhang) and the bare terminals; the rear-right one against the camera board.
+/// The columns' posts in the base: against the inner walls, the board's standoffs and the camera's
+/// posts and rests (they stand below the board, so the board itself is not in the way).
+fn postClearance() f64 {
+    var m: f64 = std.math.inf(f64);
+    const r = column_post_d / 2;
+    for (bosses) |b| {
+        if (!b.post) continue;
+        m = @min(m, (b.at[0] - r) + clearance_left);
+        m = @min(m, (cam_x1 + cam_clearance) - (b.at[0] + r));
+        m = @min(m, (b.at[1] - r) + clearance);
+        m = @min(m, (board_d + clearance_rear) - (b.at[1] + r));
+        for ([_]XY{ hole_fl, hole_fr, hole_rr, hole_rl }) |h| m = @min(m, std.math.hypot(h[0] - b.at[0], h[1] - b.at[1]) - standoff_d / 2 - r);
+        for (cam_holes) |h| m = @min(m, std.math.hypot(h[0] - b.at[0], h[1] - b.at[1]) - cam_post_d / 2 - r);
+    }
+    return m;
+}
+
 fn columnClearance() f64 {
     var m: f64 = std.math.inf(f64);
     for (bosses) |b| {
@@ -826,6 +848,9 @@ const checks = blk: {
         // screws and the bottom face
         .{ .name = "the four corner screws all stand the corner inset from both edges", .value = cornerInsetError(), .limit = 0.01, .at_least = false },
         .{ .name = "columns clear of the walls, the board, the Mini PiTFT, the terminals, the caps and the camera", .value = columnClearance(), .limit = 0.2 },
+        .{ .name = "column posts: wall round the screw's clearance hole", .value = (column_post_d - screw_clear_d) / 2, .limit = 0.8 },
+        .{ .name = "column posts stop below the board", .value = board_z - column_seat, .limit = 0.2 },
+        .{ .name = "column posts clear of the walls, the board's standoffs and the camera's posts", .value = postClearance(), .limit = 0.2 },
         .{ .name = "countersunk heads clear of the outer faces", .value = countersinkToOutside(), .limit = 1.5 },
         .{ .name = "lens divides the depth in the golden ratio, from the front edge (0.382 is golden)", .value = @abs(lens_division - golden_minor), .limit = 0.001, .at_least = false },
         .{ .name = "rear-middle screw centred between the rear corner screws", .value = @abs((column_middle - column_left) - (column_right - column_middle)), .limit = 0.01, .at_least = false },

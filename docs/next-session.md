@@ -17,7 +17,7 @@ Owner decisions this session:
 
 State:
 
-- `hardware/enclosure/case.zig` (CERN-OHL-S) is the parametric source: 39 analytic checks, writes three
+- `hardware/enclosure/case.zig` (CERN-OHL-S) is the parametric source: 42 analytic checks, writes three
   SolidCraft scripts; `zig run case.zig -- verify results.json` checks SolidCraft's interference
   result. Case 97.2 × 38.6 × 19.7 mm; 7 × M2 × 16 from underneath (one per corner at a 4.5 mm inset, one mid-rear, two through the board's own holes); the lens on the golden section of the depth from the front edge; a 2.07 mm lip against torsion; no feet, no engraving or lettering; STEP + 3 STLs exported with
   SolidCraft 0.8.0 and committed. **Nothing measured**: the UC-805 has no published drawing.

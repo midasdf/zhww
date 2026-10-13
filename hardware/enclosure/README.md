@@ -16,7 +16,7 @@
 |---|---|
 | ![Top](../../docs/images/case-top.png) | ![Bottom](../../docs/images/case-bottom.png) |
 
-*Top: the display window and the two button caps. Bottom: four
+*Top: the display window and the two button caps. Bottom: seven
 countersunk screws (one in each corner, one in the middle of the rear edge and two through the
 board) and the lens opening.*
 
@@ -130,9 +130,12 @@ edge, and two through the board's own front-left and rear-right holes.
   the top — clear of the walls, because a boss merged into a wall would hit the base's wall and lip
   below the parting line.
 - **The rear-middle screw** stands on the rear row, halfway between the rear corners, in a slimmer
-  column (Φ3.2) just behind the board's rear edge. It and the board screws hold the long sides
+  boss (Φ3.2) just behind the board's rear edge. It and the board screws hold the long sides
   against twisting. Nothing can be fastened in the middle of the front edge: the board reaches the
   front wall, and that wall has to stay close to the board for the USB-C plug to seat.
+- **Every column's post** in the base is wider than its boss (Φ4.6, 1.1 mm of wall round the
+  screw's Φ2.4 clearance hole) and stops 0.2 mm below the board, so only the slimmer boss above
+  passes the board's edge.
 - **The two board screws** clamp base, board and top together. The front-left boss passes beside
   the Mini PiTFT's front edge and is flattened on that side. The board's other two holes, under the
   camera housings and under the display, take locating pins.
@@ -271,6 +274,9 @@ zhww-case: check bare terminals right of the Mini PiTFT: 3.79 mm (>= 0.3)  PASS
 zhww-case: check rear-right boss clear of the camera housings: 1.29 mm (>= 0.3)  PASS
 zhww-case: check the four corner screws all stand the corner inset from both edges: 0 mm (<= 0.01)  PASS
 zhww-case: check columns clear of the walls, the board, the Mini PiTFT, the terminals, the caps and the camera: 0.3 mm (>= 0.2)  PASS
+zhww-case: check column posts: wall round the screw's clearance hole: 1.1 mm (>= 0.8)  PASS
+zhww-case: check column posts stop below the board: 0.2 mm (>= 0.2)  PASS
+zhww-case: check column posts clear of the walls, the board's standoffs and the camera's posts: 0.4 mm (>= 0.2)  PASS
 zhww-case: check countersunk heads clear of the outer faces: 2.35 mm (>= 1.5)  PASS
 zhww-case: check lens divides the depth in the golden ratio, from the front edge (0.382 is golden): 0 mm (<= 0.001)  PASS
 zhww-case: check rear-middle screw centred between the rear corner screws: 0 mm (<= 0.01)  PASS
