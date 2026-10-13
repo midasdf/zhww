@@ -10,10 +10,13 @@
 
 - **Status**: implemented on the host as an optional channel; not in the standard build
 - **Last updated**: 2026-10-14
-- **Why this document exists**: the chosen transfer route ([08-rp2350-pizero.md](08-rp2350-pizero.md), section 7b)
-  uses a microSD card for input and a QR code on the device screen for output. That works, but it makes
-  the phone/PC do a file copy each time. A **light or sound receiver** on the device could take the
-  place of the missing camera far more cheaply than image-based QR decoding.
+- **Why this document was written** (2026-10-12, historical): the transfer route planned then
+  ([08-rp2350-pizero.md](08-rp2350-pizero.md), section 7b) used a microSD card for input and a QR code
+  on the device screen for output, and the device had no camera. A **light or sound receiver** looked
+  like a far cheaper way to read data from a phone than a camera with image-based QR decoding. Neither
+  premise holds any more: SD-card exchange was ruled out on 2026-10-13 and the camera was chosen on
+  2026-10-14. The rest of this document is the design record of the optional light channel; read its
+  comparisons with the camera as written before that decision.
 
 ---
 
