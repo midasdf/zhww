@@ -43,6 +43,15 @@ jobs:
           zig test tools/license_check.zig
           git ls-files -z | zig run tools/license_check.zig
 
+      - name: Enclosure (every clearance check passes; the committed SolidCraft scripts are current)
+        working-directory: hardware/enclosure
+        run: |
+          # SolidCraft itself is not run here: STEP/STL exports and its interference check are
+          # regenerated locally (hardware/enclosure/README.md) and committed.
+          zig test case.zig
+          zig test solidcraft.zig
+          zig run case.zig -- check
+
       - name: Install libsecp256k1
         run: |
           sudo apt-get update

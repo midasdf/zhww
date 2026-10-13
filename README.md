@@ -92,7 +92,7 @@ zhww/
 │   ├── src/cli/               ← development CLI (host side)
 │   └── tests/                 ← official test vectors and integration tests
 ├── tools/                     ← offline checks (licences, target link, memory layout)
-└── hardware/enclosure/        ← parametric OpenSCAD enclosure
+└── hardware/enclosure/        ← parametric SolidCraft enclosure (scripts, STEP / STL exports)
 ```
 
 ## Current status
