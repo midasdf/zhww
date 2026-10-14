@@ -966,7 +966,7 @@ test "240x135: the QR stays at 2 dots per module with a quiet zone" {
 }
 
 test "the QR capacity each layout offers to a caller" {
-    // what a caller (the walkthrough, the device) may ask for without going below 2 dots/module
+    // what a caller (the device) may ask for without going below 2 dots/module
     try testing.expectEqual(@as(usize, 40), Layout.forSize(240, 135).maxQrModules(2));
     // 240x240 must be able to show the walkthrough's version-9 part (53 modules) as today
     try testing.expect(Layout.forSize(240, 240).maxQrModules(2) >= 53);
@@ -982,19 +982,13 @@ test "every error screen says no signing was performed, in red, at both sizes" {
     // The non-negotiable rule: an error screen must never drop the red line saying that
     // nothing was signed, and at 135 dots it must not end up behind a page turn either.
     const device = @import("../app/device.zig");
-    const problems = [_]device.Problem{
-        .waiting_card,   .not_fat32,       .card_unreadable, .no_input,
-        .file_too_large, .invalid_psbt,    .no_matching_key, .unsupported_sighash,
-        .failure,
-    };
-
     var storage: [240 * 135]u16 = @splat(0);
     var fb = smallFramebuffer(&storage);
     var tall_storage: [240 * 240]u16 = @splat(0);
     var tall_fb = testFramebuffer(&tall_storage);
 
-    for (problems) |problem| {
-        if (problem == .waiting_card) continue; // the only screen that is not an error
+    for (std.enums.values(device.Problem)) |problem| {
+        if (problem == .waiting_scan) continue; // the only screen that is not an error
         var lines: [8]Line = undefined;
         var warnings: [4][]const u8 = undefined;
         const screen = device.screenFor(device.noticeFor(problem), &lines, &warnings);

@@ -108,30 +108,15 @@ jobs:
         run: |
           PSBT=$(jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json)
           EXPECTED=$(jq -r .expected_final_tx tests/vectors/core_psbt.json)
-          MINE=$(printf '%s' "$PSBT" | ./zig-out/bin/zhww sign \
+          OUT=$(printf '%s' "$PSBT" | ./zig-out/bin/zhww sign \
             --mnemonic "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" \
-            2>/dev/null | grep '^FINAL_TX=' | cut -d= -f2-)
+            2>/dev/null)
+          MINE=$(printf '%s\n' "$OUT" | grep '^FINAL_TX=' | cut -d= -f2-)
           test "$MINE" = "$EXPECTED"
-          echo "sign OK (matches Bitcoin Core output)"
-
-      - name: Handoff over microSD (FAT32)
-        working-directory: firmware
-        run: |
-          sudo apt-get install -y mtools dosfstools
-          IMG="$RUNNER_TEMP/card.img"
-          mkfs.fat -F 32 -C "$IMG" 40000 >/dev/null
-          jq -r .unsigned_psbt_base64 tests/vectors/core_psbt.json > in.txt
-          mcopy -i "$IMG" in.txt ::/IN.PSBT
-          ./zig-out/bin/zhww card list --image "$IMG"
-          ./zig-out/bin/zhww card sign --image "$IMG" \
-            --mnemonic "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
-          ./zig-out/bin/zhww card list --image "$IMG"
-          # The signed PSBT must match the pinned expectation
-          GOT=$(mtype -i "$IMG" ::/OUT.PSBT | sha256sum | cut -d' ' -f1)
-          WANT=$(jq -r .signed_psbt_sha256 tests/vectors/core_psbt.json)
-          test "$GOT" = "$WANT"
-          fsck.fat -n "$IMG"
-          echo "FAT32 OK (handoff and signature match expectations; fsck clean)"
+          # The signed PSBT must match the pinned one byte for byte
+          SIGNED=$(printf '%s\n' "$OUT" | grep '^SIGNED_PSBT=' | cut -d= -f2-)
+          test "$SIGNED" = "$(jq -r .signed_psbt_base64 tests/vectors/core_psbt.json)"
+          echo "sign OK (final tx and signed PSBT match Bitcoin Core output)"
 
       - name: EVM signing (matches the independent eth-account implementation)
         working-directory: firmware

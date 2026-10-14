@@ -40,10 +40,10 @@ const ur = @import("ur.zig");
 const bytewords = @import("bytewords.zig");
 const cbor = @import("cbor.zig");
 
-/// Largest payload the rest of the firmware accepts (the PSBT / card file limit, 64 KB).
+/// Largest payload the rest of the firmware accepts (the PSBT limit, 64 KB).
 ///
 /// The receiver itself only enforces the caller's `message` buffer; this is the ceiling the
-/// device-level code uses (`app/device.zig` `problemForFileSize`, `cli/main.zig`).
+/// device-level code uses (`app/device.zig` `problemForPayloadSize`).
 pub const max_payload_len = 64 * 1024;
 
 /// Errors the receiver can return.
@@ -789,7 +789,7 @@ test "accepts the largest payload the firmware supports (64 KB)" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    // The payload ceiling used by the card path (`app/device.zig` problemForFileSize, 64 KB).
+    // The payload ceiling the device enforces (`app/device.zig` problemForPayloadSize, 64 KB).
     const payload = try allocator.alloc(u8, max_payload_len);
     for (payload, 0..) |*byte, i| byte.* = @intCast((i * 131 + 7) % 256);
 

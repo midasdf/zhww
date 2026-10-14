@@ -11,7 +11,7 @@ for a hobby project, a wallet bug matters.
   (private) or an issue if the matter is not sensitive.
 - **Please include**: what you found, how to reproduce it, and which commit you tested.
 - **Response**: best effort. This is a volunteer, experimental project with no guaranteed SLA.
-- **Most interesting classes**: signature or sighash mistakes, PSBT/FAT32 parsing that leads to
+- **Most interesting classes**: signature or sighash mistakes, PSBT/QR parsing that leads to
   signing the wrong thing, key material leaking into flash or logs, anything that makes the device
   display something different from what it signs.
 

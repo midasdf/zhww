@@ -1,6 +1,6 @@
 //! Robustness tests against corrupt input (a kind of mutation testing / fuzzing).
 //!
-//! **Why this matters**: the PSBTs the device receives and the contents of the card are
+//! **Why this matters**: the PSBTs the device scans from the camera are
 //! **untrusted data coming from outside**. If a parser crashes or hangs, the worst case
 //! is that it stops in the middle of signing ([docs/05-threat-model.md] 4-6, "implementation bugs").
 //!
@@ -195,43 +195,6 @@ test "UR / Bytewords: rejects corrupt strings" {
 
         try testing.expect(iteration.queryCapacity() < 1024 * 1024);
     }
-}
-
-test "FAT32: rejects a device with garbage contents (no crash, no hang)" {
-    const device_mod = zhww.block_device;
-    var fuzz = Fuzz.init(0xFEED_BEEF);
-    var mounted: usize = 0;
-    var rejected: usize = 0;
-
-    for (0..30) |_| {
-        var iteration = std.heap.ArenaAllocator.init(testing.allocator);
-        defer iteration.deinit();
-        const a = iteration.allocator();
-
-        // A garbage device of 512 sectors (256KB)
-        const storage = try a.alloc(u8, 512 * 512);
-        for (storage) |*byte| byte.* = fuzz.random().int(u8);
-        var device = device_mod.MemoryDevice.init(storage);
-
-        if (zhww.fs_fat32.Fat32.mount(device.device(), a)) |mounted_fs| {
-            mounted += 1;
-            var fs = mounted_fs;
-            // Even when it does mount, operations must only return errors, never crash
-            var iterator = fs.openDir("/") catch continue;
-            var entry: zhww.fs_fat32.Entry = .{};
-            var guard: usize = 0;
-            while (iterator.next(&entry) catch break) {
-                guard += 1;
-                if (guard > 4096) break; // confirms it does not hang
-            }
-        } else |_| {
-            rejected += 1;
-        }
-        try testing.expect(iteration.queryCapacity() < 64 * 1024 * 1024);
-    }
-
-    std.debug.print("  FAT32: mounted {d} / rejected {d}\n", .{ mounted, rejected });
-    try testing.expect(rejected > 0); // garbage contents are almost always rejected
 }
 
 test "EVM: rejects corrupt raw transactions" {

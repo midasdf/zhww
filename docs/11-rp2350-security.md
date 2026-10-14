@@ -60,7 +60,7 @@ must live in Secure memory: ordinary Zig fields and function visibility provide 
 The current BTC/EVM APIs still receive private keys. The prototype does **not** satisfy I-2 or
 project-wide I-3. The approved native-P2WPKH path now has an [independent wire-parser/BIP143
 guard](13-independent-p2wpkh-guard.md), but other inputs/EVM/direct APIs and actual key/NS
-isolation remain open. Large PSBT/FAT32/QR code should not all become trusted
+isolation remain open. Large PSBT/QR code should not all become trusted
 merely to avoid implementing a gateway.
 
 ## 4. Implemented without hardware

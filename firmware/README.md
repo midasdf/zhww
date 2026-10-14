@@ -16,11 +16,11 @@
 | Elliptic curve | **libsecp256k1** (links the C library) |
 | Implemented (crypto, encoding) | Base58 / Bech32 / Bech32m / RIPEMD-160 / SHA-256 / HMAC-SHA512 / PBKDF2 / HKDF-SHA256 / Keccak-256 / ECDSA signing and verification (RFC6979, low-s, DER, recoverable) |
 | Implemented (Bitcoin) | BIP39 (including dice/camera input combination) / BIP32 / address generation / transaction and PSBT parsing / legacy and BIP143 signing and finalization (P2WPKH / P2PKH / P2SH-P2WPKH / P2PK) / fee and change analysis / byte-array workflow (`signPsbtBytes`). Taproot key-path and 2-of-3 P2WSH signing are separate modules with interoperability tests, **not integrations in `signPsbtBytes`**. |
-| Implemented (CLI) | `address` / `sign` / `show` (confirmation display before signing) / `screen` (preview of the device screen) / `walkthrough` (screen flow) / `card` (FAT32 image operations) / `mnemonic` (dice verification) / `ur` / `ur-decode` / `evm-sign` / `evm-show` |
+| Implemented (CLI) | `address` / `sign` / `show` (confirmation display before signing) / `screen` (preview of the device screen) / `mnemonic` (dice verification) / `ur` / `ur-decode` / `qr-decode` (the camera path on a PC) / `evm-sign` / `evm-show` |
 | Implemented (transport) | **BC-UR** (Bytewords standard/uri/minimal, CRC-32, single-part and multi-part encode/decode, reconstruction from out-of-order parts with duplicates) |
 | Implemented (EVM) | RLP encoding and decoding / EIP-55 checksummed addresses / **EIP-155 (legacy) and EIP-1559 (type 2) signing** (both are signed and then verified) / EIP-191 `personal_sign` / **EIP-712 typed data** (dependency sorting for encodeType, arrays, nesting, domain inference) / **ABI decoding** (canonical form only) / **ERC-7730 clear signing** (descriptor parsing, function matching, generation of human-readable display items, warnings for dangerous patterns) |
 | Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, single-use signing-session orchestration, and bounded entropy interface. Approved BTC signing requires explicit entropy for context blinding and erases preallocated C-context backing memory. `btc_approved_sign.Workflow` connects bounded review to actual witness_utxo-only native-P2WPKH/SIGHASH_ALL signing and an allocation-free independent wire-parser/BIP143 guard. All messages are compared before signatures, then rechecked at the C signing boundary. See [guard scope](../docs/13-independent-p2wpkh-guard.md). **Not integrated with CLI signing or target HAL/TrustZone**. See [RP2350 security design](../docs/11-rp2350-security.md). |
-| Tests | **All 449 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall, both with the normal host library and with the pinned target's 32-bit C arithmetic/table configuration. New tests cover fatal context poisoning, bounded BIP84 discovery/metadata and two-input workspace/refusal. They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, FAT32, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
+| Tests | **All 449 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall, both with the normal host library and with the pinned target's 32-bit C arithmetic/table configuration. New tests cover fatal context poisoning, bounded BIP84 discovery/metadata and two-input workspace/refusal. They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
 | Not implemented | Target HAL and device main loop; physical display/approval/sign gate; session-wide secret erasure; P2TR/P2WSH integration in the normal PSBT workflow; EVM clear-signing integration; real-hardware Signet/Sepolia flow; MUR fountain recovery. |
 
 ```bash
@@ -118,7 +118,7 @@ key isolation and other BTC/EVM/direct development APIs are unguarded. See the
 | I-1 | `core` knows nothing about chains |
 | I-2 | `apps` does not hold key material (it requests a signature only as "these 32 bytes with this path") |
 | I-3 | The sighash is computed independently by `apps` and `core`, and if they do not match, nothing is signed |
-| I-4 | Secrets are never written to flash, SD or swap |
+| I-4 | Secrets are never written to flash |
 | I-5 | USB data communication is disabled in release builds |
 
 ## Design decisions and their rationale
@@ -145,7 +145,7 @@ zig build pico     # check both RP2040 (Cortex-M0+) and RP2350 (Cortex-M33)
 
 The referenced smoke paths (BIP39/32, address generation, PSBT parsing/signing, screen rendering,
 EVM decoding and UR) compile for both targets. libsecp256k1 has also been compiled separately for
-both targets. This is a compile check, not execution. The HAL (LCD, buttons, camera, SD, RNG) and
+both targets. This is a compile check, not execution. The HAL (LCD, buttons, camera, RNG) and
 the device approval loop are not implemented.
 
 ## Development CLI
@@ -189,9 +189,6 @@ cat psbt.txt | ./zig-out/bin/zhww show --network regtest --mnemonic "…"
 # Turn a PSBT into UR (for QR transport) and print one part per line
 cat psbt.txt | ./zig-out/bin/zhww ur --fragment 40
 #   → printed like ur:crypto-psbt/1-4/… (each frame of the animated QR)
-
-# Output the device screen flow (waiting for card → confirmation → result QR) as PNGs
-./zig-out/bin/zhww walkthrough --image card.img --mnemonic "…" --out-dir .
 
 # Check the device screen (240×240) as a PNG (lets you polish the UI without hardware)
 ./zig-out/bin/zhww screen --demo --scale 2 > demo.png
