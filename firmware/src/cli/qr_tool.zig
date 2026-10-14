@@ -1,6 +1,6 @@
 //! QR camera path on a PC: a stored image in, a PSBT out.
 //!
-//! The device reads a QR code off a phone screen with an SPI camera and decodes it with
+//! The device reads a QR code off a phone screen with its HM01B0 camera and decodes it with
 //! `ui/qr_decode.zig`. This command runs that whole chain against a file (or a pipe), so the
 //! camera path can be exercised today and a real frame can be replayed and debugged later
 //! without reflashing:
@@ -18,7 +18,7 @@
 //! from a PSBT line.
 //!
 //! **Image formats.** Both are read because both are what the camera path meets: a script or a
-//! logic analyzer dump makes a PGM, and the SPI camera will hand over raw 8-bit pixels.
+//! logic analyzer dump makes a PGM, and the HM01B0 will hand over raw 8-bit pixels.
 //! - **PGM (P5)**: `"P5"`, then width, height and a maxval of 1..255, whitespace and `#` comments
 //!   allowed between them, then exactly one whitespace character and `width * height` bytes.
 //!   The pixel data is used in place (P5 has no row padding), so nothing is copied. A trailing
@@ -687,9 +687,8 @@ fn stderrPrint(comptime format: []const u8, args: anytype) void {
 const testing = std.testing;
 const qr = zhww.ui_qr;
 
-/// A synthetic payload shaped like a PSBT (magic and all), the same stand-in `light_tool.zig`'s
-/// tests use: the chain under test (image -> QR -> UR parts -> PSBT) does not care what the
-/// payload means.
+/// A synthetic payload shaped like a PSBT (magic and all): the chain under test
+/// (image -> QR -> UR parts -> PSBT) does not care what the payload means.
 ///
 /// The real Bitcoin Core vector (`tests/vectors/core_psbt.json`) is what the CLI round trip uses
 /// (`zhww ur < psbt.txt` -> one rendered image per part -> `zhww qr-decode --assemble`); it is not

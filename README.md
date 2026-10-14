@@ -80,7 +80,6 @@ zhww/
 │   ├── 06-roadmap.md          ← milestones and definitions of done
 │   ├── 07-zero2w-setup.md     ← Raspberry Pi Zero 2 W/WH setup (the earlier Linux build; host-side use)
 │   ├── 08-rp2350-pizero.md    ← the RP2350-PiZero port: pins, power, flash, HAL plan
-│   ├── 09-light-audio-input.md ← light as an optional input channel (not in the standard build)
 │   └── 10-security-audit-2026-10-13.md ← internal source review, fixes, and release blockers
 ├── firmware/                  ← Zig implementation
 │   ├── build.zig
@@ -152,7 +151,6 @@ The recommended reading order:
 6. [Threat model](docs/05-threat-model.md) — what is protected, and what is not
 7. [Roadmap](docs/06-roadmap.md) — the order of work
 8. [Internal security review](docs/10-security-audit-2026-10-13.md) — fixed findings and remaining release blockers
-9. [Light and sound input](docs/09-light-audio-input.md) — the optional light channel (not in the standard build)
 
 ---
 

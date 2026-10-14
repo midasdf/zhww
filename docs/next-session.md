@@ -5,7 +5,7 @@
 Owner decisions this session:
 
 - **Parts**: RP2350-PiZero + Adafruit Mini PiTFT #4393 + **ArduCam UC-805** (Arducam B0315, HM01B0).
-  The light receiver (OPT4048) is out of the standard build; its code stays as an optional channel.
+  The light receiver (OPT4048) is out, and its code has been removed.
 - **Camera looks out of the back** (SeedSigner style); **thin first**: the camera sits beside the board
   and the four header-side jumper ends are unhoused and insulated (heat-shrink/tape), so the case is
   the display's height.

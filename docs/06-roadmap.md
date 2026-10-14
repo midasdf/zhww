@@ -146,7 +146,6 @@ The next tasks do not require target hardware and must precede HAL work.
 |---|---|
 | ed25519 chains (Solana / TON / Cardano) | Add SLIP-0010 to `core` and keep the structure extensible by adding an app |
 | SLIP-39 Shamir splitting | An option for the backup scheme |
-| Optional light input channel | Implemented and tested on the host ([09-light-audio-input.md](09-light-audio-input.md)); not in the standard build, and no enclosure is designed for it |
 | **Support for all-in-one hardware (M5Stack etc.)** | Devices with a screen, buttons and camera built in are "solder-free and easy to popularize". However, current Zig has no official support for the ESP32-S3 and similar parts, so **the firmware would have to be redesigned as a separate line** |
 | Custom board (ESP32-S3 etc.) | Smaller size, lower cost. The full KiCad set would be published |
 | Considering an auditable SE (TROPIC01) | The main candidate if availability improves |
