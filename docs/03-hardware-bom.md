@@ -72,9 +72,6 @@ Nothing else connects to the host: no SD card, no data over USB. The owner ruled
 on SD cards (2026-10-13): a card is shared physical media that passes through the untrusted host.
 **Do not propose it again.** The FAT32 code was removed from the tree (2026-10-14).
 
-The light receiver of [09-light-audio-input.md](09-light-audio-input.md) stays implemented and
-tested on the host as an optional channel; no hardware or case is designed for it.
-
 ### 2.5 Power: external, over USB (decided 2026-10-12)
 
 No battery in the device. A hardware wallet is used a few times a year; a cell kept inside it
@@ -192,7 +189,7 @@ Kept so the reasons are not lost; the full research is in the git history before
 | Raspberry Pi Zero 2 WH (Linux, the v0.1 build) | Superseded by the RP2350-PiZero | It has a radio, which can only be disabled in software. [07-zero2w-setup.md](07-zero2w-setup.md) is kept for host-side work |
 | Pi Zero 1.3 / Luckfox Pico / other Linux boards | Not adopted | Hard to obtain, or a header to fit, or a port of the Linux build |
 | Waveshare 1.3" LCD HAT (240 × 240) | Replaced by the Mini PiTFT | It covers all 40 header pins, leaving nothing for an input device |
-| Light receiver (LM393 module, then an Adafruit OPT4048 under a raised board) | Replaced by the camera; code kept as an optional channel | Cheapest, but tens of seconds per PSBT, a link layer only this project uses, and a 33.5 mm case |
+| Light receiver (LM393 module, then an Adafruit OPT4048 under a raised board) | Replaced by the camera; its code was removed (2026-10-14) | Cheapest, but tens of seconds per PSBT, a link layer only this project uses, and a 33.5 mm case |
 | SD-card exchange | **Ruled out** (owner decision, 2026-10-13) | Shared media through the untrusted host |
 | M5Stack QR Code Scanner Unit (decodes on the module) | Rejected (owner decision, 2026-10-13) | A third-party decoder on the input path |
 | Arducam Mega 3 MP / 5 MP SPI, Arducam 5 MP Mini, OV2640 | Superseded by the UC-805 | Colour sensors with frames far larger than SRAM (windowing needed), at two to three times the price |
