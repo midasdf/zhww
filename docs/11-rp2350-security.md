@@ -118,7 +118,7 @@ independent-plan-checked `signPsbtWithPlan` entry point, with integration tests 
   conservatively labeled payments: no output is hidden as presumed change.
 - At most 64 explicit pages, six ASCII lines of at most 26 characters each. Addresses/txids are
   split across lines, never abbreviated. Rendering rejects implicit extra pagination and supports
-  240×135 and 240×240 only. HAL must acknowledge each successfully transferred physical page.
+  240×135 only. HAL must acknowledge each successfully transferred physical page.
 - A Secure-selected network is displayed and committed; PSBTs do not authenticate networks.
   Witness UTXO amounts are host-supplied and **not independently checked against a blockchain**;
   review pages explicitly warn about this.

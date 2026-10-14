@@ -13,7 +13,7 @@ from check_memory_layout import COUNTED, FIELDS, read_layout
 def object_file(**changes):
     values = dict(zip(FIELDS, (
         2, 32, 520 * 1024, 80 * 1024, 12 * 1024, 40, 12, 4160,
-        128 * 1024, 64 * 1024, 240 * 240 * 2, 64 * 1024, 8 * 1024, 8 * 1024, 32 * 1024, 0, 0,
+        128 * 1024, 64 * 1024, 240 * 135 * 2, 64 * 1024, 8 * 1024, 8 * 1024, 32 * 1024, 0, 0,
     )))
     values["planned_total"] = sum(values[field] for field in COUNTED)
     values["unallocated_margin"] = values["sram"] - values["planned_total"]

@@ -91,7 +91,6 @@ Cutting the power is not an anomaly but **the normal way to switch the device of
 | How to turn on | Plug in USB (the RUN button also reboots) |
 | How to turn off | **Unplug USB** (this is normal use. It must be safe to unplug) |
 | Standby (sleep) | **Not needed**. It runs only while plugged in. With no battery there is no standby drain to worry about |
-| Battery indicator | **Not needed** (with no battery the problem itself does not exist) |
 | Power loss | **A signature either goes all the way through or leaves nothing**. The result exists only as the QR codes on the screen, drawn after the whole signing step has completed, and nothing is written anywhere, so unplugging at any moment leaves no partial result |
 | Right after boot | Nothing to recover: no state survives a restart. If the host did not receive the result, it shows its request again and the device signs it again after a fresh review |
 | Current draw | **Measurement required** (an RP2350 at 150MHz draws tens of mA, and the LCD backlight draws tens of mA too). USB-powered, so there is no capacity constraint |
@@ -111,25 +110,16 @@ Even with the hardware undecided, what should light up in which state can be dec
 
 | State | Indication | Average on-time |
 |---|---|---|
-| Idle | Lights for 20ms every 3 seconds (heartbeat) — only meaningful in a configuration with a battery | **0.7%** |
+| Idle | Lights for 20ms every 3 seconds (heartbeat, to show it is alive) | **0.7%** |
 | Working | Steady on | 100% (the short time the user is watching) |
 | Waiting for confirmation | Slow blink (400ms / 600ms) | 40% |
 | Error | Fast blink (100ms / 100ms) | 50% |
-| Low battery (estimated) | Two blinks then a long off period | 3% |
 
 **The screen backlight (GPIO22 on the Mini PiTFT) can be controlled, so it is used as the main indicator** (turned off while idle).
 The LED is positioned as an auxiliary for "idle periods when the screen is off" and "dark places".
 
-**The battery level itself cannot be measured** (reading the 5V rail with an ADC would require adding a voltage-divider resistor, i.e. soldering).
-The realistic options are the following three.
-
-1. **Rely on the battery box's own level indicator** (many products have an LED display) — zero extra parts
-2. **Estimate from usage time**: declare a "new battery" in the settings and show the replacement time on screen from accumulated usage time
-   (coarse accuracy, but implementable without extra hardware)
-3. **Optional modification**: add one voltage-divider resistor to a spare ADC pin (one solder joint). To be documented as an advanced option
-
 **Why "leave nothing behind" is safe**: secrets (the seed) are kept only in memory, and a signing result
-becomes valid only when the write-out has completed. All that a power loss destroys is "an intermediate state that has not been written out yet".
+exists only as the QR codes drawn after signing has completed. All that a power loss destroys is a session that had not finished.
 This property is the same idea as the stateless design in [05-threat-model.md](05-threat-model.md).
 
 
@@ -156,7 +146,7 @@ The RP2350-PiZero has 16MB of flash. **The measured usage** is as follows, leavi
 |---|---|
 | Fonts, UI strings | seed, derived keys, passphrase |
 | ERC-7730 descriptors, test vectors | Intermediate signing state, history |
-| The program itself | Battery level and settings (not needed with no battery) |
+| The program itself | Settings (the device keeps none) |
 
 The microSD slot is **not used** (the owner ruled out exchanging data on cards, 2026-10-13). The device keeps the property "plug it in and it runs, unplug it and nothing remains".
 
@@ -164,7 +154,7 @@ The microSD slot is **not used** (the owner ruled out exchanging data on cards, 
 
 | Layer | Content | Difficulty |
 |---|---|---|
-| display | Drive the Mini PiTFT's ST7789 over **SPI1** (MOSI GPIO11, SCK GPIO10, CS GPIO8 as a plain GPIO, DC GPIO25), **240×135** RGB565, backlight on GPIO22. The 135-line panel sits at an offset in the controller's RAM; `src/ui/st7789.zig` sets offset 0 (correct only for 240×240), so the offset has to be added and checked on the real panel | Low–Medium (many existing C implementations) |
+| display | Drive the Mini PiTFT's ST7789 over **SPI1** (MOSI GPIO11, SCK GPIO10, CS GPIO8 as a plain GPIO, DC GPIO25), **240×135** RGB565, backlight on GPIO22. The 135-line panel sits at an offset in the controller's RAM; `src/ui/st7789.zig` applies the offsets Adafruit's library uses (40, and 52 or 53 by orientation), still to be checked on the real panel | Low–Medium (many existing C implementations) |
 | input | **Two buttons**, GPIO23 / GPIO24 (pulled up on the module), debounced in the Secure world | Low |
 | camera | HM01B0 control over I²C1 (GPIO2 / GPIO3, address 0x24); one-bit capture with PIO + DMA (D0 GPIO9, PCLK GPIO13, HREF GPIO15, VSYNC GPIO16) into a 320×240 grayscale buffer handed to `src/ui/qr_decode.zig`. Never drive XCLK. Pins and electrical notes: [03-hardware-bom.md](03-hardware-bom.md) §3 | Medium–High (PCLK is 24 MHz, about 6 CPU cycles per bit at 150 MHz) |
 | entropy | RP2350 built-in TRNG | Low |
@@ -180,7 +170,7 @@ So that the UI can be pinned down without a device, **screen composition is made
 |---|---|---|
 | [src/ui/font.zig](../firmware/src/ui/font.zig) | 8×8 bitmap font (public domain, source credited) | Glyph shape verification |
 | [src/ui/framebuffer.zig](../firmware/src/ui/framebuffer.zig) | RGB565 drawing (points, rectangles, text, dot rows). Out-of-range coordinates are clipped | Verified pixel by pixel |
-| [src/ui/screen.zig](../firmware/src/ui/screen.zig) | Screen layouts for 240×240 and the Mini PiTFT's 240×135 (title, label/value, warnings, QR, footer) | Drawing verified per region |
+| [src/ui/screen.zig](../firmware/src/ui/screen.zig) | The screen layout for the Mini PiTFT's 240×135 (title, label/value, warnings, QR, footer) | Drawing verified per region |
 | [src/ui/qr.zig](../firmware/src/ui/qr.zig) / [src/ui/qr_decode.zig](../firmware/src/ui/qr_decode.zig) | QR encoder and host-side decoder (ISO/IEC 18004) | Encoder matrices and decoder outputs are cross-checked against independent implementations |
 | [src/cli/png.zig](../firmware/src/cli/png.zig) | PNG output (uncompressed zlib. No external libraries) | Structure and CRC / Adler-32 verified |
 
@@ -235,7 +225,7 @@ No SD card is involved: the board's microSD slot stays empty (owner decision 202
 
 ### About the text shown on screen
 
-Displaying Japanese on a 240×240 screen would require bundling a font, increasing both size and implementation work.
+Displaying Japanese on a 240×135 screen would require bundling a font, increasing both size and implementation work.
 For now the **on-screen text is English (ASCII)**, and Japanese appears only in translation files such as [README.ja.md](../README.ja.md).
 A Japanese font (a bitmap restricted to the necessary glyphs) will be considered once the UI settles.
 

@@ -1,13 +1,17 @@
-//! Driver for the ST7789 (240x240 IPS LCD).
-//!
-//! The controller mounted on Waveshare's 1.3inch LCD HAT (SKU:14972).
+//! Driver for the ST7789 on the Adafruit Mini PiTFT #4393 (1.14" 240×135 IPS, used in landscape).
 //!
 //! **Design**: the actual wiring (SPI, DC, CS, RST, backlight) is passed in from outside as a `Transport`.
 //! That way the command sequence can be verified with a **mock transport** even without the real board.
 //! The RP2350-side implementation lives in `platform/rp2350/`.
 //!
-//! The initialization sequence uses the values commonly used for 240x240 ST7789 panels.
-//! **Panel-specific tuning may be needed on the real device** (porching and gamma).
+//! **Panel offset**: the ST7789 has 240×320 dots of RAM and this panel shows a 135×240 window
+//! of it, so every window is shifted: 40 dots along the long side, and 52 or 53 along the short
+//! one depending on the orientation (135 dots cannot be centred exactly). These are the offsets
+//! Adafruit's own ST7789 library uses for this panel; **check them on the real panel** (a wrong
+//! offset shows as a strip of noise along one edge).
+//!
+//! The initialization sequence uses porch, power and gamma values common for ST7789 IPS panels.
+//! **Panel-specific tuning may be needed on the real device**.
 //! If the display is disturbed, check the settings one by one following [docs/08-rp2350-pizero.md].
 // SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
 // SPDX-License-Identifier: MIT
@@ -17,7 +21,7 @@ const Error = @import("../core/errors.zig").Error;
 const framebuffer = @import("framebuffer.zig");
 
 pub const width = 240;
-pub const height = 240;
+pub const height = 135;
 
 // Commands (ST7789 datasheet)
 pub const cmd_swreset: u8 = 0x01;
@@ -45,16 +49,21 @@ pub const cmd_pwctrl1: u8 = 0xD0;
 pub const cmd_pvgamctrl: u8 = 0xE0;
 pub const cmd_nvgamctrl: u8 = 0xE1;
 
-/// Screen orientation.
+/// Screen orientation. The device is used in landscape (the long side horizontal); the value is
+/// the MADCTL byte that selects it.
 pub const Rotation = enum(u8) {
-    /// 0 degrees (origin at the top left)
-    deg0 = 0x00,
-    /// 90 degrees
-    deg90 = 0x60,
-    /// 180 degrees
-    deg180 = 0xC0,
-    /// 270 degrees
-    deg270 = 0xA0,
+    /// Landscape (MADCTL MX | MV)
+    landscape = 0x60,
+    /// Landscape turned by 180 degrees (MADCTL MY | MV)
+    landscape_flipped = 0xA0,
+
+    /// Where this orientation's 240×135 window starts in the controller's RAM.
+    pub fn offset(self: Rotation) struct { x: u16, y: u16 } {
+        return switch (self) {
+            .landscape => .{ .x = 40, .y = 53 },
+            .landscape_flipped => .{ .x = 40, .y = 52 },
+        };
+    }
 };
 
 /// Transport layer. SPI and the control pins grouped together.
@@ -69,8 +78,7 @@ pub const Rotation = enum(u8) {
 pub fn Driver(comptime Transport: type) type {
     return struct {
         transport: Transport,
-        x_offset: u16 = 0,
-        y_offset: u16 = 0,
+        rotation: Rotation = .landscape,
 
         const Self = @This();
 
@@ -93,9 +101,9 @@ pub fn Driver(comptime Transport: type) type {
 
             // Color order and frame rate
             try self.command(cmd_colmod, &[_]u8{0x55}); // 16bit/pixel (RGB565)
-            try self.command(cmd_madctl, &[_]u8{0x00});
+            try self.setRotation(self.rotation);
 
-            // Porching, power and gamma (values commonly used for 240x240)
+            // Porching, power and gamma (values common for ST7789 IPS panels)
             try self.command(cmd_porctrl, &[_]u8{ 0x0C, 0x0C, 0x00, 0x33, 0x33 });
             try self.command(cmd_gctrl, &[_]u8{0x35});
             try self.command(cmd_vcoms, &[_]u8{0x19});
@@ -120,19 +128,10 @@ pub fn Driver(comptime Transport: type) type {
             self.transport.setBacklight(true);
         }
 
-        /// Changes the screen orientation (the display window is switched as well).
+        /// Changes the screen orientation (the panel offset follows it).
         pub fn setRotation(self: *Self, rotation: Rotation) !void {
-            const value: u8 = switch (rotation) {
-                .deg0 => 0x00,
-                .deg90 => 0x60,
-                .deg180 => 0xC0,
-                .deg270 => 0xA0,
-            };
-            try self.command(cmd_madctl, &[_]u8{value});
-
-            // 240x240, so the offset is 0 even at 90/270 degrees
-            self.x_offset = 0;
-            self.y_offset = 0;
+            try self.command(cmd_madctl, &[_]u8{@backingInt(rotation)});
+            self.rotation = rotation;
         }
 
         /// Sets the drawing window (both ends inclusive).
@@ -140,10 +139,11 @@ pub fn Driver(comptime Transport: type) type {
             if (x1 >= width or y1 >= height) return error.InvalidEncoding;
             if (x0 > x1 or y0 > y1) return error.InvalidEncoding;
 
-            const xs: u16 = x0 + self.x_offset;
-            const xe: u16 = x1 + self.x_offset;
-            const ys: u16 = y0 + self.y_offset;
-            const ye: u16 = y1 + self.y_offset;
+            const at = self.rotation.offset();
+            const xs: u16 = x0 + at.x;
+            const xe: u16 = x1 + at.x;
+            const ys: u16 = y0 + at.y;
+            const ye: u16 = y1 + at.y;
 
             try self.command(cmd_caset, &[_]u8{
                 @intCast(xs >> 8), @intCast(xs & 0xFF),
@@ -264,6 +264,7 @@ test "initialization emits the expected commands in order" {
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_swreset }));
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_slpout }));
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_colmod, 'D', 0x55 }));
+    try testing.expect(transport.contains(&[_]u8{ 'C', cmd_madctl, 'D', 0x60 })); // landscape
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_dispon }));
 
     // Reset is pulled low once and then raised
@@ -275,20 +276,21 @@ test "initialization emits the expected commands in order" {
     try testing.expect(transport.data_mode);
 }
 
-test "window setup emits four bytes, high byte first" {
+test "window setup adds the panel offset and emits four bytes, high byte first" {
     var driver = Driver(MockTransport){ .transport = .{} };
     try driver.setWindow(10, 20, 30, 40);
     const transport = driver.transport;
 
-    // CASET (columns): 10 to 30
-    try testing.expect(transport.contains(&[_]u8{ 'C', cmd_caset, 'D', 0x00, 0x0A, 0x00, 0x1E }));
-    // RASET (rows): 20 to 40
-    try testing.expect(transport.contains(&[_]u8{ 'C', cmd_raset, 'D', 0x00, 0x14, 0x00, 0x28 }));
+    // CASET (columns): 10 to 30, shifted by 40 = 50 to 70
+    try testing.expect(transport.contains(&[_]u8{ 'C', cmd_caset, 'D', 0x00, 0x32, 0x00, 0x46 }));
+    // RASET (rows): 20 to 40, shifted by 53 = 73 to 93
+    try testing.expect(transport.contains(&[_]u8{ 'C', cmd_raset, 'D', 0x00, 0x49, 0x00, 0x5D }));
 }
 
 test "out-of-range windows are rejected" {
     var driver = Driver(MockTransport){ .transport = .{} };
-    try testing.expectError(error.InvalidEncoding, driver.setWindow(0, 0, 240, 239));
+    try testing.expectError(error.InvalidEncoding, driver.setWindow(0, 0, 240, 134));
+    try testing.expectError(error.InvalidEncoding, driver.setWindow(0, 0, 239, 135));
     try testing.expectError(error.InvalidEncoding, driver.setWindow(10, 10, 5, 20));
 }
 
@@ -303,7 +305,7 @@ test "pixels are sent high byte first (RGB565)" {
     }));
 }
 
-test "sending the whole framebuffer covers 240x240 pixels" {
+test "sending the whole framebuffer covers the 240x135 window" {
     var storage: [width * height]u16 = @splat(0x1234);
     var fb = try framebuffer.Framebuffer.init(&storage, width, height);
     fb.setPixel(0, 0, 0xFFFF);
@@ -314,8 +316,9 @@ test "sending the whole framebuffer covers 240x240 pixels" {
 
     // The start is white at (0,0)
     try testing.expect(transport.contains(&[_]u8{ 'C', cmd_ramwr, 'D', 0xFF, 0xFF }));
-    // The window is the full screen
-    try testing.expect(transport.contains(&[_]u8{ 'C', cmd_caset, 'D', 0x00, 0x00, 0x00, 0xEF }));
+    // The window is the full screen, at the panel offset: columns 40 to 279, rows 53 to 187
+    try testing.expect(transport.contains(&[_]u8{ 'C', cmd_caset, 'D', 0x00, 0x28, 0x01, 0x17 }));
+    try testing.expect(transport.contains(&[_]u8{ 'C', cmd_raset, 'D', 0x00, 0x35, 0x00, 0xBB }));
 
     // A framebuffer of a different size is rejected
     var small: [16]u16 = @splat(0);
@@ -323,10 +326,13 @@ test "sending the whole framebuffer covers 240x240 pixels" {
     try testing.expectError(error.InvalidEncoding, driver.drawFramebuffer(&small_fb));
 }
 
-test "changing the orientation updates MADCTL" {
+test "changing the orientation updates MADCTL and the offset" {
     var driver = Driver(MockTransport){ .transport = .{} };
-    try driver.setRotation(.deg90);
-    try testing.expect(driver.transport.contains(&[_]u8{ 'C', cmd_madctl, 'D', 0x60 }));
-    try driver.setRotation(.deg270);
+    try driver.setRotation(.landscape_flipped);
     try testing.expect(driver.transport.contains(&[_]u8{ 'C', cmd_madctl, 'D', 0xA0 }));
+    // turned by 180 degrees the short side starts one dot earlier (52, not 53)
+    try driver.setWindow(0, 0, 0, 0);
+    try testing.expect(driver.transport.contains(&[_]u8{ 'C', cmd_raset, 'D', 0x00, 0x34, 0x00, 0x34 }));
+    try driver.setRotation(.landscape);
+    try testing.expect(driver.transport.contains(&[_]u8{ 'C', cmd_madctl, 'D', 0x60 }));
 }

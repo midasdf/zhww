@@ -1,6 +1,6 @@
 //! QR Code (ISO/IEC 18004) encoder. Display only; **it does not include a decoder**.
 //!
-//! Its purpose is to show UR strings, addresses and signing results as QR codes on a 240x240 LCD.
+//! Its purpose is to show UR strings, addresses and signing results as QR codes on the 240×135 LCD.
 //! It supports versions 1-40 so that it can handle the several-hundred-byte UR strings passed in by the signing flow.
 //!
 //! **Scope of the implementation**
@@ -1412,8 +1412,8 @@ test "drawing: quiet zone, scale and clipping" {
     // 21 modules + quiet zone 4 x 2 = 29 modules. At scale 1 that is 29x29 pixels.
     try testing.expectEqual(@as(usize, 29), pixelSize(&m, .{ .scale = 1, .quiet_zone = 4 }));
     try testing.expectEqual(@as(usize, 58), pixelSize(&m, .{ .scale = 2, .quiet_zone = 4 }));
-    try testing.expect(fitsIn(&m, 240, 240, .{ .scale = 2, .quiet_zone = 4 }));
-    try testing.expect(!fitsIn(&m, 240, 240, .{ .scale = 2, .quiet_zone = 4, .origin_x = 200 }));
+    try testing.expect(fitsIn(&m, 240, 135, .{ .scale = 2, .quiet_zone = 4 }));
+    try testing.expect(!fitsIn(&m, 240, 135, .{ .scale = 2, .quiet_zone = 4, .origin_x = 200 }));
 
     // Fit it exactly into a 29x29 area. The quiet zone is light, the corner of the finder pattern is dark and the separator is light.
     var buffer: [31 * 31]u16 = @splat(0x1234);

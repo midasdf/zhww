@@ -447,7 +447,7 @@ test "nested context acquisition refuses approved signing without closing outer 
     try testing.expectError(error.ContextBusy, zhww.secp256k1.SigningLease.begin(&@as([32]u8, @splat(0x88))));
 }
 
-test "review renders every complete page on both supported displays" {
+test "review renders every complete page on the display, and refuses any other size" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -457,11 +457,12 @@ test "review renders every complete page on both supported displays" {
     try review.build(a, f.raw, .regtest);
     try testing.expect(std.mem.indexOf(u8, (try review.page(0)).bytes(), "regtest") != null);
     try testing.expect(std.mem.indexOf(u8, (try review.page(3)).bytes(), "bcrt1") != null);
-    for ([_]usize{ 135, 240 }) |height| {
-        const pixels = try a.alloc(u16, 240 * height);
-        var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, 240, height);
-        for (review.pages[0..review.count]) |*page| try page.render(&fb);
-    }
+    const pixels = try a.alloc(u16, 240 * 240);
+    var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels[0 .. 240 * 135], 240, 135);
+    for (review.pages[0..review.count]) |*page| try page.render(&fb);
+    // a frame the size of no panel the device has is refused, not drawn with other metrics
+    var square = try zhww.ui_framebuffer.Framebuffer.init(pixels, 240, 240);
+    try testing.expectError(error.Undisplayable, review.pages[0].render(&square));
 }
 
 test "multiple outputs are all shown and unknown output scripts are refused" {

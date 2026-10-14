@@ -38,13 +38,13 @@ CI runs both the reader tests and target inventory.
 | Preallocated secp256k1 context owner | 4,160 | Target ABI size for the 4,096-byte capacity plus pointer/poison latch/alignment padding |
 | Parsing/signing/output workspace | 131,072 | Fixed 128 KiB policy allocation |
 | Incoming request buffer | 65,536 | Fixed 64 KiB maximum request allocation |
-| One 240×240 RGB565 framebuffer | 115,200 | 240 × 240 × 2; no double buffering |
+| One 240×135 RGB565 framebuffer | 64,800 | 240 × 135 × 2 (the Mini PiTFT); no double buffering |
 | **Secure main stack — unvalidated** | 65,536 | Main Zig/C/IRQ reserve; static frames observed, NOT transitive upper bound |
 | **Secure fatal stack — unvalidated** | 8,192 | Separate fatal-wipe prototype stack; NOT measured transitive upper bound |
 | **NS stack — unvalidated** | 8,192 | Separate NS harness reservation; real NS tasks/IRQ not yet measured |
 | **HAL reserve — unvalidated** | 32,768 | Future driver/DMA/transport/control state; NOT an implemented HAL |
-| **Planned total** | **509,544** | Sum of the counted terms |
-| **Unallocated margin** | **22,936** | 532,480 − 509,544 (about 22.4 KiB) |
+| **Planned total** | **459,144** | Sum of the counted terms |
+| **Unallocated margin** | **73,336** | 532,480 − 459,144 (about 71.6 KiB) |
 
 The review object is 11,048 bytes **inside** the workflow. It is reported for visibility but must
 not be counted twice. Additional automatic/local review copies do use stack and are not covered
@@ -61,7 +61,7 @@ This assumes flash-resident public code/assets. Loading all code/secp tables int
 anti-XIP-substitution hardening or encrypted boot needs a different budget. Extra framebuffers,
 camera capture/JPEG/QR decoding buffers, fonts copied into RAM, multicore stacks and additional
 NS-side copies are **not included**. Selected crypto/rendering/signing globals are now measured
-in the partial link harness (509,584-byte combined SRAM reservation, 22,896-byte margin), but
+in the partial link harness (459,184-byte combined SRAM reservation, 73,296-byte margin), but
 all SDK/HAL/gateway and complete-wallet sections still need accounting. The margin is not a
 license to add unmeasured buffers.
 

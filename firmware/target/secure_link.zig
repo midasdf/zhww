@@ -90,7 +90,7 @@ export fn zhww_link_only_prepare(evidence: *const zhww.boot_policy.Evidence, see
     return 0;
 }
 export fn zhww_link_only_render(index: usize) u32 {
-    var fb = zhww.ui_framebuffer.Framebuffer.init(&zhww_secure_framebuffer, 240, 240) catch {
+    var fb = zhww.ui_framebuffer.Framebuffer.init(&zhww_secure_framebuffer, 240, 135) catch {
         zhww_secure_workflow.abort();
         workspace.reset();
         return 1;

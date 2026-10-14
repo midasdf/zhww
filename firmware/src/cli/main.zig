@@ -20,7 +20,7 @@ const usage =
     \\Commands:
     \\  address     Show the address for a mnemonic
     \\  show        Show the contents of a PSBT in human-readable form
-    \\  screen      Render the device screen (240x240 or 240x135) as a PNG
+    \\  screen      Render the device screen (240x135, the Mini PiTFT) as a PNG
     \\  sign        Sign a PSBT (base64) read from stdin
     \\  ur          Convert a PSBT (base64) to UR (for QR transfer)
     \\  ur-decode   Read UR parts and turn them back into a PSBT (base64)
@@ -44,7 +44,6 @@ const usage =
     \\show / screen options:
     \\  --network mainnet|testnet|signet|regtest (for address display; default: mainnet)
     \\  --mnemonic "..."           If given, detect the change output (optional)
-    \\  --size WxH                 Screen size (default: 240x240; 240x135 = Adafruit Mini PiTFT #4393)
     \\  --page <n>                 Page to draw when the content does not fit (screen; default: 1)
     \\  --scale <n>                Scale each pixel by n (screen; default: 1)
     \\  --demo                     Draw a sample confirmation screen (screen; no input)
@@ -207,37 +206,6 @@ fn requiredOption(args: []const []const u8, name: []const u8) ![]const u8 {
         return error.Usage;
     };
 }
-
-/// The screen to render (`--size WIDTHxHEIGHT`).
-///
-/// The default is the original 240x240 panel (Waveshare 1.3" HAT); `240x135` is the Adafruit
-/// Mini PiTFT (#4393). The layout adapts to whatever size is passed in, so other sizes work
-/// too (they are only checked for sanity).
-const ScreenSize = struct {
-    width: usize,
-    height: usize,
-
-    fn of(args: []const []const u8) !ScreenSize {
-        const text = option(args, "--size") orelse return .{ .width = 240, .height = 240 };
-        const at = std.mem.indexOfScalar(u8, text, 'x') orelse std.mem.indexOfScalar(u8, text, 'X') orelse {
-            stderrPrint("invalid value for --size: {s} (expected WIDTHxHEIGHT, e.g. 240x135)\n", .{text});
-            return error.InvalidArgument;
-        };
-        const width = std.fmt.parseInt(usize, text[0..at], 10) catch {
-            stderrPrint("invalid value for --size: {s} (expected WIDTHxHEIGHT, e.g. 240x135)\n", .{text});
-            return error.InvalidArgument;
-        };
-        const height = std.fmt.parseInt(usize, text[at + 1 ..], 10) catch {
-            stderrPrint("invalid value for --size: {s} (expected WIDTHxHEIGHT, e.g. 240x135)\n", .{text});
-            return error.InvalidArgument;
-        };
-        if (width < 64 or height < 64 or width > 4096 or height > 4096) {
-            stderrPrint("--size out of range: {s} (64..4096 dots per side)\n", .{text});
-            return error.InvalidArgument;
-        }
-        return .{ .width = width, .height = height };
-    }
-};
 
 fn networkOf(args: []const []const u8) !zhww.btc_address.Network {
     const name = option(args, "--network") orelse return .mainnet;
@@ -680,8 +648,7 @@ fn warnDangerousCalldata(selector: [4]u8) !void {
 
 const png = @import("png.zig");
 
-/// Build the device screen and output it as a PNG (default 240x240, `--size 240x135` for the
-/// Adafruit Mini PiTFT).
+/// Build the device screen and output it as a PNG, at the Mini PiTFT's 240x135.
 ///
 /// A command for checking the UI without a device.
 /// `--demo` draws a sample; passing a PSBT draws its confirmation screen.
@@ -691,9 +658,8 @@ fn commandScreen(
     stdout: anytype,
 ) !void {
     const network = try networkOf(args);
-    const screen_size = try ScreenSize.of(args);
-    const screen_width = screen_size.width;
-    const screen_height = screen_size.height;
+    const screen_width = zhww.ui_st7789.width;
+    const screen_height = zhww.ui_st7789.height;
 
     const pixels = try allocator.alloc(u16, screen_width * screen_height);
     var fb = try zhww.ui_framebuffer.Framebuffer.init(pixels, screen_width, screen_height);
@@ -706,7 +672,7 @@ fn commandScreen(
 
     const qr_mode = hasFlag(args, "--qr");
     const demo = hasFlag(args, "--demo");
-    if (qr_mode) return commandScreenQr(allocator, args, stdout, screen_size);
+    if (qr_mode) return commandScreenQr(allocator, args, stdout);
     var qr_modules: ?[]u8 = null;
     if (demo) {
         title = "CONFIRM";
@@ -894,10 +860,9 @@ fn commandScreenQr(
     allocator: std.mem.Allocator,
     args: []const []const u8,
     stdout: anytype,
-    size: ScreenSize,
 ) !void {
-    const screen_width = size.width;
-    const screen_height = size.height;
+    const screen_width = zhww.ui_st7789.width;
+    const screen_height = zhww.ui_st7789.height;
 
     const input = try readAllStdin(allocator);
     const text = std.mem.trim(u8, input, " \t\r\n");

@@ -133,7 +133,7 @@ cd firmware && zig build
 comments, test descriptions, commit messages and issue replies — so that anyone in the world can
 use it, review it and contribute to it.
 
-The device UI is English only (the 240×240 screen shows plain ASCII), and the firmware has no
+The device UI is English only (the 240×135 screen shows plain ASCII), and the firmware has no
 Japanese font embedded. Translations of the documentation into other languages are welcome as
 additional files (for example `README.ja.md`), but English stays the source of truth.
 

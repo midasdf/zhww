@@ -50,11 +50,10 @@ pub const Page = struct {
         return self.text[0..self.len];
     }
 
-    /// Fixed short lines: no elision or hidden pagination on the supported screens.
+    /// Fixed short lines: no elision or hidden pagination on the 240×135 screen.
     /// HAL must render and successfully transfer this framebuffer before acknowledging.
     pub fn render(self: *const Page, fb: *framebuffer.Framebuffer) !void {
-        if (fb.width != 240 or (fb.height != 240 and fb.height != 135))
-            return error.Undisplayable;
+        if (fb.width != 240 or fb.height != 135) return error.Undisplayable;
         var lines: [max_lines]ui.Line = undefined;
         var count: usize = 0;
         var split = std.mem.splitScalar(u8, self.bytes(), '\n');

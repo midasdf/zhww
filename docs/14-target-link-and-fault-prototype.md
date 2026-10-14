@@ -101,24 +101,24 @@ Current measurements:
 
 | Harness | Flash load bytes | Reserved SRAM bytes | Partition margin |
 |---|---:|---:|---:|
-| Secure, ReleaseSafe IR | 198,300 | 435,856 | 14,704 |
-| Secure, ReleaseSmall IR | 128,060 | 435,856 | 14,704 |
+| Secure, ReleaseSafe IR | 200,924 | 385,456 | 65,104 |
+| Secure, ReleaseSmall IR | 127,292 | 385,456 | 65,104 |
 | Minimal NS | 24 | 73,728 | 8,192 |
 
-Combined SRAM reservation is **509,584 bytes**, leaving **22,896 bytes** across both partitions.
+Combined SRAM reservation is **459,184 bytes**, leaving **73,296 bytes** across both partitions.
 This includes the 64 KiB main stack, separate 8 KiB fatal stack, 8 KiB NS stack and provisional
 32 KiB HAL reserve. The type inventory schema is now 2 and counts those separate stacks;
-its planned total is 509,544 bytes, differing slightly from actual sections/alignment/globals.
+its planned total is 459,144 bytes, differing slightly from actual sections/alignment/globals.
 
 This is a real fit check of this **partial link harness**, NOT a complete-wallet fit or stack proof.
-The real gateway, SDK globals/boot workspaces, TRNG/SPI/SD/DMA/IRQ state, camera/QR pipeline,
-other chains and update/recovery implementation are not all linked/reserved here. The large
-framebuffer is already included; extra camera buffers cannot be assumed to fit in the margin.
+The real gateway, SDK globals/boot workspaces, TRNG/SPI/DMA/IRQ state, camera/QR pipeline,
+other chains and update/recovery implementation are not all linked/reserved here. The
+framebuffer is already included; a camera frame (320 × 240, 76,800 bytes) does not fit in the margin.
 
 ## 5. Stack evidence and limits
 
-ReleaseSafe currently reports **169 functions with metadata**; the largest observed frame is
-**14,736 bytes** at the signing reachability entry. ReleaseSmall reports 293, largest 15,128.
+ReleaseSafe currently reports **167 functions with metadata**; the largest observed frame is
+**14,736 bytes** at the signing reachability entry. ReleaseSmall reports 292, largest 15,128.
 The independent guard itself has a 6,032-byte measured frame. Inlining changes counts/frames.
 
 These are **individual static frames, not a transitive maximum**. Reports explicitly contain

@@ -64,7 +64,7 @@ Design and publish a fully open-source, multi-chain signing device that can be a
 
 - **C-01**: The Raspberry Pi Zero (the v0.1 Linux build) has no secure boot. Firmware integrity can therefore only be assured by "reproducible builds + detection through SD-card swapping in operation" (stated as a residual risk).
 - **C-02**: With no SE, seed protection cannot be guaranteed if an attacker gains physical access.
-- **C-03**: A 240×240 screen limits full display of EVM calldata. A paged display is assumed (a larger-screen option is described in the BOM).
+- **C-03**: The 240×135 screen limits full display of EVM calldata. Long content is paged.
 - **C-04**: The firmware is MIT, so GPL-licensed code (Trezor firmware is GPLv3) must not be copied into it, and the "Trezor" name is not used (see [LICENSE-POLICY.md](../LICENSE-POLICY.md) §3).
 
 ## 6. Acceptance criteria (definition of v0.1 Done)

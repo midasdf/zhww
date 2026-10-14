@@ -53,10 +53,10 @@ to obtain static frame metadata. Target ELF and archive/instruction readers have
 `target-config-test` also runs ALL wallet tests on HOST with selected C settings in four modes.
 
 Stable dedicated workflow/workspace/framebuffer/NS ingress; 64 KiB main, 8 KiB fatal, 8 KiB NS
-stacks. Provisional inventory schema 2 counts all three: planned 509,544, margin 22,936 bytes.
-Actual harness combined SRAM 509,584, margin 22,896; Secure partition 435,856/450,560 bytes,
-NS 73,728/81,920. Secure flash load 198,300 bytes (ReleaseSafe) / 128,060 (ReleaseSmall).
-169/293 functions with frame metadata; largest 14,736/15,128 bytes. **NOT transitive bounds**;
+stacks. Provisional inventory schema 2 counts all three: planned 459,144, margin 73,336 bytes.
+Actual harness combined SRAM 459,184, margin 73,296; Secure partition 385,456/450,560 bytes,
+NS 73,728/81,920. Secure flash load 200,924 bytes (ReleaseSafe) / 127,292 (ReleaseSmall).
+167/292 functions with frame metadata; largest 14,736/15,128 bytes. **NOT transitive bounds**;
 compiler-rt/indirect callback/IRQ and runtime watermarks remain open.
 
 ContextOwner fatal poison wipes fixed backing without calling C through a corrupted pointer,
