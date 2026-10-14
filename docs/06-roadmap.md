@@ -47,7 +47,6 @@ or hardware-wallet flow is done. The remaining architecture work is tracked in t
 | **2-of-3 multisig (P2WSH)** | 🧩 Standalone signer and Core interoperability test pass; not integrated into the normal PSBT workflow |
 | **Taproot key-path signing (BIP341/BIP86)** | 🧩 Standalone signer and Core interoperability test pass; not integrated into the normal PSBT workflow |
 | **QR transfer (BC-UR)** | ✅ Done (Bytewords / CBOR / single- and multi-part. Matches the strings of the specification and reference implementations. Redundant parts (MUR) are not implemented) |
-| **FAT32 (microSD exchange)** | ✅ Done (reading and writing, `IN.PSBT` → `OUT.PSBT` handoff with the `OUT.TMP` → rename scheme. Verified in CI with `mtools` and `fsck.fat`) |
 | EIP-712 (typed data) | 🧩 Hash/sign library matches known and independent values; not integrated with approval UI |
 | ERC-7730 (clear signing) and ABI decoding | 🧩 Renderer tests pass; not connected to EVM signing or authenticated descriptor provisioning |
 | **EVM transaction signing (Legacy / EIP-1559)** | 🧩 Signatures match independent values; CLI has no approval gate |
@@ -61,7 +60,7 @@ or hardware-wallet flow is done. The remaining architecture work is tracked in t
 | SRAM/stack budget | 🧩 Fixed 128 KiB workspace including two-input 64 KiB requests; schema-2 inventory plus actual pinned-C Secure/NS link harness and individual frames. Complete boot image, transitive/IRQ bounds and HAL/camera buffers remain open ([scope](14-target-link-and-fault-prototype.md)) |
 | On-device screen UI and QR send/receive | ⬜ Not started (HAL and hardware verification required) |
 | Development CLI | ✅ Implemented as a development tool; signing commands sign immediately and are not the device flow |
-| CI (build and tests on Linux) | ✅ Done (GitHub Actions. On Linux it verifies the tests, the CLI, Core-vector signing, the UR round trip and the FAT32 microSD handoff on every run) |
+| CI (build and tests on Linux) | ✅ Done (GitHub Actions. On Linux it verifies the tests, the CLI, Core-vector signing and the UR round trip on every run) |
 
 ### Substantial host-side architecture work remains
 

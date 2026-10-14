@@ -70,7 +70,7 @@ which would need soldering.
 
 Nothing else connects to the host: no SD card, no data over USB. The owner ruled out exchanging data
 on SD cards (2026-10-13): a card is shared physical media that passes through the untrusted host.
-**Do not propose it again.** The FAT32 code stays in the tree, tested, but not as an option.
+**Do not propose it again.** The FAT32 code was removed from the tree (2026-10-14).
 
 The light receiver of [09-light-audio-input.md](09-light-audio-input.md) stays implemented and
 tested on the host as an optional channel; no hardware or case is designed for it.

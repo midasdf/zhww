@@ -12,7 +12,7 @@ official ones, kept in [LICENSES/](LICENSES/).
 
 | Deliverable | Where | Licence | Why |
 |---|---|---|---|
-| Firmware and tools | `firmware/`, `tools/`, CI and config files | **MIT** ([LICENSE](LICENSE)) | Permissive and short: anyone may reuse the code (the PSBT and EVM parsers, the QR decoder, the FAT32 reader, …) in their own wallets and libraries, products included, as long as the notice is kept. It is the licence of the two things the firmware links against, libsecp256k1 and the Zig standard library |
+| Firmware and tools | `firmware/`, `tools/`, CI and config files | **MIT** ([LICENSE](LICENSE)) | Permissive and short: anyone may reuse the code (the PSBT and EVM parsers, the QR encoder and decoder, …) in their own wallets and libraries, products included, as long as the notice is kept. It is the licence of the two things the firmware links against, libsecp256k1 and the Zig standard library |
 | Hardware design: the enclosure now, schematics and PCB if they are ever made | `hardware/` | **CERN-OHL-S-2.0** ([LICENSES/CERN-OHL-S-2.0.txt](LICENSES/CERN-OHL-S-2.0.txt)) | Strongly reciprocal and written for hardware: anyone who distributes a modified design, **or devices made from it**, must publish the modified source. Consistent with OSHWA certification |
 | Documentation and its images | `*.md`, `docs/` | **CC-BY-4.0** ([LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt)) | Quoting, translation and redistribution are welcome with attribution |
 | Logo (there is none yet) | — | **CC-BY-SA-4.0** when one is added | Open, and modified logos stay open. Add `LICENSES/CC-BY-SA-4.0.txt` in the same change |

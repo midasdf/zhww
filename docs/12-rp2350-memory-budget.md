@@ -148,7 +148,7 @@ same approval, larger heap fallback or partially published signature.
 - Exercise multi-input/output and adversarial PSBT structures on the exact linked target. Verify
   explicit refusal and erasure under memory pressure; measure actual runtime stack high-water
   without leaking secrets in diagnostics.
-- Decide whether camera buffers/decoded input, QR output, FAT32 and signing scratch can share
+- Decide whether camera buffers/decoded input, QR output and signing scratch can share
   non-overlapping lifetimes. Do not share memory across trust domains without explicit ownership
   and erasure transitions.
 

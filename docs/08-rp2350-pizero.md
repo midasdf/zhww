@@ -139,7 +139,7 @@ The RP2350-PiZero has 16MB of flash. **The measured usage** is as follows, leavi
 
 | Purpose | Estimate | Notes |
 |---|---|---|
-| Firmware body (core + UI + FAT32 + QR) | **68 KB** (measured) | `-OReleaseSmall` for the RP2350 |
+| Firmware body (core + UI + QR) | **68 KB** (measured while the FAT32 layer was still in; an upper bound) | `-OReleaseSmall` for the RP2350 |
 | libsecp256k1 | **340 KB** (measured) | Elliptic-curve arithmetic |
 | Japanese font (JIS level 1 + kana + ASCII, 12×12 bitmap) | 70 KB | Would make the screen Japanese-capable |
 | ERC-7730 descriptors (for clear signing) | 500 KB | Major tokens/protocols from the registry |
@@ -231,19 +231,7 @@ It has been confirmed that a confirmation screen showing "destination, amount an
 
 **Camera in, display out** (owner decisions 2026-10-13 and 2026-10-14): the UC-805 reads the host's UR
 QR codes, decoded on the device by `src/ui/qr_decode.zig`; the device shows its result as UR QR codes.
-No SD card is involved. The plan below, from 2026-10-12, is kept for the record: its option A (microSD)
-was ruled out on 2026-10-13, and option B became the standard build.
-
-Plan of 2026-10-12 (superseded): **C (build A first, add B if capacity allows)**
-
-| Option | Pros | Cons | Verdict |
-|---|---|---|---|
-| **A. Hand off over microSD, QR display only** | Zero extra parts. No camera needed. Reliable | Cannot be read directly from a phone (a PC is required in between) | **Implement first** |
-| B. Add an SPI camera and read QR codes | Direct interaction with a phone | Extra parts, capture over PIO, implementing QR decoding (heavy on a microcontroller) | After A, if capacity allows |
-| C. Both (A first, B if capacity allows) | Realistic | More implementation work | **Adopted** |
-
-Why build A first: if the signing result can be **displayed** as a QR code, the handoff works over microSD as well.
-The camera is a part that "reduces the effort of input", and the signing flow is complete without it.
+No SD card is involved: the board's microSD slot stays empty (owner decision 2026-10-13).
 
 ### About the text shown on screen
 
@@ -252,83 +240,24 @@ For now the **on-screen text is English (ASCII)**, and Japanese appears only in 
 A Japanese font (a bitmap restricted to the necessary glyphs) will be considered once the UI settles.
 
 
-## 7b. microSD handoff protocol (not used by the device)
+### Error screens
 
-> **Superseded (owner decision, 2026-10-13):** the device does not exchange data on SD cards; the
-> camera reads QR codes instead (§7). The protocol below stays implemented and CI-tested on the host
-> (the FAT32 layer and `zhww card`), and is recorded as it was settled on 2026-10-12.
+What the device says in each situation lives in [src/app/device.zig](../firmware/src/app/device.zig)
+(`noticeFor`, `problemForSignError`, `problemForPayloadSize`), and **the device's main loop and the
+host tests use the same functions**.
 
-Since the policy then was not to use a camera, **PSBTs were to be handed over as files on the microSD card**.
-The specification agreed with the PC / phone-side tools is fixed here.
-
-### File names (directly under the card's root)
-
-| Name | Who writes it | Meaning |
-|---|---|---|
-| `IN.PSBT` | PC / phone | The PSBT to be signed (**binary**, not base64) |
-| `OUT.PSBT` | **The device** | The signed PSBT. Includes the final transaction if every input could be signed |
-| `OUT.TMP` | The device | Temporary file for a write in progress. **This is not a result** |
-| `OUT.LOG` | The device | A record of what was signed (destination, amount, fee, warnings; for a human to read) |
-
-### Procedure
-
-1. The PC / phone writes `IN.PSBT` to the card (delete any existing `OUT.PSBT` first)
-2. Insert the card into the device and choose "SIGN" from the menu
-3. The device reads `IN.PSBT` and shows the **confirmation screen** (destination, amount, fee, warnings)
-4. The user reviews it and signs
-5. The device writes `OUT.TMP` and **renames it to `OUT.PSBT` only after the write completes** (`OUT.LOG` likewise)
-6. The device can also **display the signing result as a QR code** (for handing it directly to a phone)
-7. Put the card back in the PC and broadcast `OUT.PSBT`
-
-### Promises to keep (the basis for safety)
-
-| Promise | Reason |
+| Title | When it appears |
 |---|---|
-| **Do not treat `OUT.TMP` as a result** | A power loss or card removal can leave a half-written file behind. Only what has completed the rename is a result (the same idea as "either it goes all the way through or nothing remains" in the [power policy](#4b-power-policy-settled-external-power)) |
-| **Do not overwrite `IN.PSBT`** | So the user can go back later and re-check what was signed |
-| **Show the list of files on the card and the target file name on screen before signing** | Prevents the accident of signing the wrong file |
-| For multisig, make `OUT.PSBT` the next signer's `IN.PSBT` | The signing relay across multiple devices follows the same procedure |
-| Decide a file-size limit (**64KB**) | The device's SRAM is 520KB. If the limit is exceeded, do not sign and show the reason on screen |
-
-### Screen flow (reproducible on a PC)
-
-Even without a device, screen components and the current illustrative walkthrough can be checked as PNGs. The walkthrough is not an approval state machine and does not enforce display-before-signing. The mapping between states and screens lives in
-[src/app/device.zig](../firmware/src/app/device.zig), and **the device's main loop and the PC preview use the same functions**.
-
-```bash
-# Prepare a card (mtools)
-mkfs.fat -F 32 -C card.img 40000
-jq -r .unsigned_psbt_base64 firmware/tests/vectors/core_psbt.json > in.txt
-mcopy -i card.img in.txt ::/IN.PSBT
-
-# Render every screen
-cd firmware && zig build
-./zig-out/bin/zhww walkthrough --image ../card.img \
-  --mnemonic "abandon … about" --out-dir ../docs/images
-```
-
-| Screen | When it appears | Output |
-|---|---|---|
-| ![Idle](images/1-waiting.png) | No card inserted | `1-waiting.png` |
-| ![Not FAT32](images/2-not-fat32.png) | The card could be read but is not FAT32 | `2-not-fat32.png` |
-| ![No IN.PSBT](images/3-no-input.png) | There is no `IN.PSBT` | `3-no-input.png` |
-| ![Too large](images/4-too-large.png) | Larger than 64KB | `4-too-large.png` |
-| ![Invalid PSBT](images/5-invalid-psbt.png) | Cannot be interpreted as a PSBT | `5-invalid-psbt.png` |
-| ![Confirmation](images/6-confirm.png) | Confirmation before signing (list of files on the card) | `6-confirm.png` |
-| ![Result](images/7-signed.png) | Signing complete (UR shown as a QR code) | `7-signed.png` |
+| `READY TO SCAN` | Waiting for the PSBT's QR codes |
+| `PSBT TOO LARGE` | The PSBT is larger than 64 KB |
+| `INVALID PSBT` | The scanned data cannot be interpreted as a PSBT |
+| `NO KEY` | No input belongs to this wallet |
+| `NOT SUPPORTED` | A signature type other than `SIGHASH_ALL` |
+| `FAILED` | Any other failure |
 
 **Every error screen states in red that "No signing was performed."** (so the user is not misled).
-The error mapping lives in `problemForMountError` / `problemForSignError` and is pinned by tests.
-
-**Multi-part QR**: a signed PSBT becomes multiple UR parts (4 parts in the example above). On the device you page
-through with `NEXT PART`; on a PC you can specify `--part 3` to check a specific part.
-
-The QR has been confirmed decodable as `ur:crypto-psbt/…` by an independent reader implementation (OpenCV's QRCodeDetector).
-
-### Error display (shown on screen)
-
-As in the table above (`NO CARD` / `NOT FAT32` / `NO IN.PSBT` / `FILE TOO LARGE` / `INVALID PSBT`).
-All are shown on screen with a red note that **nothing was signed**.
+A test renders each one on the 240×135 panel and checks that the red line is drawn and that the
+screen fits on one page.
 
 ## 8. Verification plan
 

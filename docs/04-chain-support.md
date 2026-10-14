@@ -81,11 +81,10 @@ state machine. See the [2026-10-13 internal review](10-security-audit-2026-10-13
 - Only `non_witness_utxo` was supplied (warning from the standpoint of excessive size and parsing load)
 - There are more than 2 outputs and one of them is not change (prevents missing a destination)
 
-### 2.3 QR / files
+### 2.3 QR
 
 - **BC-UR**: `ur:crypto-psbt` (single), `ur:bytes`. Large payloads are sent and received as animated QR (split into frames)
 - **SeedQR target**: standard (12 words: 25×25 / 24 words: 29×29), Compact SeedQR (12 words: 21×21 / 24 words: 25×25). SeedQR ingestion is not implemented
-- **SD card**: FAT32 read/write and the host image handoff are implemented. Unmount-after-boot is a future device requirement
 
 ### 2.4 Test vectors
 

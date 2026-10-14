@@ -38,7 +38,7 @@ This project aims at the intersection: **buildable by anyone from commodity part
 
 1. **Keys know nothing about chains** — key management, randomness and signing primitives live in `core`; chain-specific logic lives in `apps`. Adding a chain means adding an app, and does not require re-auditing the core.
 2. **Sign only what is displayed (clear signing)** — per-chain transaction parsing and human-readable display are mandatory; blind signing is not allowed. BTC uses PSBT, EVM uses [ERC-7730](https://eips.ethereum.org/EIPS/eip-7730) descriptors.
-3. **Secrets die with the power (stateless)** — the seed exists only in RAM and is never written to flash. Power off, and it is gone. The SD card is removed after boot.
+3. **Secrets die with the power (stateless)** — the seed exists only in RAM and is never written to flash. Power off, and it is gone.
 
 ---
 
@@ -86,7 +86,6 @@ zhww/
 │   ├── build.zig
 │   ├── src/core/              ← chain-agnostic primitives
 │   ├── src/apps/              ← BTC and EVM applications
-│   ├── src/fs/                ← FAT32 (microSD)
 │   ├── src/ui/                ← screen, LCD driver, QR encoder, status indicator
 │   ├── src/transport/         ← BC-UR (QR transport)
 │   ├── src/cli/               ← development CLI (host side)
@@ -100,10 +99,10 @@ zhww/
 | Item | State |
 |---|---|
 | Design documents | Working drafts present (requirements, architecture, BOM, chain support, threat model, roadmap, setup and port plan); security/memory/guard design and release blockers remain under review |
-| Firmware (Zig + libsecp256k1) | **Bitcoin**: BIP39 (incl. dice entropy), BIP32, address generation, transaction/PSBT parsing, legacy and BIP143 signing/finalization, fee/change analysis, BC-UR, screen rendering, QR encode/decode, and FAT32. **Taproot and 2-of-3 P2WSH are standalone signing modules with interoperability tests; they are not integrated into `signPsbtBytes`.** **EVM**: RLP, EIP-55, EIP-155/EIP-1559 signing, EIP-191 hashing, EIP-712, ABI decoding, and ERC-7730 rendering exist as separate modules; they are not connected by an on-device approval flow. |
+| Firmware (Zig + libsecp256k1) | **Bitcoin**: BIP39 (incl. dice entropy), BIP32, address generation, transaction/PSBT parsing, legacy and BIP143 signing/finalization, fee/change analysis, BC-UR, screen rendering, and QR encode/decode. **Taproot and 2-of-3 P2WSH are standalone signing modules with interoperability tests; they are not integrated into `signPsbtBytes`.** **EVM**: RLP, EIP-55, EIP-155/EIP-1559 signing, EIP-191 hashing, EIP-712, ABI decoding, and ERC-7730 rendering exist as separate modules; they are not connected by an on-device approval flow. |
 | Security prototypes | Host approved native-P2WPKH/SIGHASH_ALL flow, owned secret/context erasure, mandatory bounded entropy, fixed-workspace tests and independent wire/BIP143 message comparison. No actual TrustZone/HAL or physical approval. See [security](docs/11-rp2350-security.md), [memory](docs/12-rp2350-memory-budget.md) and [guard scope](docs/13-independent-p2wpkh-guard.md). |
 | Tests | **449 passing** in four optimization modes (normal host library and selected target C arithmetic configuration), including the previous crypto/interoperability vectors plus approval, wipe, RNG/workspace failure, independent guard and mutation checks. Tests are not a target execution or security proof; see [firmware details](firmware/README.md) and the historical [review report](docs/10-security-audit-2026-10-13.md). |
-| CI | GitHub Actions runs Linux host regressions, bare-metal Pico compile checks, Cortex-M33 memory inventory and tool/dependency checks, plus the microSD image round-trip with `mtools`/`fsck.fat`. This is not RP2350 hardware execution. |
+| CI | GitHub Actions runs Linux host regressions, bare-metal Pico compile checks, Cortex-M33 memory inventory and tool/dependency checks. This is not RP2350 hardware execution. |
 | Hardware | Parts decided (2026-10-14): **[Waveshare RP2350-PiZero](docs/08-rp2350-pizero.md)** + **Adafruit Mini PiTFT #4393** + **ArduCam UC-805 (HM01B0)** camera, USB power only ([BOM and wiring](docs/03-hardware-bom.md)). Enclosure: a clear 97.2 × 38.6 × 19.7 mm case, generated from Zig and built in SolidCraft, every clearance checked ([hardware/enclosure](hardware/enclosure/README.md)). Nothing has been bought or measured yet |
 | Target link prototype | Actual offline Secure/NS links with pinned C crypto and static frames, retained large storage and separate-stack fatal wipe prototype. No boot/startup, real attribution or NS gateway ([scope](docs/14-target-link-and-fault-prototype.md)). |
 | Next | Actual boot/SDK/CMSE gateway and attribution, transitive Zig/C/IRQ stack bounds, physical display/buttons, camera capture and TRNG HAL; then guarded P2TR/P2WSH/EVM integration and real-hardware tests. |
@@ -116,15 +115,15 @@ zig build memory                   # provisional Cortex-M33 inventory, not a ful
 
 ### Try it on your PC (no hardware required)
 
-The development CLI can sign PSBTs, preview screen components, and simulate the
-microSD exchange against a FAT32 image file. These commands do **not** implement a physical
-approval gate and must not be treated as the final device flow:
+The development CLI can sign PSBTs, preview screen components, and decode the camera's QR
+codes from image files. These commands do **not** implement a physical approval gate and must
+not be treated as the final device flow:
 
 ```bash
 cd firmware && zig build
 ./zig-out/bin/zhww help
 # sign a PSBT from stdin, show what would be signed, render device screens,
-# exchange PSBTs over a FAT32 image (as the microSD would), and more
+# decode QR codes from grayscale images (as the camera would), and more
 ```
 
 ---

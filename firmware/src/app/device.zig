@@ -1,12 +1,11 @@
 //! The layer that decides which screen the device shows right now.
 //!
-//! It depends on neither the hardware nor the chain (it only assembles the material for the screen).
-//! Both the firmware main loop and the host-side check (the CLI walkthrough) use the
-//! **same functions**.
+//! It depends on neither the hardware nor the chain (it only assembles the material for the
+//! screen), so the firmware's main loop and the host-side previews can use the same functions.
 //!
 //! Policy (the project principle "do not sign anything that cannot be displayed"):
 //! - Errors are **always shown on screen** (never stop silently)
-//! - Show what is being signed (file name, destination, amount, fee) before signing
+//! - Show what is being signed (destination, amount, fee) before signing
 //! - Say "unknown" for what is unknown (never fill it in by guessing)
 // SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
 // SPDX-License-Identifier: MIT
@@ -16,17 +15,11 @@ const ui_screen = @import("../ui/screen.zig");
 
 /// The situation the device should show the user.
 pub const Problem = enum {
-    /// No card is inserted
-    waiting_card,
-    /// The card was read but is not FAT32 (FAT16 / exFAT, etc.)
-    not_fat32,
-    /// The card cannot be read (poor contact, unformatted, etc.)
-    card_unreadable,
-    /// There is no IN.PSBT
-    no_input,
-    /// The file is too large (limit 64KB)
-    file_too_large,
-    /// It cannot be interpreted as a PSBT
+    /// Waiting for a PSBT: the camera is looking for its QR codes
+    waiting_scan,
+    /// The received PSBT is larger than the firmware accepts (64 KB)
+    payload_too_large,
+    /// What was received cannot be interpreted as a PSBT
     invalid_psbt,
     /// There is no key that can sign
     no_matching_key,
@@ -52,47 +45,19 @@ pub const Notice = struct {
 /// Returns the screen content for a situation.
 pub fn noticeFor(problem: Problem) Notice {
     return switch (problem) {
-        .waiting_card => .{
+        .waiting_scan => .{
             .title = "ZHWW",
             .lines = &.{
-                "INSERT CARD",
-                "Put a FAT32 microSD card",
-                "with IN.PSBT on it.",
+                "READY TO SCAN",
+                "Show the PSBT QR code to",
+                "the camera on the back.",
             },
-            .footer_right = "POWER ON",
             .actionable = true,
         },
-        .not_fat32 => .{
-            .title = "NOT FAT32",
+        .payload_too_large => .{
+            .title = "PSBT TOO LARGE",
             .lines = &.{
-                "This card is not FAT32.",
-                "Format it as FAT32 (not exFAT).",
-            },
-            .warnings = &.{"No signing was performed."},
-            .footer_left = "BACK",
-        },
-        .card_unreadable => .{
-            .title = "NO CARD",
-            .lines = &.{
-                "The card could not be read.",
-                "Check that it is inserted fully.",
-            },
-            .warnings = &.{"No signing was performed."},
-            .footer_left = "BACK",
-        },
-        .no_input => .{
-            .title = "NO IN.PSBT",
-            .lines = &.{
-                "IN.PSBT was not found on the card.",
-                "Write the PSBT to the card first.",
-            },
-            .warnings = &.{"No signing was performed."},
-            .footer_left = "BACK",
-        },
-        .file_too_large => .{
-            .title = "FILE TOO LARGE",
-            .lines = &.{
-                "IN.PSBT is larger than 64KB.",
+                "The PSBT is larger than 64KB.",
                 "Split the transaction or use a",
                 "smaller PSBT.",
             },
@@ -102,9 +67,9 @@ pub fn noticeFor(problem: Problem) Notice {
         .invalid_psbt => .{
             .title = "INVALID PSBT",
             .lines = &.{
-                "The file is not a valid PSBT.",
-                "Check that the file is complete",
-                "and not truncated.",
+                "The scanned data is not a",
+                "valid PSBT. Export it again",
+                "from the wallet and rescan.",
             },
             .warnings = &.{"No signing was performed."},
             .footer_left = "BACK",
@@ -140,29 +105,20 @@ pub fn noticeFor(problem: Problem) Notice {
     };
 }
 
-/// Maps a FAT32 mount failure to a screen situation.
-pub fn problemForMountError(err: anyerror) Problem {
-    return switch (err) {
-        error.UnsupportedFatType, error.NotFat32 => .not_fat32,
-        error.DeviceFailure, error.Truncated, error.OutOfRange => .card_unreadable,
-        else => .card_unreadable,
-    };
-}
-
 /// Maps a signing failure to a screen situation.
 pub fn problemForSignError(err: anyerror) Problem {
     return switch (err) {
         error.InvalidPsbt, error.Truncated, error.InvalidEncoding, error.ChecksumMismatch => .invalid_psbt,
         error.NoMatchingKey, error.InvalidKey => .no_matching_key,
         error.UnsupportedSighash => .unsupported_sighash,
-        error.BufferTooSmall, error.OutOfMemory => .file_too_large,
+        error.BufferTooSmall, error.OutOfMemory => .payload_too_large,
         else => .failure,
     };
 }
 
-/// Decides the situation from the file size (shown on screen when the limit is exceeded).
-pub fn problemForFileSize(size: usize, limit: usize) ?Problem {
-    if (size > limit) return .file_too_large;
+/// Decides the situation from the received payload's size (shown when the limit is exceeded).
+pub fn problemForPayloadSize(size: usize, limit: usize) ?Problem {
+    if (size > limit) return .payload_too_large;
     return null;
 }
 
@@ -194,38 +150,30 @@ pub fn screenFor(notice: Notice, lines_buffer: []ui_screen.Line, warnings_buffer
 const testing = std.testing;
 
 test "every situation has screen content (the title is not empty)" {
-    const problems = [_]Problem{
-        .waiting_card,   .not_fat32,  .card_unreadable, .no_input,
-        .file_too_large, .invalid_psbt, .no_matching_key, .unsupported_sighash,
-        .failure,
-    };
-    for (problems) |problem| {
+    for (std.enums.values(Problem)) |problem| {
         const notice = noticeFor(problem);
         try testing.expect(notice.title.len > 0);
         // Anything other than waiting must always report that no signing was performed
         // (do not mislead the user).
-        if (problem != .waiting_card) {
+        if (problem != .waiting_scan) {
             try testing.expect(notice.warnings.len > 0);
             try testing.expect(notice.lines.len > 0);
         }
     }
 }
 
-test "error mapping (FAT32 and signing)" {
-    try testing.expectEqual(Problem.not_fat32, problemForMountError(error.UnsupportedFatType));
-    try testing.expectEqual(Problem.not_fat32, problemForMountError(error.NotFat32));
-    try testing.expectEqual(Problem.card_unreadable, problemForMountError(error.DeviceFailure));
-
+test "signing errors map to the screen that explains them" {
     try testing.expectEqual(Problem.invalid_psbt, problemForSignError(error.InvalidPsbt));
     try testing.expectEqual(Problem.no_matching_key, problemForSignError(error.NoMatchingKey));
     try testing.expectEqual(Problem.unsupported_sighash, problemForSignError(error.UnsupportedSighash));
+    try testing.expectEqual(Problem.payload_too_large, problemForSignError(error.BufferTooSmall));
     try testing.expectEqual(Problem.failure, problemForSignError(error.SomethingElse));
 }
 
 test "size limit (64KB)" {
-    try testing.expectEqual(@as(?Problem, null), problemForFileSize(64 * 1024, 64 * 1024));
-    try testing.expectEqual(Problem.file_too_large, problemForFileSize(64 * 1024 + 1, 64 * 1024));
-    try testing.expectEqual(@as(?Problem, null), problemForFileSize(100, 64 * 1024));
+    try testing.expectEqual(@as(?Problem, null), problemForPayloadSize(64 * 1024, 64 * 1024));
+    try testing.expectEqual(Problem.payload_too_large, problemForPayloadSize(64 * 1024 + 1, 64 * 1024));
+    try testing.expectEqual(@as(?Problem, null), problemForPayloadSize(100, 64 * 1024));
 }
 
 test "conversion to a screen (lines and warnings are filled in)" {
@@ -241,7 +189,7 @@ test "conversion to a screen (lines and warnings are filled in)" {
 test "a small screen buffer does not crash (content is truncated)" {
     var lines: [1]ui_screen.Line = undefined;
     var warnings: [0][]const u8 = undefined;
-    const screen = screenFor(noticeFor(.no_input), &lines, &warnings);
+    const screen = screenFor(noticeFor(.payload_too_large), &lines, &warnings);
     try testing.expectEqual(@as(usize, 1), screen.lines.len);
     try testing.expectEqual(@as(usize, 0), screen.warnings.len);
 }
