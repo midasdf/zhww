@@ -17,7 +17,7 @@ for a hobby project, a wallet bug matters.
 
 ---
 
-- **Last updated**: 2026-10-12
+- **Last updated**: 2026-10-14
 - **Scope**: every deliverable in this repository (firmware, documentation, hardware design)
 
 ---

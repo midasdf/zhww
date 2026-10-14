@@ -2,7 +2,7 @@
 //!
 //! **Design**: the actual wiring (SPI, DC, CS, RST, backlight) is passed in from outside as a `Transport`.
 //! That way the command sequence can be verified with a **mock transport** even without the real board.
-//! The RP2350-side implementation lives in `platform/rp2350/`.
+//! The RP2350-side transport is not written yet ([docs/08-rp2350-pizero.md] §5).
 //!
 //! **Panel offset**: the ST7789 has 240×320 dots of RAM and this panel shows a 135×240 window
 //! of it, so every window is shifted: 40 dots along the long side, and 52 or 53 along the short

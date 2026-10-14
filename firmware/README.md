@@ -20,11 +20,11 @@
 | Implemented (transport) | **BC-UR** (Bytewords standard/uri/minimal, CRC-32, single-part and multi-part encode/decode, reconstruction from out-of-order parts with duplicates) |
 | Implemented (EVM) | RLP encoding and decoding / EIP-55 checksummed addresses / **EIP-155 (legacy) and EIP-1559 (type 2) signing** (both are signed and then verified) / EIP-191 `personal_sign` / **EIP-712 typed data** (dependency sorting for encodeType, arrays, nesting, domain inference) / **ABI decoding** (canonical form only) / **ERC-7730 clear signing** (descriptor parsing, function matching, generation of human-readable display items, warnings for dangerous patterns) |
 | Security prototypes | Fail-closed RP2350 boot policy, owned request/page approval gate, erasable secret backing storage, single-use signing-session orchestration, and bounded entropy interface. Approved BTC signing requires explicit entropy for context blinding and erases preallocated C-context backing memory. `btc_approved_sign.Workflow` connects bounded review to actual witness_utxo-only native-P2WPKH/SIGHASH_ALL signing and an allocation-free independent wire-parser/BIP143 guard. All messages are compared before signatures, then rechecked at the C signing boundary. See [guard scope](../docs/13-independent-p2wpkh-guard.md). **Not integrated with CLI signing or target HAL/TrustZone**. See [RP2350 security design](../docs/11-rp2350-security.md). |
-| Tests | **All 449 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall, both with the normal host library and with the pinned target's 32-bit C arithmetic/table configuration. New tests cover fatal context poisoning, bounded BIP84 discovery/metadata and two-input workspace/refusal. They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
+| Tests | **All 353 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall, both with the normal host library and with the pinned target's 32-bit C arithmetic/table configuration. New tests cover fatal context poisoning, bounded BIP84 discovery/metadata and two-input workspace/refusal. They cover official/independent BTC and EVM vectors, standalone multisig/Taproot interoperability, transport, QR, mutation/fuzz cases, approval failures and owned-memory erasure. See the [review report](../docs/10-security-audit-2026-10-13.md) and [security design](../docs/11-rp2350-security.md) for limits. |
 | Not implemented | Target HAL and device main loop; physical display/approval/sign gate; session-wide secret erasure; P2TR/P2WSH integration in the normal PSBT workflow; EVM clear-signing integration; real-hardware Signet/Sepolia flow; MUR fountain recovery. |
 
 ```bash
-zig build test     # 449 tests, including independent guard and fatal ownership
+zig build test     # 353 tests, including independent guard and fatal ownership
 zig build memory   # schema-2 provisional inventory, including main/fatal/NS stack reserves
 zig build target-link -Dtarget-fetch=true  # verified first download; offline link, NOT boot firmware
 zig build target-config-test              # cached source; selected C config host tests in four modes
@@ -37,9 +37,9 @@ zig build target-config-test              # cached source; selected C config hos
 | **libsecp256k1** | Key derivation and signing (the only cryptography library) | macOS: `brew install secp256k1` / Debian: `apt install libsecp256k1-dev` |
 | Zig standard library | SHA-256 / SHA-512 / HMAC / PBKDF2 / Keccak | — |
 
-> RIPEMD-160 is not in the Zig standard library and may not be available on the
-> target either (Raspberry Pi OS + OpenSSL 3), so it is **implemented here**
-> (`src/core/crypto/ripemd160.zig`). Verified against official test vectors.
+> RIPEMD-160 is not in the Zig standard library, and a bare-metal target has no OpenSSL to fall
+> back on, so it is **implemented here** (`src/core/crypto/ripemd160.zig`). Verified against
+> official test vectors.
 
 ## Bounded memory checks
 
@@ -65,6 +65,8 @@ wallet firmware**. See [memory budget](../docs/12-rp2350-memory-budget.md) and
 firmware/
 ├── build.zig
 ├── tests.zig                  test root (core + official vectors)
+├── pico_smoke.zig             compile-only references for the RP2040 / RP2350 checks
+├── memory_layout.zig          compile-only SRAM inventory read by `zig build memory`
 ├── src/
 │   ├── root.zig               public API
 │   ├── core/                  chain-agnostic. Final authority on keys and display
@@ -75,7 +77,7 @@ firmware/
 │   │   ├── crypto/
 │   │   │   ├── ripemd160.zig  RIPEMD-160 (own implementation, streaming)
 │   │   │   ├── hashes.zig     sha256d / hash160 / taggedHash
-│   │   │   └── secp256k1.zig  minimal binding to libsecp256k1
+│   │   │   └── secp256k1.zig  minimal binding to libsecp256k1, preallocated context ownership
 │   │   ├── seed/
 │   │   │   ├── bip39.zig      BIP39 (the word list is embedded in the binary)
 │   │   │   └── entropy.zig    combines dice, camera and TRNG entropy (HKDF-SHA256)
@@ -87,20 +89,31 @@ firmware/
 │   │   ├── sighash.zig        legacy / BIP143 sighash
 │   │   ├── psbt.zig           PSBT parse, validate and serialize (BIP174)
 │   │   ├── sign.zig           key search, signing, finalization, fees, change detection
+│   │   ├── review.zig         bounded, key-free review pages for the approved workflow
+│   │   ├── approved_sign.zig  approved native-P2WPKH workflow (prototype)
 │   │   ├── multisig.zig       building and signing 2-of-3 multisig (P2WSH)
 │   │   └── taproot.zig        Taproot (BIP341) key-path signing
+│   ├── apps/evm/              EVM
+│   │   ├── rlp.zig            RLP encoding and decoding
+│   │   ├── address.zig        EIP-55 checksummed addresses
+│   │   ├── transaction.zig    EIP-155 / EIP-1559 signing
+│   │   ├── eip191.zig         personal_sign
+│   │   ├── eip712.zig         typed data
+│   │   ├── abi.zig            ABI decoding (parsing calldata)
+│   │   └── clear_signing.zig  human-readable display via ERC-7730 descriptors
+│   ├── security/              Secure-world prototypes: boot policy, approval gate, secret and
+│   │                          signing sessions, RNG interface, fixed workspace, SRAM budget,
+│   │                          independent P2WPKH guard
 │   ├── transport/             air-gapped transport layer
 │   │   ├── bytewords.zig      Bytewords (standard / uri / minimal)
 │   │   ├── cbor.zig           CBOR needed for UR
-│   │   └── ur.zig             BC-UR (single-part and multi-part)
-│   └── apps/evm/              EVM
-│       ├── rlp.zig            RLP encoding and decoding
-│       ├── address.zig        EIP-55 checksummed addresses
-│       ├── transaction.zig    EIP-155 / EIP-1559 signing
-│       ├── eip191.zig         personal_sign
-│       ├── eip712.zig         typed data
-│       ├── abi.zig            ABI decoding (parsing calldata)
-│       └── clear_signing.zig  human-readable display via ERC-7730 descriptors
+│   │   ├── ur.zig             BC-UR (single-part and multi-part)
+│   │   └── ur_receive.zig     multipart receiver: the QR strings the camera sees → one payload
+│   ├── ui/                    screen (240×135), ST7789 driver, font, QR encoder and decoder,
+│   │                          status indicator
+│   ├── app/device.zig         which notice the device shows (waiting, errors)
+│   └── cli/                   development CLI (host only): commands, PNG output, QR camera path
+├── target/                    offline Cortex-M33 Secure/NS link harness (NOT boot firmware)
 └── tests/                     integration tests based on official test vectors
 ```
 
@@ -136,8 +149,8 @@ key isolation and other BTC/EVM/direct development APIs are unguarded. See the
 
 ## Portability to the Pico family (RP2040 / RP2350)
 
-Whether the core can be put on the Pico family, which does not assume Linux, is checked by compiling on every run
-(see section 2.3 of [docs/03-hardware-bom.md](../docs/03-hardware-bom.md) for details and the conclusions).
+Whether the core builds for bare metal is checked on every run by compiling it for the Pico family
+(the RP2350 port itself is planned in [docs/08-rp2350-pizero.md](../docs/08-rp2350-pizero.md)).
 
 ```bash
 zig build pico     # check both RP2040 (Cortex-M0+) and RP2350 (Cortex-M33)

@@ -1,6 +1,6 @@
 # firmware/tests/ — tests and official test vectors
 
-- **Last updated**: 2026-10-13
+- **Last updated**: 2026-10-14
 
 ```bash
 cd firmware && zig build test
@@ -9,9 +9,9 @@ cd firmware && zig build test
 `firmware/tests.zig` runs both the implementation's unit tests (the `test` blocks under `src/`) and
 the integration tests based on official test vectors (this directory).
 
-**Currently: all 391 tests pass.** The 2026-10-13 review reran Debug, ReleaseSafe, ReleaseFast
-and ReleaseSmall. GitHub Actions checks Debug plus ReleaseSafe on Linux. Use the four-mode command
-below when checking optimizer-sensitive behavior.
+**Currently: all 353 tests pass** in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall; GitHub
+Actions runs all four on Linux. Use the four-mode command below when checking optimizer-sensitive
+behavior.
 
 ## The strongest verification: Bitcoin Core accepts our signatures
 
@@ -181,7 +181,7 @@ Zig passes by value by default, so be rigorous about two rules: **a function tha
 | EIP-712 | `domainSeparator` / `hashStruct` | Matches known samples. Warns on an unknown `verifyingContract` |
 | Clear signing | Applying ERC-7730 descriptors | Snapshot match for the expected display. A mismatched chainId is rejected |
 | Error cases | Huge arrays, deep nesting, unknown selectors, missing UTXOs | All refuse to sign and show the reason on screen |
-| Secrets left behind | SD / flash after power loss | No byte sequence of the mnemonic / seed / xprv is present |
+| Secrets left behind | Flash after power loss | No byte sequence of the mnemonic / seed / xprv is present |
 | Reproducibility | Image builds | The same hash in two environments |
 
 ## Display regression tests

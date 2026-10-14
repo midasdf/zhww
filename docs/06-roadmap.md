@@ -2,7 +2,7 @@
 
 - **Target version**: v0.1
 - **Last updated**: 2026-10-14
-- **Hardware**: the standard build is **RP2350-PiZero + Adafruit Mini PiTFT + ArduCam UC-805 camera** ([03-hardware-bom.md](03-hardware-bom.md)), decided 2026-10-14. The milestones below target it; the earlier Raspberry Pi Zero 2 WH Linux build ([07-zero2w-setup.md](07-zero2w-setup.md)) remains only as a host-side tool
+- **Hardware**: the standard build is **RP2350-PiZero + Adafruit Mini PiTFT + ArduCam UC-805 camera** ([03-hardware-bom.md](03-hardware-bom.md)), decided 2026-10-14. The milestones below target it
 
 Each milestone is defined as a pair of "something that works" and "how to verify it". **Anything that cannot be reproduced on a test network is not considered done.**
 

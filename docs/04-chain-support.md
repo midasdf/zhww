@@ -1,7 +1,7 @@
 # 04. Per-chain implementation specification (BTC / EVM)
 
 - **Target version**: v0.1
-- **Last updated**: 2026-10-13
+- **Last updated**: 2026-10-14
 
 ---
 
