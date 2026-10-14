@@ -105,7 +105,7 @@ export fn zhww_smoke(
 
 /// Also reference the UI layer (screen and LCD driver).
 export fn zhww_smoke_ui(pixels_ptr: [*]u16, count: usize, out: [*]u8, out_len: usize) usize {
-    var fb = @import("src/ui/framebuffer.zig").Framebuffer.init(pixels_ptr[0..count], 240, 240) catch return 0;
+    var fb = @import("src/ui/framebuffer.zig").Framebuffer.init(pixels_ptr[0..count], 240, 135) catch return 0;
     const modules: [9]u8 = .{ 1, 0, 1, 0, 1, 0, 1, 0, 1 };
     const screen = @import("src/ui/screen.zig").Screen{
         .title = "CONFIRM",

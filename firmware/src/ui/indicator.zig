@@ -6,9 +6,9 @@
 //! not depend on the hardware, so deciding it up front in a testable form means that once the board
 //! arrives, all that is left is connecting the GPIO.
 //!
-//! **Power consumption matters because it runs on dry cells**: idle is limited to "a brief flash now
-//! and then", and the average duty cycle is kept to a few percent or less (so that the average blinking
-//! current can be computed, the patterns are expressed as a sequence of on/off states and durations).
+//! **Patterns as data**: each pattern is a sequence of on/off states and durations, so what a state
+//! looks like (and how much of the time it is lit) can be tested before the board arrives. The device
+//! runs from USB power, so idle is "a brief flash now and then" to show it is alive, not to save power.
 // SPDX-FileCopyrightText: 2026 midasdf and the zhww contributors
 // SPDX-License-Identifier: MIT
 
@@ -25,8 +25,6 @@ pub const State = enum {
     confirm,
     /// Error (the reason is shown on screen). Named failure because `error` is a Zig keyword
     failure,
-    /// Battery expected to be low (an estimate, not a measurement)
-    battery_low,
 };
 
 /// One step of a blink pattern.
@@ -55,7 +53,7 @@ pub const Pattern = struct {
         return total;
     }
 
-    /// Average duty cycle (%). Used to evaluate battery life.
+    /// Average duty cycle (%).
     pub fn dutyPercent(self: Pattern) u32 {
         const period = self.periodMs();
         if (period == 0) return 0;
@@ -99,14 +97,6 @@ const error_steps = [_]Step{
     .{ .on = false, .ms = 100 },
 };
 
-// Battery low: two flashes then a long off period (distinguishable from the idle heartbeat).
-const battery_low_steps = [_]Step{
-    .{ .on = true, .ms = 60 },
-    .{ .on = false, .ms = 140 },
-    .{ .on = true, .ms = 60 },
-    .{ .on = false, .ms = 3740 },
-};
-
 /// The blink pattern for a state.
 pub fn patternFor(state: State) Pattern {
     return switch (state) {
@@ -114,7 +104,6 @@ pub fn patternFor(state: State) Pattern {
         .busy => .{ .steps = &busy_steps },
         .confirm => .{ .steps = &confirm_steps },
         .failure => .{ .steps = &error_steps },
-        .battery_low => .{ .steps = &battery_low_steps },
     };
 }
 
@@ -132,23 +121,22 @@ pub fn label(state: State) []const u8 {
         .busy => "WORKING",
         .confirm => "CONFIRM",
         .failure => "ERROR",
-        .battery_low => "BATTERY LOW",
     };
 }
 
 /// Returns whether anything needs to light up when the state changes.
 ///
-/// Lighting up only right after a state change lowers the average consumption while idle even further.
+/// Only a change into a failure pulses: it is the one change the user must not miss.
 pub fn shouldPulseOnChange(previous: State, next: State) bool {
     if (previous == next) return false;
-    return next == .battery_low or next == .failure;
+    return next == .failure;
 }
 
 // ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "idle has a very low duty cycle (battery life comes first)" {
+test "idle is only a brief flash now and then" {
     const pattern = patternFor(.idle);
     try testing.expect(pattern.dutyPercent() <= 1);
     try testing.expect(pattern.isOnAt(0));
@@ -171,22 +159,11 @@ test "busy does not go out and confirming blinks slowly" {
     try testing.expectEqual(@as(u32, 40), confirm.dutyPercent());
 }
 
-test "error blinks fast and battery low is distinguishable from idle" {
+test "error blinks fast" {
     const error_pattern = patternFor(.failure);
     try testing.expect(error_pattern.isOnAt(0));
     try testing.expect(!error_pattern.isOnAt(100));
     try testing.expect(error_pattern.isOnAt(200));
-
-    const low = patternFor(.battery_low);
-    // Two flashes, then a long off period
-    try testing.expect(low.isOnAt(0));
-    try testing.expect(!low.isOnAt(60));
-    try testing.expect(low.isOnAt(200));
-    try testing.expect(!low.isOnAt(260));
-    try testing.expect(!low.isOnAt(2000));
-    try testing.expect(low.isOnAt(4000));
-    // More noticeable than idle (0.7%) but not lit continuously
-    try testing.expect(low.dutyPercent() < 10);
 }
 
 test "the backlight is off only while idle" {
@@ -194,14 +171,13 @@ test "the backlight is off only while idle" {
     try testing.expect(backlightOn(.busy));
     try testing.expect(backlightOn(.confirm));
     try testing.expect(backlightOn(.failure));
-    try testing.expect(backlightOn(.battery_low));
 }
 
 test "it signals only when the state changes" {
     try testing.expect(!shouldPulseOnChange(.idle, .idle));
     try testing.expect(!shouldPulseOnChange(.idle, .confirm));
     try testing.expect(shouldPulseOnChange(.confirm, .failure));
-    try testing.expect(shouldPulseOnChange(.confirm, .battery_low));
+    try testing.expect(!shouldPulseOnChange(.failure, .failure));
 }
 
 test "a pattern with period 0 does not crash" {

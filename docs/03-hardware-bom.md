@@ -42,8 +42,8 @@ which would need soldering.
 - It covers only **header pins 1–24**, so pins 25–40 stay free for the camera
 - Two **tactile buttons** on the module (enough for "next / confirm"), and a **STEMMA QT port** that
   carries 3.3 V, ground and I²C to the camera without a wire to the header
-- The 240 × 135 layout is already implemented (`zhww screen --size 240x135`); the square 240 × 240
-  version (#4484) is hard to get in Japan
+- The firmware's screen layout is drawn for its 240 × 135 panel (`zhww screen` previews it); the
+  square 240 × 240 version (#4484) is hard to get in Japan
 
 ### 2.3 Camera: ArduCam UC-805 (HM01B0)
 

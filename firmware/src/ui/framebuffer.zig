@@ -1,4 +1,4 @@
-//! Framebuffer for drawing on the 240×240 LCD (RGB565).
+//! Framebuffer for drawing on the Mini PiTFT's 240×135 LCD (RGB565).
 //!
 //! **Why build this first**: so the screen contents can be assembled and checked without real
 //! hardware. The same code runs on a PC and can be written out as an image, which lets the UI be
@@ -183,7 +183,7 @@ pub const Framebuffer = struct {
 const testing = std.testing;
 
 fn testBuffer(storage: []u16) Framebuffer {
-    return Framebuffer.init(storage, 240, 240) catch unreachable;
+    return Framebuffer.init(storage, 240, 135) catch unreachable;
 }
 
 test "out-of-range writes are ignored and clipped" {
@@ -203,11 +203,11 @@ test "out-of-range writes are ignored and clipped" {
 
 test "init rejects a buffer that is too small" {
     var storage: [4]u16 = @splat(black);
-    try testing.expectError(error.BufferTooSmall, Framebuffer.init(&storage, 240, 240));
+    try testing.expectError(error.BufferTooSmall, Framebuffer.init(&storage, 240, 135));
 }
 
 test "drawing a character (row 0 of 'A' is bit2 and bit3)" {
-    var storage: [240 * 240]u16 = @splat(black);
+    var storage: [240 * 135]u16 = @splat(black);
     var fb = testBuffer(&storage);
 
     // row 0 of 'A' is 0x0C (bit2, bit3)
@@ -230,7 +230,7 @@ test "drawing a character (row 0 of 'A' is bit2 and bit3)" {
 }
 
 test "a string advances 9 dots at a time and its width can be computed" {
-    var storage: [240 * 240]u16 = @splat(black);
+    var storage: [240 * 135]u16 = @splat(black);
     var fb = testBuffer(&storage);
 
     const next = fb.drawText(10, 20, "AB", white, null, 1);
@@ -243,7 +243,7 @@ test "a string advances 9 dots at a time and its width can be computed" {
 }
 
 test "strings with newlines, and background filling" {
-    var storage: [240 * 240]u16 = @splat(black);
+    var storage: [240 * 135]u16 = @splat(black);
     var fb = testBuffer(&storage);
 
     const lines = fb.drawTextLines(0, 0, "A\nB", white, black, 1);
@@ -259,7 +259,7 @@ test "strings with newlines, and background filling" {
 }
 
 test "drawBitmap draws a dot matrix (the entry point for QR)" {
-    var storage: [240 * 240]u16 = @splat(black);
+    var storage: [240 * 135]u16 = @splat(black);
     var fb = testBuffer(&storage);
 
     // draw a checkerboard (2×2 modules) at 4×

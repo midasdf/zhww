@@ -51,7 +51,7 @@ the owned session. Workspace reset erases all backing bytes after output borrows
 `zig build memory` compiles and reads a Cortex-M33 ABI inventory without target execution.
 Its stack/HAL reservations are **not measured upper bounds**. `target-link` now links the actual
 approved signing/rendering path with pinned target-built C crypto in candidate Secure/NS regions,
-and reads static frame metadata. The ReleaseSafe harness reserves 509,584 SRAM bytes across
+and reads static frame metadata. The ReleaseSafe harness reserves 459,184 SRAM bytes across
 both partitions, including dedicated 64/8/8 KiB main/fatal/NS stacks. Its largest individual frame
 is 14,736 bytes, NOT a transitive stack bound. The fatal-entry prototype is instruction-checked
 and uses a separate stack to erase known owned spans/designated old stack without resuming C.
@@ -190,7 +190,7 @@ cat psbt.txt | ./zig-out/bin/zhww show --network regtest --mnemonic "…"
 cat psbt.txt | ./zig-out/bin/zhww ur --fragment 40
 #   → printed like ur:crypto-psbt/1-4/… (each frame of the animated QR)
 
-# Check the device screen (240×240) as a PNG (lets you polish the UI without hardware)
+# Check the device screen (240×135) as a PNG (lets you polish the UI without hardware)
 ./zig-out/bin/zhww screen --demo --scale 2 > demo.png
 cat psbt.txt | ./zig-out/bin/zhww screen --qr --scale 2 > qr.png   # show UR as QR
 
