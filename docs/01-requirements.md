@@ -1,7 +1,7 @@
 # 01. Requirements
 
 - **Target version**: v0.1 (initial scope)
-- **Last updated**: 2026-10-12
+- **Last updated**: 2026-10-14
 
 ---
 
@@ -35,7 +35,7 @@ Design and publish a fully open-source, multi-chain signing device that can be a
 | FR-02 | Load a BIP39 mnemonic from a SeedQR (standard / Compact) | Required |
 | FR-03 | Support a BIP39 passphrase (word 25), with re-entry or checksum display to detect typos | Required |
 | FR-04 | Derive and display BTC addresses for the BIP44/49/84/86 derivation paths | Required |
-| FR-05 | Receive a PSBT over QR (BC-UR, animated) or via the SD card, sign it and return it | Required |
+| FR-05 | Read a PSBT from QR codes with the camera (BC-UR, animated), sign it and return it as QR codes | Required |
 | FR-06 | Show the PSBT's destination, amount, fee and change address on screen, and require approval | Required |
 | FR-07 | RLP-parse EVM transactions (Legacy / EIP-1559), display the destination, amount, chain ID and fee, and sign them | Required |
 | FR-08 | Decode ERC-20 `transfer` / `approve` and display the token amount | Required |
@@ -53,16 +53,16 @@ Design and publish a fully open-source, multi-chain signing device that can be a
 | NFR-02 | Parts cost per unit | ¥12,000 or less (about USD 80) |
 | NFR-03 | Number of parts | 10 or fewer (excluding consumables and the enclosure) |
 | NFR-04 | Assembly time (experienced) | Within 60 minutes |
-| NFR-05 | Seed persistence | Never written to flash, SD or swap |
-| NFR-06 | Network connectivity | No wireless capability in hardware, or it is disabled |
+| NFR-05 | Seed persistence | Never written to flash |
+| NFR-06 | Network connectivity | No wireless capability in hardware |
 | NFR-07 | Firmware verifiability | Reproducible builds + PGP-signed releases |
-| NFR-08 | Elliptic-curve arithmetic | Use audited libsecp256k1 (pure-Python implementations forbidden) |
-| NFR-09 | Boot time | 60 seconds or less (a target, not a measurement: the firmware has not run on hardware yet. The v0.1 Linux build targets the Pi Zero 2 WH; a wireless-free Zero 1.3 may boot more slowly, which is accepted) |
+| NFR-08 | Elliptic-curve arithmetic | Use audited libsecp256k1 (no elliptic-curve code of our own) |
+| NFR-09 | Boot time | 60 seconds or less (a target, not a measurement: the firmware has not run on hardware yet) |
 | NFR-10 | Host-side dependencies | Signing requests use only standard formats (PSBT / JSON-RPC payloads) |
 
 ## 5. Constraints
 
-- **C-01**: The Raspberry Pi Zero (the v0.1 Linux build) has no secure boot. Firmware integrity can therefore only be assured by "reproducible builds + detection through SD-card swapping in operation" (stated as a residual risk).
+- **C-01**: Until RP2350 signed boot is provisioned ([05-threat-model.md](05-threat-model.md) §4-4), firmware integrity rests on reproducible builds and on re-flashing an image you built yourself (stated as a residual risk).
 - **C-02**: With no SE, seed protection cannot be guaranteed if an attacker gains physical access.
 - **C-03**: The 240×135 screen limits full display of EVM calldata. Long content is paged.
 - **C-04**: The firmware is MIT, so GPL-licensed code (Trezor firmware is GPLv3) must not be copied into it, and the "Trezor" name is not used (see [LICENSE-POLICY.md](../LICENSE-POLICY.md) §3).
@@ -76,7 +76,7 @@ v0.1 is complete when all of the following are satisfied.
 3. A PSBT received from Sparrow (or Electrum) is signed and returned, and the broadcast succeeds
 4. An EIP-1559 transaction signed on Ethereum Sepolia **matches byte-for-byte** signatures produced with viem or ethers.js
 5. ERC-20 `transfer` can be signed after displaying the contract address, the amount and the destination on screen
-6. After power loss, no secret information including the seed can be recovered from the SD card or flash
+6. After power loss, no secret information including the seed can be recovered from flash
 7. Release images built in two different environments produce the same hash (reproducible build)
 8. The residual risks described in the threat model can be reached from the README
 

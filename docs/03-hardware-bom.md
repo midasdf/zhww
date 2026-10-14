@@ -186,7 +186,7 @@ Kept so the reasons are not lost; the full research is in the git history before
 
 | Option | Status | Why |
 |---|---|---|
-| Raspberry Pi Zero 2 WH (Linux, the v0.1 build) | Superseded by the RP2350-PiZero | It has a radio, which can only be disabled in software. [07-zero2w-setup.md](07-zero2w-setup.md) is kept for host-side work |
+| Raspberry Pi Zero 2 WH (Linux, the v0.1 build) | Superseded by the RP2350-PiZero | It has a radio, which can only be disabled in software. Its setup notes are in the git history |
 | Pi Zero 1.3 / Luckfox Pico / other Linux boards | Not adopted | Hard to obtain, or a header to fit, or a port of the Linux build |
 | Waveshare 1.3" LCD HAT (240 × 240) | Replaced by the Mini PiTFT | It covers all 40 header pins, leaving nothing for an input device |
 | Light receiver (LM393 module, then an Adafruit OPT4048 under a raised board) | Replaced by the camera; its code was removed (2026-10-14) | Cheapest, but tens of seconds per PSBT, a link layer only this project uses, and a 33.5 mm case |

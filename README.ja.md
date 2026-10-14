@@ -16,7 +16,7 @@
 - **初期スコープ**: Bitcoin + EVM (Ethereum / ERC-20 / 主要L2)
 - **ハードウェア**: Waveshare RP2350-PiZero（無線なし）＋ Adafruit Mini PiTFT ＋ ArduCam UC-805（HM01B0）カメラを、3D プリントの透明ケースに収める。既製品だけで組め、**半田付けは不要**
 - **想定コスト**: 1台あたり ¥8,000〜11,000 程度
-- **現状**: PC 上では、承認付き native P2WPKH 署名と独立した BIP143 検証経路まで実装済み（テスト **449 件**）。物理承認、実機 HAL／TrustZone、端から端までのデバイスファームウェアは未実装で、対象ボードでは未実行
+- **現状**: PC 上では、承認付き native P2WPKH 署名と独立した BIP143 検証経路まで実装済み（テスト **353 件**）。物理承認、実機 HAL／TrustZone、端から端までのデバイスファームウェアは未実装で、対象ボードでは未実行
 
 ---
 
@@ -77,14 +77,20 @@ zhww/
 │   ├── 04-chain-support.md    ← BTC/EVM 実装マトリクス・仕様
 │   ├── 05-threat-model.md     ← 脅威モデル・残存リスク
 │   ├── 06-roadmap.md          ← マイルストーンと Done 定義
-│   ├── 07-zero2w-setup.md     ← Raspberry Pi Zero 2 W/WH の初期設定（以前の Linux 構成。ホスト側の作業用）
 │   ├── 08-rp2350-pizero.md    ← RP2350-PiZero への移植（ピン、電源、フラッシュ、HAL の計画）
-│   └── 10-security-audit-2026-10-13.md ← 内部コードレビューと未解決事項
+│   ├── 10-security-audit-2026-10-13.md ← 内部コードレビューと未解決事項
+│   ├── 11-rp2350-security.md  ← RP2350 のセキュリティ設計（TrustZone、起動、OTP）
+│   ├── 12-rp2350-memory-budget.md ← SRAM の見積もりと固定領域での検証
+│   ├── 13-independent-p2wpkh-guard.md ← P2WPKH 署名計画の独立検証
+│   ├── 14-target-link-and-fault-prototype.md ← Cortex-M33 向けリンク、スタック、異常時の消去
+│   ├── 15-security-audit-2026-10-14.md ← 追加の内部レビュー
+│   └── next-session.md        ← 引き継ぎ（現状、次の作業、注意点）
 ├── firmware/                  ← Zig 実装（BTC 署名一式 + 公式テストベクタ）
 │   ├── build.zig
 │   ├── tests.zig
-│   ├── src/                   ← core（チェーン非依存）と apps（BTC / EVM）
+│   ├── src/                   ← core（チェーン非依存）、apps（BTC / EVM）、security、ui、transport、cli
 │   └── tests/                 ← 公式テストベクタと統合テスト
+├── tools/                     ← オフラインの検査（ライセンス、ターゲット向けリンク、メモリ配置）
 └── hardware/enclosure/        ← 筐体（Zig で寸法と干渉を検査し、SolidCraft で STEP / STL を出力）
 ```
 
@@ -92,17 +98,17 @@ zhww/
 
 | 項目 | 状態 |
 |---|---|
-| 設計ドキュメント | 要求仕様・アーキテクチャ・BOM・チェーン対応・脅威モデル・ロードマップ・実機手順の草案あり。セキュリティ、メモリ、独立検証の設計とリリース条件は検証・更新中。 |
+| 設計ドキュメント | 要求仕様・アーキテクチャ・BOM・チェーン対応・脅威モデル・ロードマップ・RP2350 への移植計画の草案あり。セキュリティ、メモリ、独立検証の設計とリリース条件は検証・更新中。 |
 | ファームウェア（Zig + libsecp256k1） | **Bitcoin**: BIP39、BIP32、アドレス生成、トランザクションと PSBT の解析、Legacy・BIP143 の署名と最終化、手数料とお釣りの判定、BC-UR、画面描画、QR エンコード・デコード。**Taproot と 2-of-3 P2WSH は単独モジュールと相互運用テストのみで、`signPsbtBytes` には未統合。** **EVM**: RLP、EIP-55、EIP-155・EIP-1559、EIP-191、EIP-712、ABI、ERC-7730 の各モジュール。実機の承認フローには未統合。 |
 | セキュリティ基盤 | PC 上の承認付き native P2WPKH／SIGHASH_ALL フロー、所有する秘密情報と暗号コンテキストの消去、乱数・固定メモリの異常系、別パーサーによる BIP143 ハッシュ照合を実装。物理承認と実機の隔離は未実装。[設計](docs/11-rp2350-security.md)・[メモリ予算](docs/12-rp2350-memory-budget.md)・[独立検証の範囲](docs/13-independent-p2wpkh-guard.md)を参照。 |
-| テスト | **449 件すべて成功**（通常のホストライブラリと、対象用32bit整数演算のC構成、それぞれ4つの最適化モード）。既存の署名・相互運用ベクタに加え、承認・消去・乱数／メモリ不足・独立検証・入力改変を検査。実機での動作や安全性の証明ではない。現在の詳細は[firmware](firmware/README.md)、過去の内部レビューは[報告書](docs/10-security-audit-2026-10-13.md)を参照。 |
+| テスト | **353 件すべて成功**（通常のホストライブラリと、対象用32bit整数演算のC構成、それぞれ4つの最適化モード）。既存の署名・相互運用ベクタに加え、承認・消去・乱数／メモリ不足・独立検証・入力改変を検査。実機での動作や安全性の証明ではない。現在の詳細は[firmware](firmware/README.md)、過去の内部レビューは[報告書](docs/10-security-audit-2026-10-13.md)を参照。 |
 | CI | Linux ホストでの回帰テスト、Pico 向けコンパイル、Cortex-M33 の暫定メモリ予算、検査ツールと依存関係のチェックを実行。RP2350 実機での実行ではない。 |
 | 実機 | 部品は決定済み（2026-10-14）。**[RP2350-PiZero](docs/08-rp2350-pizero.md)** ＋ **Mini PiTFT #4393** ＋ **ArduCam UC-805（HM01B0）**、USB 給電のみ（[部品表と配線](docs/03-hardware-bom.md)）。筐体は 97.2 × 38.6 × 19.7 mm の透明ケースで、Zig から生成して SolidCraft で組み立て、すべてのすき間を検査している（[hardware/enclosure](hardware/enclosure/README.md)）。部品の購入・実測はまだ |
 | ターゲット向け試作 | 固定バージョンのC暗号ライブラリで Secure／Non-secure 領域を実際にリンクし、関数単体のスタック使用量を取得。別スタックに切り替えて既知の領域を消去する異常終了経路もコンパイル・命令検査済み。ただし起動可能なファームウェア、実機の隔離、NS用ゲートウェイではない（[範囲と限界](docs/14-target-link-and-fault-prototype.md)）。 |
 | 次の作業 | 実際の起動／SDK／CMSEとアクセス制限、呼出し先と割り込みを含むスタック上限、物理画面・ボタン・カメラ取り込み・TRNG の HAL。その後に P2TR／P2WSH／EVM の承認・検証フローと実機テストを進める。 |
 
 ```bash
-cd firmware && zig build test      # 449 件
+cd firmware && zig build test      # 353 件
 zig build pico                     # コンパイル確認。実機では未実行
 zig build memory                   # 暫定の型サイズ・予約量。実機に収まることの証明ではない
 ```

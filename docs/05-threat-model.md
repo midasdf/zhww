@@ -1,7 +1,7 @@
 # 05. Threat model
 
 - **Target version**: v0.1
-- **Last updated**: 2026-10-13
+- **Last updated**: 2026-10-14
 
 This document aims to state explicitly what can be protected and what cannot. **Never write that something unprotected is protected** is the highest-priority rule.
 
@@ -23,7 +23,7 @@ This document aims to state explicitly what can be protected and what cannot. **
 |---|---|---|
 | Host PC / dApp | **Not trusted** | PSBTs and transactions are handled on the assumption that they may have been tampered with |
 | QR display / camera | Not trusted | The possibility that data is swapped between the screen and the camera is taken into account |
-| Parts (Pi / LCD / camera) | Trusted in principle | However, supply-chain risk remains (§5) |
+| Parts (board / display / camera) | Trusted in principle | However, supply-chain risk remains (§5) |
 | Firmware | Trusted by design | Authenticity is assured by reproducible builds and signatures |
 | An attacker with physical access | **Not trusted (cannot be protected)** | §4-1 |
 
@@ -33,7 +33,7 @@ This document aims to state explicitly what can be protected and what cannot. **
 |---|---|---|
 | T-1 | Remote attacker | Over the network. However, this device has no wireless interface in normal operation |
 | T-2 | Malicious host / dApp | Can present arbitrary PSBTs, transactions and messages |
-| T-3 | Supply-chain attacker | Can interfere with parts, SD cards and release images |
+| T-3 | Supply-chain attacker | Can interfere with parts and release images |
 | T-4 | Attacker with physical access | Can seize, disassemble and probe the device |
 | T-5 | Careless user | Ignores warnings, skips confirmation |
 
@@ -45,7 +45,7 @@ This document aims to state explicitly what can be protected and what cannot. **
 
 | Threat | Detail |
 |---|---|
-| Chip readout | The Raspberry Pi's flash and RAM can be read out under physical access |
+| Chip readout | The board's flash and the RP2350's RAM can be read out under physical access |
 | Voltage / clock glitching | Fault injection during signing can expose keys |
 | Substitution by a man in the middle | The entire device can be swapped |
 
@@ -83,9 +83,9 @@ See the [2026-10-13 internal review](10-security-audit-2026-10-13.md).
 
 | Threat | Detail |
 |---|---|
-| Counterfeit or used Pi | Pre-modified firmware or additional chips |
+| Counterfeit or used board | Pre-modified firmware or additional chips |
 | Malicious camera / LCD module | Additional flash or an I2C chip that sends data outside |
-| Tampered SD image | Replacement of the release |
+| Tampered release image | Replacement of the release |
 
 **Countermeasures**
 - Buy from authorized distributors (avoid used units and grey-market personal imports)
@@ -101,8 +101,8 @@ See the [2026-10-13 internal review](10-security-audit-2026-10-13.md).
 
 ### 4-4. Firmware integrity (T-3, T-4)
 
-**Standard build (RP2350-PiZero).** The design is in [11-rp2350-security.md](11-rp2350-security.md);
-**none of it is implemented or provisioned yet**.
+The design is in [11-rp2350-security.md](11-rp2350-security.md); **none of it is implemented or
+provisioned yet**.
 
 | Threat | Detail |
 |---|---|
@@ -125,22 +125,6 @@ the device in your own possession and powering it from a power-only cable reduce
 clear case reveals added hardware but not changed firmware, so when in doubt re-flash an image you
 built yourself.
 
-**Earlier Linux build (Raspberry Pi Zero 2 WH, [07-zero2w-setup.md](07-zero2w-setup.md)).** Kept for
-host-side work; it boots from an SD card.
-
-| Threat | Detail |
-|---|---|
-| Firmware replacement | Replaced with a version that sends signatures outside |
-| Tampering at boot | Files on the SD card are rewritten |
-
-**Countermeasures**
-- Reproducible builds + releases signed with PGP (NFR-07)
-- Make the rootfs read-only and confine runtime writes to tmpfs
-- Unmount the SD card after boot (cutting off the write path)
-- Run a self-check at boot (signature verification, integrity check) and display the result on the screen
-
-**Residual risk**: **the Raspberry Pi Zero has no secure boot**. Because there is no hardware root of trust, malicious code can run if the SD card is swapped. The countermeasure is "being able to notice", not "being able to prevent". During use, compensate by managing the SD card yourself and keeping the device in your own possession.
-
 ### 4-5. Randomness quality
 
 | Threat | Detail |
@@ -156,7 +140,7 @@ host-side work; it boots from an SD card.
 ### 4-6. Implementation bugs (T-2, T-5)
 
 **Implemented verification and required countermeasures**
-- Elliptic-curve arithmetic uses only the audited libsecp256k1 (pure-Python ECDSA is forbidden)
+- Elliptic-curve arithmetic uses only the audited libsecp256k1 (no elliptic-curve code of our own)
 - Nonces use RFC6979 deterministic generation
 - RLP, Bech32/Bech32m and PSBT are verified for exact agreement with the official test vectors
 - **Byte-for-byte cross-checks** against external implementations (Bitcoin Core / viem / ethers.js) run in CI
@@ -185,7 +169,7 @@ display/signing inconsistency and parser boundary issues despite the existing te
 | Threat | Countermeasure |
 |---|---|
 | Something is planted by the host over the USB power cable's data lines | Use a **power-only cable**, or a mobile battery pack / dry-cell box (which have no data lines). In normal operation the firmware does not use USB data (writing happens only when BOOTSEL is pressed) |
-| The host cuts power during USB operation to interrupt signing | Guaranteed by the atomicity of signing (if power is lost before the write completes, no valid signature remains) |
+| The host cuts power during USB operation to interrupt signing | The result exists only as QR codes drawn after signing has completed, so a power cut leaves no partial signature |
 | Fire or swelling caused by the charging circuit or the battery | **Not putting a battery in the device** eliminates this path entirely |
 
 ## 5. Things explicitly *not* protected
@@ -193,7 +177,7 @@ display/signing inconsistency and parser boundary issues despite the existing te
 1. Protection of the seed under physical access (because there is no SE)
 2. Loss of assets when the user ignores warnings
 3. Modifications to parts from an authorized distributor that cannot be detected visually
-4. **Prevention** of firmware replacement, which follows from the absence of secure boot (detection only)
+4. **Prevention** of firmware replacement until RP2350 signed boot is provisioned (§4-4); until then, detection only
 
 ## 6. Operational guidelines (summary to be copied into the README)
 

@@ -1,6 +1,6 @@
 //! For checking that the core compiles on RP2040 / RP2350 (bare metal).
 //!
-//! A smoke test to confirm the code can be ported to the Pico family without assuming Linux.
+//! A smoke test to confirm the code builds for the Pico family on bare metal.
 //! **It is not run by the test runner** (it is not part of `zig build test`).
 //! Confirm that it compiles with a target specified, as follows:
 //!

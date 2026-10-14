@@ -25,7 +25,7 @@ and the bug log in [firmware/tests/README.md](firmware/tests/README.md).
 
 ---
 
-- **Last updated**: 2026-10-13
+- **Last updated**: 2026-10-14
 - **Target version**: v0.1 (in development)
 
 ---
@@ -49,7 +49,7 @@ This project (zhww) is an **experimental research and development project**, not
 | Status | **experimental / work in progress**. Specifications, APIs and file layout change without notice |
 | Implemented scope | Host-side cryptographic, parsing, transport, QR and screen-rendering components. The normal PSBT workflow supports legacy/P2WPKH-family signing; P2WSH and Taproot are standalone modules/tests. EVM signing, EIP-712 and ERC-7730 rendering are separate components. |
 | **Not implemented** | **Physical approval state machine, key-isolation/dual-hash boundaries, session-wide secret erasure, target HAL, and any run on real hardware.** P2WSH/Taproot and EVM clear signing are not integrated into the normal approved request flow because that flow does not yet exist. |
-| Tests | 391 tests pass in Debug and ReleaseSafe. But "the tests passed" ≠ "it is safe" |
+| Tests | 353 tests pass in Debug, ReleaseSafe, ReleaseFast and ReleaseSmall. But "the tests passed" ≠ "it is safe" |
 | Audit | No third-party audit. An internal source review was performed on 2026-10-13; it identified critical remaining architecture work |
 | Track record | **No** record of signing or sending on real hardware |
 

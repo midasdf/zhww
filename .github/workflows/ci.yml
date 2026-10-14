@@ -76,8 +76,7 @@ jobs:
       - name: Compile check for Pico (RP2040 / RP2350)
         working-directory: firmware
         run: |
-          # Check on every run that the core still ports to the Pico family,
-          # which does not assume Linux.
+          # Check on every run that the core still builds for the Pico family (bare metal).
           zig build pico --summary all
 
       - name: Cortex-M33 inventory, reader bounds and independent-guard dependency checks

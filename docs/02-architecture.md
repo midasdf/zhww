@@ -1,7 +1,7 @@
 # 02. Architecture
 
 - **Target version**: v0.1
-- **Last updated**: 2026-10-13
+- **Last updated**: 2026-10-14
 
 > **Implementation status:** this document describes the target architecture. The current
 > host-side code does not yet enforce I-2 or I-3, has no physical approval state machine, and
@@ -19,7 +19,7 @@
                  │  Sparrow / Electrum / MetaMask / any dApp                      │
                  └───────┬──────────────────────────┬─────────────────────────────┘
                          │ PSBT / tx JSON           │ signed data
-                         │ (QR or SD)               │
+                         │ (UR QR codes)            │ (UR QR codes)
 ┌────────────────────────▼──────────────────────────▼──────────────────────────────┐
 │ zhww device (air-gapped)                                                         │
 │                                                                                  │
@@ -43,19 +43,18 @@
 │  ┌────────────────────────────────────────────────────────────────────────────┐  │
 │  │ transport/  QR (BC-UR, animated) / USB-CDC (optional)                      │  │
 │  └────────────────────────────────────────────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────────────────────────────────────┐  │
-│  │ OS: Raspberry Pi OS Lite / read-only rootfs / tmpfs only                   │  │
-│  └────────────────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-> Note: the `OS` row describes the v0.1 Linux build. The main v0.2 target, the RP2350-PiZero, is a microcontroller board that does not run Linux ([08-rp2350-pizero.md](08-rp2350-pizero.md)); there the firmware runs directly on the MCU, with no OS layer. The firmware has not yet run on any hardware.
+The firmware runs directly on the RP2350, with no operating system ([08-rp2350-pizero.md](08-rp2350-pizero.md));
+[11-rp2350-security.md](11-rp2350-security.md) splits it between the Secure and Non-secure worlds.
+The firmware has not yet run on any hardware.
 
 ## 2. Target layer responsibilities and prohibited actions
 
 | Layer | Responsibility | Prohibited |
 |---|---|---|
-| `transport/` | Raw byte input/output, QR splitting and reassembly, SD reads and writes | Interpreting payloads (interpretation happens in apps and above) |
+| `transport/` | Raw byte input/output, UR splitting and reassembly for QR codes | Interpreting payloads (interpretation happens in apps and above) |
 | `apps/` | Chain-specific parsing, generating display items, computing the hash to be signed | Direct access to the seed and extended private keys |
 | `core/` | Key derivation, signing, final confirmation of what is displayed, erasure of secrets | Chain-specific interpretation (handles only the hash received from `apps/`) |
 
@@ -96,11 +95,9 @@ Target policy:
 
 - The seed is expanded only in RAM and is securely zeroed when the approved session ends.
 - Nothing is persisted except settings (display unit, chainId, etc.). No secrets are written to persistent storage.
-- The SD card is unmounted after boot completes, or remounted read-only.
 
 The current host tools securely erase several temporary buffers, but extended private keys and
-allocator/session state are not comprehensively wiped. There is no device boot flow that enforces
-the SD-card policy.
+allocator/session state are not comprehensively wiped.
 
 ## 4. Target signing flow (not yet implemented end to end)
 
@@ -139,7 +136,6 @@ Host                  transport      apps                   core               s
 |---|---|---|
 | QR (BC-UR) | `ur:crypto-psbt`, `ur:bytes`, animated | BTC signing requests/responses, EVM transactions |
 | QR (SeedQR) | standard / Compact SeedQR | Loading the seed |
-| SD card | PSBT file, JSON | Large transactions, firmware updates |
 | USB-CDC (optional) | Raw bytes | Development and debugging. Disabled by default, and disabled in release builds |
 
 Enabling USB breaks the air gap, so **USB data communication is disabled in release builds**, which are treated as power-only.
@@ -179,4 +175,4 @@ the display, restart, or session-destruction behavior above.
 | EIP-155 / 1559 | Test vectors from the EIPs, and byte-for-byte agreement with signatures from viem / ethers.js |
 | EIP-712 | Compare domainSeparator / hashStruct against known typed-data samples |
 | ERC-7730 display | Snapshot tests of the display items given descriptor samples |
-| Seed residue | After power loss, dump the SD card and flash and confirm that no mnemonic, seed or extended private key byte sequences are present |
+| Seed residue | After power loss, dump the flash and confirm that no mnemonic, seed or extended private key byte sequences are present |

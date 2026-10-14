@@ -1,7 +1,7 @@
 //! RIPEMD-160 implementation.
 //!
 //! **Why we need our own implementation**: the Zig standard library has no RIPEMD-160,
-//! and on Raspberry Pi OS (OpenSSL 3) it can be unavailable even through OpenSSL.
+//! and a bare-metal target has no OpenSSL to fall back on.
 //! Bitcoin address generation and BIP32 fingerprints depend on
 //! HASH160 = RIPEMD160(SHA256(x)), so we keep our own implementation that is guaranteed to
 //! work on the target environment.

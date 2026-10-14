@@ -80,7 +80,7 @@ pub fn build(b: *std.Build) void {
 
     // Check that the core compiles for the Pico family (bare metal)
     //
-    // A step to see whether the code can be ported to RP2040 / RP2350 without assuming Linux.
+    // A step to see whether the code builds for RP2040 / RP2350 on bare metal.
     // It is not run (we only check that an object file can be produced).
     inline for (.{
         .{ "pico_rp2040", &std.Target.arm.cpu.cortex_m0plus },

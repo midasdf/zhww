@@ -146,7 +146,7 @@ The RP2350-PiZero has 16MB of flash. **The measured usage** is as follows, leavi
 |---|---|
 | Fonts, UI strings | seed, derived keys, passphrase |
 | ERC-7730 descriptors, test vectors | Intermediate signing state, history |
-| The program itself | Settings (the device keeps none) |
+| The program itself | Settings |
 
 The microSD slot is **not used** (the owner ruled out exchanging data on cards, 2026-10-13). The device keeps the property "plug it in and it runs, unplug it and nothing remains".
 
@@ -214,7 +214,7 @@ It has been confirmed that a confirmation screen showing "destination, amount an
 ## 6. What does not need changing
 
 - Cryptographic/encoding components can be reused, but the key boundary and authoritative display/sign flow **must change** for TrustZone isolation; see [security architecture](11-rp2350-security.md)
-- The 391 tests, including the official test vectors, continue to run on the host to prevent regressions
+- The host tests, including the official test vectors, continue to run on the host to prevent regressions
 - The development CLI stays as it is too (used for host-side verification and vector generation)
 
 ## 7. How QR is handled (decided)
@@ -251,7 +251,7 @@ screen fits on one page.
 
 ## 8. Verification plan
 
-1. **Host**: keep the existing 391 tests (regression detection)
+1. **Host**: keep the host test suite passing (regression detection)
 2. **Target**: a self-test screen that runs part of the same vectors on the device (shows at boot whether "the BIP39/BIP32/PSBT vectors passed")
 3. **Signing speed**: measure the time per signature on the device (input for the usability decision)
 4. **Device**: send on signet and verify with Core / a block explorer
@@ -267,13 +267,3 @@ screen fits on one page.
 | 5 | Link libsecp256k1 + measure signing speed | Decide whether it is usable in practice |
 | 6 | Screen UI (pre-signing confirmation display) | Satisfies "sign only what is displayed" |
 | 7 | Send on signet | Actually usable |
-
-## 10. Relationship to the Pi Zero (Linux) plan
-
-The Linux plan (the Pi Zero 2 WH in [03-hardware-bom.md](03-hardware-bom.md)) is **not abandoned**.
-There are two reasons.
-
-- It is a fallback if the port runs into trouble (the current firmware runs on it as-is)
-- It will continue to be used for host-side tests, vector generation and the CLI (`core/` is shared)
-
-In other words, the final shape is a two-track setup: **"verify on Linux, run on RP2350 hardware"**.

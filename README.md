@@ -78,14 +78,20 @@ zhww/
 │   ├── 04-chain-support.md    ← BTC/EVM implementation matrix
 │   ├── 05-threat-model.md     ← threat model and residual risks
 │   ├── 06-roadmap.md          ← milestones and definitions of done
-│   ├── 07-zero2w-setup.md     ← Raspberry Pi Zero 2 W/WH setup (the earlier Linux build; host-side use)
 │   ├── 08-rp2350-pizero.md    ← the RP2350-PiZero port: pins, power, flash, HAL plan
-│   └── 10-security-audit-2026-10-13.md ← internal source review, fixes, and release blockers
+│   ├── 10-security-audit-2026-10-13.md ← internal source review, fixes, and release blockers
+│   ├── 11-rp2350-security.md  ← RP2350 security architecture (TrustZone, boot, OTP)
+│   ├── 12-rp2350-memory-budget.md ← SRAM inventory and bounded workspace
+│   ├── 13-independent-p2wpkh-guard.md ← independent check of the P2WPKH signing plan
+│   ├── 14-target-link-and-fault-prototype.md ← offline Cortex-M33 links, stack frames, fatal wipe
+│   ├── 15-security-audit-2026-10-14.md ← follow-up internal review
+│   └── next-session.md        ← handoff: current state, next steps, landmines
 ├── firmware/                  ← Zig implementation
 │   ├── build.zig
 │   ├── src/core/              ← chain-agnostic primitives
 │   ├── src/apps/              ← BTC and EVM applications
-│   ├── src/ui/                ← screen, LCD driver, QR encoder, status indicator
+│   ├── src/security/          ← Secure-world prototypes (approval, sessions, guard, SRAM budget)
+│   ├── src/ui/                ← screen, LCD driver, QR encoder and decoder, status indicator
 │   ├── src/transport/         ← BC-UR (QR transport)
 │   ├── src/cli/               ← development CLI (host side)
 │   └── tests/                 ← official test vectors and integration tests
@@ -97,17 +103,17 @@ zhww/
 
 | Item | State |
 |---|---|
-| Design documents | Working drafts present (requirements, architecture, BOM, chain support, threat model, roadmap, setup and port plan); security/memory/guard design and release blockers remain under review |
+| Design documents | Working drafts present (requirements, architecture, BOM, chain support, threat model, roadmap and the RP2350 port plan); security/memory/guard design and release blockers remain under review |
 | Firmware (Zig + libsecp256k1) | **Bitcoin**: BIP39 (incl. dice entropy), BIP32, address generation, transaction/PSBT parsing, legacy and BIP143 signing/finalization, fee/change analysis, BC-UR, screen rendering, and QR encode/decode. **Taproot and 2-of-3 P2WSH are standalone signing modules with interoperability tests; they are not integrated into `signPsbtBytes`.** **EVM**: RLP, EIP-55, EIP-155/EIP-1559 signing, EIP-191 hashing, EIP-712, ABI decoding, and ERC-7730 rendering exist as separate modules; they are not connected by an on-device approval flow. |
 | Security prototypes | Host approved native-P2WPKH/SIGHASH_ALL flow, owned secret/context erasure, mandatory bounded entropy, fixed-workspace tests and independent wire/BIP143 message comparison. No actual TrustZone/HAL or physical approval. See [security](docs/11-rp2350-security.md), [memory](docs/12-rp2350-memory-budget.md) and [guard scope](docs/13-independent-p2wpkh-guard.md). |
-| Tests | **449 passing** in four optimization modes (normal host library and selected target C arithmetic configuration), including the previous crypto/interoperability vectors plus approval, wipe, RNG/workspace failure, independent guard and mutation checks. Tests are not a target execution or security proof; see [firmware details](firmware/README.md) and the historical [review report](docs/10-security-audit-2026-10-13.md). |
+| Tests | **353 passing** in four optimization modes (normal host library and selected target C arithmetic configuration), including the previous crypto/interoperability vectors plus approval, wipe, RNG/workspace failure, independent guard and mutation checks. Tests are not a target execution or security proof; see [firmware details](firmware/README.md) and the historical [review report](docs/10-security-audit-2026-10-13.md). |
 | CI | GitHub Actions runs Linux host regressions, bare-metal Pico compile checks, Cortex-M33 memory inventory and tool/dependency checks. This is not RP2350 hardware execution. |
 | Hardware | Parts decided (2026-10-14): **[Waveshare RP2350-PiZero](docs/08-rp2350-pizero.md)** + **Adafruit Mini PiTFT #4393** + **ArduCam UC-805 (HM01B0)** camera, USB power only ([BOM and wiring](docs/03-hardware-bom.md)). Enclosure: a clear 97.2 × 38.6 × 19.7 mm case, generated from Zig and built in SolidCraft, every clearance checked ([hardware/enclosure](hardware/enclosure/README.md)). Nothing has been bought or measured yet |
 | Target link prototype | Actual offline Secure/NS links with pinned C crypto and static frames, retained large storage and separate-stack fatal wipe prototype. No boot/startup, real attribution or NS gateway ([scope](docs/14-target-link-and-fault-prototype.md)). |
 | Next | Actual boot/SDK/CMSE gateway and attribution, transitive Zig/C/IRQ stack bounds, physical display/buttons, camera capture and TRNG HAL; then guarded P2TR/P2WSH/EVM integration and real-hardware tests. |
 
 ```bash
-cd firmware && zig build test      # 449 tests
+cd firmware && zig build test      # 353 tests
 zig build pico                     # compile checks, not hardware execution
 zig build memory                   # provisional Cortex-M33 inventory, not a full fit proof
 ```

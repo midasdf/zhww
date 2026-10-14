@@ -41,7 +41,7 @@ build is introduced. Do not infer register layouts from the semantic model in th
 
 | Secure world | Non-secure / untrusted |
 |---|---|
-| Boot evidence collection, OTP policy/readback | SD filesystem, transport and camera input |
+| Boot evidence collection, OTP policy/readback | Transport and camera input |
 | Seed entry, BIP39/KDF, BIP32 and libsecp256k1 context | Request delivery and non-authoritative previews |
 | Canonical request validation, signing policy | ERC-7730 descriptors and external metadata |
 | Authoritative display content, SPI/GPIO display ownership | No access to framebuffer that authorizes signatures |
